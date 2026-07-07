@@ -1,0 +1,47 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "handler"
+version = "0.1.0"
+description = "Remote control wrapper for Claude Code agents across isolated projects"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = [
+    "fastapi>=0.115,<0.116",
+    "uvicorn[standard]>=0.34,<0.35",
+    "sqlalchemy>=2.0,<2.1",
+    "alembic>=1.14,<1.15",
+    "psycopg[binary]>=3.2,<3.3",
+    "pydantic>=2.10,<3.0",
+    "pydantic-settings>=2.7,<3.0",
+    "httpx>=0.28,<0.29",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3,<9.0",
+    "respx>=0.22,<0.23",
+    "ruff>=0.9,<0.10",
+]
+
+[project.scripts]
+handler = "handler.control.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/handler"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.ruff]
+src = ["src", "tests"]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W", "UP", "B"]
+# B008: FastAPI's Depends()/Query() in argument defaults is the framework's idiom.
+ignore = ["B008"]
