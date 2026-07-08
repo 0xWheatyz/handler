@@ -1,0 +1,16 @@
+# Handler dogfoods its own gate: this repo defines the canonical `test` task the
+# control layer's Stop hook enforces. Any project Handler manages carries one of these.
+[tools]
+python = "3.11"
+
+[tasks.test]
+description = "Run the test suite"
+run = "pytest"
+
+[tasks.lint]
+description = "Lint the codebase"
+run = "ruff check ."
+
+[tasks.verify]
+description = "Lint then test"
+depends = ["lint", "test"]
