@@ -12,6 +12,7 @@ from sqlalchemy import (
     CheckConstraint,
     Column,
     ForeignKey,
+    Index,
     MetaData,
     String,
     Table,
@@ -29,6 +30,7 @@ AGENT_STATUSES = ("working", "paused_for_input", "blocked", "done")
 GATE_STATUSES = ("pass", "fail", "unknown")
 CI_STATUSES = ("not_applicable", "pending", "pass", "fail")
 VISIBILITIES = ("project", "global")
+APPROVAL_STATUSES = ("approved", "rejected")
 
 
 def _in(column: str, values: tuple[str, ...]) -> str:
@@ -55,6 +57,9 @@ agents = Table(
     Column("name", String, nullable=False),  # unique within a project, not globally
     Column("working_dir", String, nullable=False),
     Column("status", String, nullable=False),
+    # Optional workflow role (junior | senior | deploy) — informational, drives which
+    # forge skill an agent follows; the approval gate keys on identity, not role.
+    Column("role", String),
     Column("created_at", PortableTimestamp, nullable=False, server_default=func.now()),
     UniqueConstraint("project_id", "name", name="uq_agents_project_name"),
     CheckConstraint(_in("status", AGENT_STATUSES), name="ck_agents_status"),
@@ -112,4 +117,25 @@ shared_context = Table(
     Column("value", String, nullable=False),
     Column("set_by_agent_id", BigInteger, ForeignKey("agents.id")),
     Column("updated_at", PortableTimestamp, nullable=False, server_default=func.now()),
+)
+
+# The record the hard approval gate checks (Phase 2). A senior agent writes one per
+# branch it approves; the deploy gate refuses to merge/deploy a branch whose latest
+# approval isn't ``approved`` and wasn't made by a *different* agent than the one pushing
+# — so review is a genuine second context, never self-approval. ``approved_sha`` pins the
+# approval to the reviewed commit so pushing new commits invalidates a stale approval.
+approvals = Table(
+    "approvals",
+    metadata,
+    Column("id", PortableBigInt, primary_key=True, autoincrement=True),
+    Column("project_id", String, ForeignKey("projects.id"), nullable=False),
+    Column("branch", String, nullable=False),
+    Column("approved_sha", String),  # the HEAD the reviewer signed off on, when known
+    Column("pr_ref", String),  # optional forge PR number/URL, for traceability
+    Column("status", String, nullable=False),
+    Column("approved_by_agent_id", BigInteger, ForeignKey("agents.id"), nullable=False),
+    Column("note", String),
+    Column("created_at", PortableTimestamp, nullable=False, server_default=func.now()),
+    CheckConstraint(_in("status", APPROVAL_STATUSES), name="ck_approvals_status"),
+    Index("ix_approvals_project_branch", "project_id", "branch"),
 )

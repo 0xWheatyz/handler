@@ -21,7 +21,7 @@ from typing import Any
 
 from sqlalchemy import Connection, select
 
-from .tables import agents, checkmarks, log_entries, projects, shared_context
+from .tables import agents, approvals, checkmarks, log_entries, projects, shared_context
 from .upsert import upsert_checkmark
 
 
@@ -113,6 +113,53 @@ def get_shared_context_key(conn: Connection, key: str) -> dict | None:
     return _row_to_dict(row)
 
 
+def get_agent_by_id(conn: Connection, agent_id: int) -> dict | None:
+    row = conn.execute(select(agents).where(agents.c.id == agent_id)).first()
+    return _row_to_dict(row)
+
+
+def get_latest_approval(conn: Connection, project_id: str, branch: str) -> dict | None:
+    """The most recent approval/rejection for a branch — the deploy gate's input."""
+    row = conn.execute(
+        select(approvals)
+        .where(approvals.c.project_id == project_id, approvals.c.branch == branch)
+        .order_by(approvals.c.id.desc())
+        .limit(1)
+    ).first()
+    return _row_to_dict(row)
+
+
+def get_pending_ci_entries(
+    conn: Connection, project_id: str | None = None, limit: int = 200
+) -> list[dict]:
+    """Log entries that recorded a push and still await a CI verdict (poller input).
+
+    Joins through the agent so the poller knows which project/working-dir each push
+    belongs to. Scoped to one project when ``project_id`` is given.
+    """
+    stmt = (
+        select(
+            log_entries.c.id,
+            log_entries.c.push_sha,
+            log_entries.c.ci_status,
+            agents.c.id.label("agent_id"),
+            agents.c.project_id,
+            agents.c.working_dir,
+        )
+        .select_from(log_entries.join(agents, log_entries.c.agent_id == agents.c.id))
+        .where(
+            log_entries.c.ci_status == "pending",
+            log_entries.c.push_sha.is_not(None),
+        )
+        .order_by(log_entries.c.id.asc())
+        .limit(limit)
+    )
+    if project_id is not None:
+        stmt = stmt.where(agents.c.project_id == project_id)
+    rows = conn.execute(stmt).all()
+    return [dict(r._mapping) for r in rows]
+
+
 # -------------------------------------------------------------------------- writes
 
 
@@ -141,6 +188,7 @@ def create_agent(
     name: str,
     working_dir: str,
     status: str = "working",
+    role: str | None = None,
 ) -> dict:
     result = conn.execute(
         agents.insert().values(
@@ -148,6 +196,7 @@ def create_agent(
             name=name,
             working_dir=working_dir,
             status=status,
+            role=role,
             created_at=_now(),
         )
     )
@@ -181,6 +230,44 @@ def upsert_checkmark_row(conn: Connection, agent_id: int, **fields: Any) -> None
     values = {"agent_id": agent_id, **fields}
     values.setdefault("checkpoint_at", _now())
     upsert_checkmark(conn, values)
+
+
+def record_approval(
+    conn: Connection,
+    project_id: str,
+    branch: str,
+    status: str,
+    approved_by_agent_id: int,
+    pr_ref: str | None = None,
+    note: str | None = None,
+    approved_sha: str | None = None,
+) -> dict:
+    """Insert an approval/rejection record for a branch (the senior agent's verdict)."""
+    result = conn.execute(
+        approvals.insert().values(
+            project_id=project_id,
+            branch=branch,
+            approved_sha=approved_sha,
+            pr_ref=pr_ref,
+            status=status,
+            approved_by_agent_id=approved_by_agent_id,
+            note=note,
+            created_at=_now(),
+        )
+    )
+    approval_id = result.inserted_primary_key[0]
+    row = conn.execute(select(approvals).where(approvals.c.id == approval_id)).first()
+    return dict(row._mapping)
+
+
+def update_ci_status(conn: Connection, log_entry_id: int, ci_status: str) -> bool:
+    """Backfill a resolved CI verdict onto the log entry that recorded the push."""
+    result = conn.execute(
+        log_entries.update()
+        .where(log_entries.c.id == log_entry_id)
+        .values(ci_status=ci_status, ci_checked_at=_now())
+    )
+    return result.rowcount > 0
 
 
 def set_shared_context(conn: Connection, key: str, value: str, agent_id: int | None) -> dict:

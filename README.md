@@ -9,11 +9,14 @@ Every agent process is a real `claude` binary invocation. There is no hard depen
 any particular git host or network layer: you bring your own Claude Code login, your own
 git remote, and your own network exposure.
 
-> **Status: Phase 1 MVP.** The control layer, HTTP API, database, migrations, and
-> verification hooks are implemented and tested (45 tests, SQLite). Live end-to-end agent
-> spawning against a real `claude` binary + tmux is stubbed behind mockable seams and
-> wired but not yet exercised against production binaries. See
-> [`docs/PLAN.md`](docs/PLAN.md) for the full design and roadmap.
+> **Status: Phase 2 (forge integration) implemented on top of the Phase 1 MVP.** The
+> control layer, HTTP API, database, migrations, and verification/approval hooks are
+> implemented and tested (106 tests, SQLite). Phase 2 adds credential resolution +
+> injection, role-based forge-workflow skills, a hard approval gate, and a CI-status
+> poller. Live end-to-end agent spawning against a real `claude` binary + tmux is stubbed
+> behind mockable seams (`tmux`, `verify`, `forge`, `gitops`, `spawn.resume`) and wired
+> but not yet exercised against production binaries. See [`docs/PLAN.md`](docs/PLAN.md)
+> for the full design and roadmap.
 
 ---
 
@@ -100,7 +103,9 @@ Configuration is entirely environment-driven (see [`.env.example`](.env.example)
 | `SHARED_CONTEXT_WRITE_TOKEN` | Higher-trust token gating `PUT /shared/context/:key` | falls back to `AUTH_TOKEN` |
 | `WEBHOOK_URL` | Generic target for the `Notification` hook (ntfy, Slack, …) | unset → no-op |
 | `PROJECTS_ROOT` | Base dir for per-project roots / worktrees | `./projects` |
-| `CLAUDE_BIN` / `MISE_BIN` / `TMUX_BIN` | Binary overrides | `claude` / `mise` / `tmux` |
+| `CLAUDE_BIN` / `MISE_BIN` / `TMUX_BIN` / `FORGE_BIN` / `GIT_BIN` | Binary overrides | `claude` / `mise` / `tmux` / `forge` / `git` |
+| `FORGE_VERSION` | Pinned forge version verified at spawn (Phase 2) | unset → skip check |
+| `PROTECTED_BRANCHES` | Branches a direct push needs an approval to reach (Phase 2) | `main,master` |
 
 ## Run
 
@@ -143,17 +148,27 @@ curl -s -X POST $BASE/projects/leeworks-api/agents/api/resume -H "$TOKEN" \
 The `handler` command manages agent processes (the write side):
 
 ```bash
-handler spawn  --project leeworks-api --name api --worktree feature/auth --task "add login"
+handler spawn  --project leeworks-api --name junior --role junior --worktree feat/auth --task "add login"
 handler list   [--project leeworks-api]
-handler attach --project leeworks-api --name api
-handler kill   --project leeworks-api --name api
+handler attach --project leeworks-api --name junior
+handler kill   --project leeworks-api --name junior
+
+# Phase 2 — forge workflow
+handler forge-init --project leeworks-api          # write + commit the role skills
+handler approve --branch feat/auth --pr 12          # senior agent records its verdict
+handler reject  --branch feat/auth --note "fix X"   # (project/agent from env in-session)
+handler poll-ci [--project leeworks-api] [--watch]  # backfill CI verdicts
 ```
 
 `spawn` refuses any project whose working directory has no `.mise.toml` with a
-`[tasks.test]` task — the verification gate is a hard requirement, not a convention. It
+`[tasks.test]` task — the verification gate is a hard requirement, not a convention — and
+it also refuses to start if the project's `credential_ref` is configured but can't be
+resolved, so a broken secret pointer fails fast instead of leaving an orphaned agent. It
 resolves the working directory (a subdirectory or a fresh git worktree, always under the
-project root), writes a per-agent `.claude/settings.json` wiring the hooks, and launches a
-`tmux` session with the agent's identity and `DATABASE_URL` injected into its environment.
+project root), writes a per-agent `.claude/settings.json` wiring the hooks, resolves and
+injects the project's credentials (see below), and launches a `tmux` session with the
+agent's identity and `DATABASE_URL` injected into its environment. `--role`
+(`junior`/`senior`/`deploy`) records which forge-workflow role the agent plays.
 
 ## API reference
 
@@ -187,23 +202,69 @@ Wired into each agent as `python -m handler.hooks <event>`:
   Never blocks the agent on delivery failure.
 
 Hook identity travels via environment variables injected at spawn (`HANDLER_AGENT_ID`,
-`HANDLER_PROJECT_ID`, `HANDLER_AGENT_NAME`, `DATABASE_URL`), since hook stdin doesn't
-carry it; the wiring itself lives in the generated `settings.json`.
+`HANDLER_PROJECT_ID`, `HANDLER_AGENT_NAME`, `HANDLER_AGENT_ROLE`, `DATABASE_URL`), since
+hook stdin doesn't carry it; the wiring itself lives in the generated `settings.json`.
+
+## Forge workflow (Phase 2)
+
+Handler doesn't give the operator forge commands. It **configures forge for the agents**
+and lets them drive a role-based dev workflow themselves — the operator only sets a
+project's `credential_ref` (and optionally a `FORGE_VERSION` pin).
+
+- **Three roles, three agents.** A `junior` agent writes the change and opens a PR; a
+  `senior` agent reviews it and records an approval; a `deploy` agent merges and ships it.
+  Each is a separate agent with its own tmux session and working dir, so review is a
+  genuine second context — not the author signing off on their own work.
+- **Skills, committed into the repo.** `handler forge-init` writes role skills
+  (`forge-junior`, `forge-senior`, `forge-deploy`, plus an overview) into the managed
+  repo's `.claude/skills/` and commits them, so the workflow travels with the code and is
+  visible to humans. `forge` itself is already authenticated inside each agent, so it
+  works the same across GitHub/GitLab/Gitea/Forgejo/Bitbucket.
+- **A hard approval gate.** A merge or deploy command (`forge … merge`, `mise run deploy`)
+  — and a direct `git push` to a protected branch (`main`/`master`, see `PROTECTED_BRANCHES`)
+  — is *denied* unless a standing `approved` record exists for the current branch, made by
+  a **different** agent than the one merging, and still pinned to the reviewed commit
+  (pushing new commits invalidates a stale approval). Same block-on-failure mechanism as
+  the test and push gates — the senior's `handler approve` is what unlocks it, no agent can
+  approve its own branch, and the protected-branch rule closes the "merge locally, push to
+  main" path around it.
+- **CI follow-through.** When a push clears the local gates, Handler records the commit
+  with `ci_status = 'pending'`. The `handler poll-ci` poller then asks `forge ci list` for
+  the runs tied to that commit and backfills the authoritative verdict — one interface,
+  any forge, no inbound webhook.
+
+### Credentials — resolution, not storage (README 3.7)
+
+The database never stores a raw token. A project's `credential_ref` is a **pointer**:
+
+| Form | Meaning |
+|---|---|
+| `env:VAR_NAME` | read the value from an environment variable |
+| `file:/path` | read (and strip) the value from a file |
+| `cmd:some command` | run the command; its stdout is the value |
+
+At spawn the control layer resolves the pointer and injects the value into that one
+agent's environment as `FORGE_TOKEN` (plus the host-specific `GITHUB_TOKEN` /
+`GITEA_TOKEN` / … when the remote is recognized). A repo-local git credential helper is
+installed that hands the same value back for HTTPS push/pull — so one secret services both
+`forge` and `git`, and the raw token lives only in the process environment, never on disk
+or in the database.
 
 ## Development
 
 ```bash
-pytest          # 45 tests, entirely on SQLite — no live claude/tmux/mise needed
+pytest          # 106 tests, entirely on SQLite — no live claude/tmux/mise/forge/git needed
 ruff check .    # lint
 # or, via the project's own mise tasks:
 mise run verify # lint + test
 ```
 
 The suite drives every API route through FastAPI's `TestClient`, exercises all four hook
-types, and runs a real `alembic upgrade head` per test so the migration path itself is
-covered. Three seams — `control.tmux`, `hooks.verify`, and `control.spawn.resume` — are
-the mock points that stand in for live `claude`/`tmux`/`mise`, and the drop-in points for
-wiring them up for real.
+types plus the approval gate, credential resolution, the skills generator, and the CI
+poller, and runs a real `alembic upgrade head` per test so the migration path itself is
+covered. The seams — `control.tmux`, `control.forge`, `control.gitops`, `hooks.verify`,
+and `control.spawn.resume` — are the mock points that stand in for live
+`claude`/`tmux`/`mise`/`forge`/`git`, and the drop-in points for wiring them up for real.
 
 ## Project layout
 
@@ -212,8 +273,9 @@ src/handler/
   config.py            # env-driven settings, shared by every entrypoint
   db/                  # SQLAlchemy Core schema, engine, portable types, upsert, DAL
   api/                 # FastAPI app, auth deps, pydantic schemas, routes
-  control/             # CLI, tmux/worktree/settings-gen seams, spawn orchestration
-  hooks/               # Stop/SessionEnd, PreToolUse gate, Notification, verify seam
+  control/             # CLI, tmux/worktree/settings-gen seams, spawn orchestration,
+                       # forge/gitops seams, credentials, skills_gen, CI poller
+  hooks/               # Stop/SessionEnd, PreToolUse gate (push + approval), Notification
   migrations/          # Alembic env + versions
 tests/                 # DB, API, hook, and control tests (SQLite)
 docs/PLAN.md           # full design + phased roadmap (the original plan of action)
@@ -221,10 +283,11 @@ docs/PLAN.md           # full design + phased roadmap (the original plan of acti
 
 ## Roadmap
 
-Phase 1 (this MVP) is the control layer + API. Still ahead: **Phase 2** forge integration
-and credential resolution (PRs/issues/CI status via `forge`, one interface across GitHub /
-GitLab / Gitea / Forgejo / Bitbucket), **Phase 3** a web UI, **Phase 4** optional
-observability, and **Phase 5** open-source release. Details and design rationale live in
+Phase 1 (the MVP) is the control layer + API. **Phase 2** (forge integration) is
+implemented: credential resolution + injection, role-based forge-workflow skills, the hard
+approval gate, and the CI-status poller — one interface across GitHub / GitLab / Gitea /
+Forgejo / Bitbucket. Still ahead: **Phase 3** a web UI, **Phase 4** optional observability,
+and **Phase 5** open-source release. Details and design rationale live in
 [`docs/PLAN.md`](docs/PLAN.md).
 
 ## License

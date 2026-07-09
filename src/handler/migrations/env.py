@@ -62,6 +62,11 @@ def run_migrations_online() -> None:
         )
         with context.begin_transaction():
             context.run_migrations()
+        # Explicit commit: on Python 3.12+ the pysqlite driver only flushes a DDL
+        # statement when a *later* statement forces it, so without this the final
+        # migration's DDL and the alembic_version stamp are rolled back on close. This
+        # is a no-op when the transaction was already committed.
+        connection.commit()
 
 
 if context.is_offline_mode():
