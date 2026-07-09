@@ -1,7 +1,7 @@
 # Remote Control Wrapper — Plan of Action
 
 **Status:** Living document — update phase checkboxes and status in place as work completes. Don't append new copies of this file; overwrite it, the way a checkmark gets overwritten.
-**Last updated:** 2026-07-08 (revision 8: Phase 1 MVP vertical slice implemented — see checkboxes and README.md)
+**Last updated:** 2026-07-08 (revision 9: Phase 2 forge integration implemented — credential resolution/injection, role-based forge-workflow skills, hard approval gate, CI poller; 94 tests. See checkboxes and README.md)
 
 ---
 
@@ -210,10 +210,27 @@ agent spawning against a real `claude` binary + tmux is deferred behind mocked s
 **Definition of done:** run several projects side by side, each with its own agents, working directories, toolchain, and history, entirely through `curl` + a token, against either a live Postgres instance or the SQLite fallback — no Gitea, no Tailscale, no UI required, no state stored anywhere the control layer or API containers themselves live, nothing crosses a project boundary unless explicitly shared, no agent reaches `done` without a passing test run to show for it, and no push leaves that a local build already proved would fail.
 
 ### Phase 2 — Forge integration
-- [ ] Repo-scoped actions via `forge`: branch creation, PR open, issue linking — one interface across GitHub/GitLab/Gitea/Forgejo/Bitbucket instead of a per-host integration
-- [ ] Pin `forge` to a specific released version, not `@latest` — accepted risk given the project's youth, mitigated by not floating on a moving target
-- [ ] Credential resolution (section 3.7): `credential_ref` → injected env var at spawn, shared by `forge` and git's credential helper
-- [ ] Background poller reading back CI run results via `forge ci list` / `forge ci log`, backfilling `ci_status`/`ci_checked_at` on the log entry that recorded the push (section 3.6)
+
+Design decision (operator, 2026-07-08): forge is surfaced to the **agents as Claude Code
+skills**, not to the operator as CLI/API commands. Handler configures forge (credential
+resolution + version pin) and delivers a role-based workflow — **junior** writes and opens
+a PR, **senior** reviews and records an approval, **deploy** merges and ships — as three
+separate agents handing off through the DB + forge PR. A **hard approval gate** (same
+block-on-failure mechanism as the test/push gates) refuses any merge/deploy on a branch
+without a standing `approved` record made by a *different* agent. Live `forge`/`git` sit
+behind mockable seams (`control.forge`, `control.gitops`), matching Phase 1.
+
+- [x] Repo-scoped actions via `forge`: branch creation, PR open, issue linking — delivered as committed role skills (`.claude/skills/forge-*`, `control.skills_gen`) the agents run against an already-authenticated `forge`; one interface across GitHub/GitLab/Gitea/Forgejo/Bitbucket
+- [x] Pin `forge` to a specific released version, not `@latest` — `FORGE_VERSION` config, verified at spawn against `forge --version` (non-fatal warning on drift; the base image is the real pin)
+- [x] Credential resolution (section 3.7): `credential_ref` (`env:`/`file:`/`cmd:`) → resolved at spawn and injected as `FORGE_TOKEN` + host-specific var, plus a git credential helper reading the same value from env (raw token never on disk / in the DB); resolution is a hard fail-fast gate before the agent row is written
+- [x] Background poller reading back CI run results via `forge ci list` / `forge ci log`, backfilling `ci_status`/`ci_checked_at` on the log entry that recorded the push (section 3.6) — `control.poller`, `handler poll-ci` (one-shot sweep + optional `--watch`)
+- [x] Hard approval gate (new, from the operator decision): `approvals` table + `PreToolUse` deny on `forge … merge` / `mise run deploy` — **and a direct `git push` to a protected branch** (`PROTECTED_BRANCHES`, default `main,master`) — unless a *different* agent has approved the current branch. Approvals are **pinned to the reviewed commit** (`approved_sha`), so new post-review commits invalidate a stale approval. Senior records verdicts via `handler approve` / `handler reject`. Credential helper is **scoped to the forge host** so the token is never offered to an arbitrary HTTPS URL.
+
+Reviewed by a separate `code-reviewer` pass; findings on gate bypass (local-merge→push, stale branch-scoped approvals, host-unscoped credential helper, an over-broad merge regex, and the CI `action_required` conclusion) were all addressed before completion. 106 tests.
+
+**Note:** fixed a latent migration bug found while adding migration `0002` — under Python 3.12+ pysqlite only flushes a DDL statement when a later statement forces it, so the final migration's DDL and the `alembic_version` stamp were being rolled back on close. `migrations/env.py` now commits explicitly after `run_migrations()`. (Latent in Phase 1 because each test starts from a fresh single-migration DB.)
+
+**Definition of done:** an operator registers a project with a `credential_ref`, runs `handler forge-init`, and spawns junior/senior/deploy agents; the junior opens a PR, the senior approves via `handler approve`, and only then can the deploy agent merge — enforced by the gate, not convention — with the push→CI verdict recorded back automatically, all against any forge `forge` supports and with no raw credential ever stored.
 
 ### Phase 3 — Production UI
 - [ ] Web frontend, API-backed only (same contract as `curl`)

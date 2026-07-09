@@ -15,7 +15,7 @@ import tomllib
 from ..config import get_settings
 from ..db import repository as repo
 from ..db.engine import connection
-from . import settings_gen, tmux, worktree
+from . import credentials, forge, gitops, settings_gen, tmux, worktree
 
 
 class SpawnError(Exception):
@@ -52,6 +52,21 @@ def _shell_quote(value: str) -> str:
     return "'" + value.replace("'", "'\\''") + "'"
 
 
+def _install_git_credentials(working_dir: str, git_remote: str | None) -> None:
+    """Install a repo-local git credential helper that reads the injected token.
+
+    The helper hands back ``$FORGE_TOKEN`` from the environment, so the raw value is never
+    written to disk (README 3.7: one secret servicing both forge and git), and it is
+    *scoped to the forge host* so the token is never offered to an arbitrary HTTPS URL.
+    A no-op for ssh/unknown remotes (deploy keys handle those). Best-effort — a
+    working_dir that isn't a git repo yet shouldn't block the spawn.
+    """
+    cfg = credentials.git_credential_config(git_remote)
+    if cfg is not None:
+        key, value = cfg
+        gitops.config_local(working_dir, key, value)
+
+
 def spawn(
     project_id: str,
     name: str,
@@ -59,6 +74,7 @@ def spawn(
     subdir: str | None = None,
     worktree_branch: str | None = None,
     task: str | None = None,
+    role: str | None = None,
 ) -> dict:
     """Create and launch an agent. Returns the agent row."""
     with connection() as conn:
@@ -72,11 +88,22 @@ def spawn(
             project["root_dir"], name, subdir=subdir, worktree_branch=worktree_branch
         )
 
-        # Hard gate before any state is written or process launched.
+        # Hard gates before any state is written or process launched: the test task must
+        # exist, and a configured credential_ref must actually resolve — a broken
+        # pointer should fail fast, not leave an orphaned agent row behind.
         require_test_task(working_dir)
+        try:
+            token = credentials.resolve(project.get("credential_ref"))
+        except credentials.CredentialError as exc:
+            raise SpawnError(str(exc)) from exc
 
         agent = repo.create_agent(
-            conn, project_id=project_id, name=name, working_dir=working_dir, status="working"
+            conn,
+            project_id=project_id,
+            name=name,
+            working_dir=working_dir,
+            status="working",
+            role=role,
         )
 
     settings_path = settings_gen.write_settings(working_dir)
@@ -87,10 +114,32 @@ def spawn(
         "HANDLER_AGENT_ID": str(agent["id"]),
         "DATABASE_URL": get_settings().database_url,
     }
+    if role:
+        env["HANDLER_AGENT_ROLE"] = role
+    env.update(credentials.credential_env(token, project.get("git_remote")))
+    if token:
+        _install_git_credentials(working_dir, project.get("git_remote"))
+
+    # Verify the pinned forge version, if one is configured. Non-fatal: a version drift
+    # is recorded as a warning rather than blocking the spawn, since not every agent
+    # touches forge and the base image is the real pin (README 3.6, Phase 2).
+    forge_note = _check_forge_version(working_dir)
+
     session = tmux.session_name(project_id, name)
     command = _claude_command(task, settings_path)
     tmux.new_session(session, cwd=working_dir, command=command, env=env)
+    agent = {**agent, "forge_note": forge_note}
     return agent
+
+
+def _check_forge_version(working_dir: str) -> str | None:
+    pin = get_settings().forge_version
+    if not pin:
+        return None
+    ok, reported = forge.check_version(working_dir)
+    if ok:
+        return None
+    return f"forge version pin '{pin}' not satisfied: {reported}"
 
 
 def kill(project_id: str, name: str) -> None:

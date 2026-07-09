@@ -36,6 +36,21 @@ class Settings(BaseSettings):
     claude_bin: str = "claude"
     mise_bin: str = "mise"
     tmux_bin: str = "tmux"
+    forge_bin: str = "forge"
+    git_bin: str = "git"
+
+    # The pinned `forge` version (README 3.6 / Phase 2: pin, never float on @latest).
+    # When set, spawn verifies the injected forge matches and records a mismatch; when
+    # empty the check is skipped. Operators align this with what their base image installs.
+    forge_version: str = ""
+
+    # Branches a direct `git push` may not reach without a standing approval — this closes
+    # the "merge locally, push to main" path around the forge-merge approval gate.
+    protected_branches: str = "main,master"
+
+    @property
+    def protected_branch_set(self) -> set[str]:
+        return {b.strip() for b in self.protected_branches.split(",") if b.strip()}
 
     @property
     def effective_shared_write_token(self) -> str:

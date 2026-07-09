@@ -105,3 +105,45 @@ def fake_tmux(monkeypatch):
     monkeypatch.setattr(tmux, "list_sessions", list_sessions)
 
     return {"calls": calls, "live": live}
+
+
+@pytest.fixture
+def fake_gitops(monkeypatch):
+    """Fake the git seam: record config/add/commit, return a controllable branch/sha."""
+    from handler.control import gitops
+
+    state = {"branch": "feat/x", "sha": "abc123def456", "config": [], "add": [], "commit": []}
+
+    def config_local(cwd, key, value):
+        state["config"].append({"cwd": cwd, "key": key, "value": value})
+        return True, ""
+
+    def add(cwd, paths):
+        state["add"].append({"cwd": cwd, "paths": paths})
+        return True, ""
+
+    def commit(cwd, message):
+        state["commit"].append({"cwd": cwd, "message": message})
+        return True, ""
+
+    monkeypatch.setattr(gitops, "current_branch", lambda cwd: state["branch"])
+    monkeypatch.setattr(gitops, "head_sha", lambda cwd: state["sha"])
+    monkeypatch.setattr(gitops, "config_local", config_local)
+    monkeypatch.setattr(gitops, "add", add)
+    monkeypatch.setattr(gitops, "commit", commit)
+    return state
+
+
+@pytest.fixture
+def fake_forge(monkeypatch):
+    """Fake the forge seam: controllable version check + CI runs."""
+    from handler.control import forge
+
+    state = {"version_ok": True, "version_out": "forge 1.2.3", "ci_ok": True, "runs": []}
+
+    monkeypatch.setattr(
+        forge, "check_version", lambda cwd=".": (state["version_ok"], state["version_out"])
+    )
+    monkeypatch.setattr(forge, "ci_list", lambda cwd, sha: (state["ci_ok"], state["runs"]))
+    monkeypatch.setattr(forge, "ci_log", lambda cwd, run_id: (True, "log"))
+    return state
