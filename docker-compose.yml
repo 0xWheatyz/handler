@@ -22,6 +22,33 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  # Control layer: the `handler` CLI running the CI poller loop. Shares the database and
+  # the handler-data volume with the API. It waits for the API (which owns migrations),
+  # so RUN_MIGRATIONS is off here to avoid a startup race. Run one-shot control commands
+  # against the same image with, e.g., `docker compose run --rm control handler list`.
+  # Live agent spawning also needs `git`/`tmux` (baked in) plus bring-your-own
+  # `claude`/`forge` binaries — layer or mount those in.
+  control:
+    image: ghcr.io/0xwheatyz/handler/control:latest
+    build:
+      context: .
+      dockerfile: Dockerfile.control
+    environment:
+      DATABASE_URL: postgresql+psycopg://handler:handler@db:5432/handler
+      RUN_MIGRATIONS: "false"
+      PROJECTS_ROOT: /var/lib/handler/projects
+      # Per-project forge credentials are resolved from credential_ref pointers at spawn;
+      # export the referenced vars here when spawning agents from this container.
+      FORGE_VERSION: ${FORGE_VERSION:-}
+    volumes:
+      - handler-data:/var/lib/handler
+    depends_on:
+      db:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
   db:
     image: postgres:16-alpine
     environment:

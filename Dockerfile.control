@@ -1,0 +1,65 @@
+# syntax=docker/dockerfile:1
+
+# Control-layer image: the `handler` CLI (the write side — spawn/list/kill agents,
+# approve/reject branches, forge-init, and the CI poller). It shares the package, the
+# database, and the /var/lib/handler data volume with the API image (see Dockerfile),
+# but runs the control process instead of uvicorn.
+
+# ---- build stage: install the package + deps into an isolated venv ----
+FROM python:3.11-slim AS builder
+
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_CACHE_DIR=1
+
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+WORKDIR /build
+COPY pyproject.toml README.md ./
+COPY src ./src
+RUN pip install .
+
+# ---- runtime stage ----
+FROM python:3.11-slim
+
+# git + tmux are the live-spawning dependencies the control layer shells out to
+# (README "Requirements"); openssh-client covers git-over-ssh remotes. The `claude`
+# and `forge` binaries are bring-your-own — layer or mount them in for live agent
+# spawning and CI resolution; the poller degrades gracefully when forge is absent.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git tmux openssh-client \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV PATH="/opt/venv/bin:$PATH" \
+    PYTHONUNBUFFERED=1 \
+    # SQLite fallback lives on the /var/lib/handler volume; point DATABASE_URL at the
+    # same Postgres the API uses for a shared, real deploy (see docker-compose.yml).
+    DATABASE_URL="sqlite:////var/lib/handler/handler.db" \
+    PROJECTS_ROOT="/var/lib/handler/projects"
+
+COPY --from=builder /opt/venv /opt/venv
+
+# Ship alembic alongside the package so the image can migrate standalone if asked
+# (RUN_MIGRATIONS=true). In the compose stack the API owns migrations and the control
+# service runs with RUN_MIGRATIONS=false to avoid a startup race.
+WORKDIR /app
+COPY alembic.ini ./
+COPY src/handler/migrations ./src/handler/migrations
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+
+RUN useradd --system --home-dir /var/lib/handler --create-home handler \
+    && mkdir -p /var/lib/handler/projects \
+    && chown -R handler:handler /var/lib/handler \
+    && chmod +x /usr/local/bin/docker-entrypoint.sh
+
+USER handler
+VOLUME /var/lib/handler
+
+# Liveness: exercises the CLI end-to-end and confirms the database is reachable.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD handler list >/dev/null 2>&1 || exit 1
+
+# Default to the CI poller — the one long-running control process. Override the command
+# for one-shot control operations, e.g. `docker compose run --rm control handler list`.
+ENTRYPOINT ["docker-entrypoint.sh"]
+CMD ["handler", "poll-ci", "--watch"]
