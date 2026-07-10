@@ -16,10 +16,11 @@ from __future__ import annotations
 
 import os
 import time
+from datetime import UTC, datetime, timedelta
 
 from ..db import repository as repo
 from ..db.engine import connection
-from . import gitops, poller, skills_gen, spawn
+from . import gitops, poller, reposync, skills_gen, spawn
 
 
 class CommandError(Exception):
@@ -153,6 +154,20 @@ def _cmd_poll_ci(command: dict) -> dict:
     return poller.sweep(project_id=command.get("project_id"))
 
 
+def _cmd_sync(command: dict) -> dict:
+    project_id = command.get("project_id")
+    if not project_id:
+        raise CommandError("sync requires project_id")
+    with connection() as conn:
+        project = repo.get_project(conn, project_id)
+    if project is None:
+        raise CommandError(f"project '{project_id}' not registered")
+    try:
+        return reposync.sync_project(project)
+    except reposync.SyncError as exc:
+        raise CommandError(str(exc)) from exc
+
+
 _DISPATCH = {
     "spawn": _cmd_spawn,
     "kill": _cmd_kill,
@@ -161,6 +176,7 @@ _DISPATCH = {
     "reject": _cmd_reject,
     "forge_init": _cmd_forge_init,
     "poll_ci": _cmd_poll_ci,
+    "sync": _cmd_sync,
 }
 
 
@@ -185,6 +201,45 @@ def _run_one(command: dict) -> None:
     except Exception as exc:  # noqa: BLE001 - one command must not kill the loop
         with connection() as conn:
             repo.finish_command(conn, command["id"], "failed", error=str(exc))
+
+
+def fire_due_schedules(now: datetime | None = None) -> int:
+    """Enqueue a spawn command for every schedule whose ``next_run_at`` has passed.
+
+    Each firing becomes an ordinary queued ``spawn`` (visible in the Activity audit
+    trail) with a timestamped agent name — ``<prefix>-YYYYMMDD-HHMMSS`` — so repeated
+    runs never collide with the per-project name uniqueness. The schedule is advanced
+    *before* the spawn executes: missed intervals collapse into a single run, and a
+    failing spawn shows up as a failed command rather than a hot retry loop.
+    """
+    now = now or datetime.now(UTC)
+    fired = 0
+    with connection() as conn:
+        due = repo.due_schedules(conn, now)
+    for sched in due:
+        name = f"{sched['name_prefix']}-{now.strftime('%Y%m%d-%H%M%S')}"
+        payload: dict = {"task": sched["task"]}
+        for key in ("role", "worktree", "subdir"):
+            if sched.get(key):
+                payload[key] = sched[key]
+        with connection() as conn:
+            command = repo.enqueue_command(
+                conn,
+                "spawn",
+                project_id=sched["project_id"],
+                agent_name=name,
+                payload=payload,
+                requested_by=f"schedule:{sched['id']}",
+            )
+            repo.mark_schedule_run(
+                conn,
+                sched["id"],
+                last_run_at=now,
+                next_run_at=now + timedelta(seconds=sched["interval_seconds"]),
+                last_command_id=command["id"],
+            )
+        fired += 1
+    return fired
 
 
 def drain(worker_id: str, limit: int | None = None) -> int:
@@ -220,6 +275,10 @@ def run(
     last_ci = 0.0
     count = 0
     while iterations is None or count < iterations:
+        try:
+            fire_due_schedules()
+        except Exception:  # noqa: BLE001 - a schedule hiccup must not kill the worker
+            pass
         did_work = drain(worker_id) > 0
         now = time.monotonic()
         if ci_interval > 0 and now - last_ci >= ci_interval:

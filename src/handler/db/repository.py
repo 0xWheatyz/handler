@@ -29,6 +29,7 @@ from .tables import (
     forge_hosts,
     log_entries,
     projects,
+    schedules,
     shared_context,
 )
 from .upsert import upsert_checkmark
@@ -458,6 +459,9 @@ def create_host(
     forge_type: str,
     token_env_var: str | None = None,
     base_url: str | None = None,
+    token_enc: str | None = None,
+    ssh_public_key: str | None = None,
+    ssh_private_key_enc: str | None = None,
 ) -> dict:
     conn.execute(
         forge_hosts.insert().values(
@@ -465,6 +469,9 @@ def create_host(
             forge_type=forge_type,
             token_env_var=token_env_var,
             base_url=base_url,
+            token_enc=token_enc,
+            ssh_public_key=ssh_public_key,
+            ssh_private_key_enc=ssh_private_key_enc,
             created_at=_now(),
         )
     )
@@ -472,7 +479,14 @@ def create_host(
 
 
 def update_host(conn: Connection, hostname: str, **fields: Any) -> dict | None:
-    allowed = {"forge_type", "token_env_var", "base_url"}
+    allowed = {
+        "forge_type",
+        "token_env_var",
+        "base_url",
+        "token_enc",
+        "ssh_public_key",
+        "ssh_private_key_enc",
+    }
     values = {k: v for k, v in fields.items() if k in allowed}
     if values:
         conn.execute(
@@ -484,3 +498,100 @@ def update_host(conn: Connection, hostname: str, **fields: Any) -> dict | None:
 def delete_host(conn: Connection, hostname: str) -> bool:
     result = conn.execute(forge_hosts.delete().where(forge_hosts.c.hostname == hostname))
     return result.rowcount > 0
+
+
+# ------------------------------------------------------------------ schedules (recurring)
+
+
+def list_schedules(conn: Connection, project_id: str | None = None) -> list[dict]:
+    stmt = select(schedules)
+    if project_id is not None:
+        stmt = stmt.where(schedules.c.project_id == project_id)
+    rows = conn.execute(stmt.order_by(schedules.c.id)).all()
+    return [dict(r._mapping) for r in rows]
+
+
+def get_schedule(conn: Connection, schedule_id: int) -> dict | None:
+    row = conn.execute(select(schedules).where(schedules.c.id == schedule_id)).first()
+    return _row_to_dict(row)
+
+
+def create_schedule(
+    conn: Connection,
+    project_id: str,
+    name_prefix: str,
+    task: str,
+    interval_seconds: int,
+    next_run_at: datetime,
+    role: str | None = None,
+    worktree: str | None = None,
+    subdir: str | None = None,
+    enabled: bool = True,
+) -> dict:
+    result = conn.execute(
+        schedules.insert().values(
+            project_id=project_id,
+            name_prefix=name_prefix,
+            task=task,
+            role=role,
+            worktree=worktree,
+            subdir=subdir,
+            interval_seconds=interval_seconds,
+            enabled=enabled,
+            next_run_at=next_run_at,
+            created_at=_now(),
+        )
+    )
+    return get_schedule(conn, result.inserted_primary_key[0])
+
+
+def update_schedule(conn: Connection, schedule_id: int, **fields: Any) -> dict | None:
+    allowed = {
+        "name_prefix",
+        "task",
+        "role",
+        "worktree",
+        "subdir",
+        "interval_seconds",
+        "enabled",
+        "next_run_at",
+    }
+    values = {k: v for k, v in fields.items() if k in allowed}
+    if values:
+        conn.execute(
+            schedules.update().where(schedules.c.id == schedule_id).values(**values)
+        )
+    return get_schedule(conn, schedule_id)
+
+
+def delete_schedule(conn: Connection, schedule_id: int) -> bool:
+    result = conn.execute(schedules.delete().where(schedules.c.id == schedule_id))
+    return result.rowcount > 0
+
+
+def due_schedules(conn: Connection, now: datetime, limit: int = 50) -> list[dict]:
+    """Enabled schedules whose ``next_run_at`` has passed — the worker's sweep input."""
+    rows = conn.execute(
+        select(schedules)
+        .where(schedules.c.enabled == True, schedules.c.next_run_at <= now)  # noqa: E712
+        .order_by(schedules.c.next_run_at.asc())
+        .limit(limit)
+    ).all()
+    return [dict(r._mapping) for r in rows]
+
+
+def mark_schedule_run(
+    conn: Connection,
+    schedule_id: int,
+    last_run_at: datetime,
+    next_run_at: datetime,
+    last_command_id: int | None = None,
+) -> None:
+    """Advance a schedule after firing it (missed intervals collapse into one run)."""
+    conn.execute(
+        schedules.update()
+        .where(schedules.c.id == schedule_id)
+        .values(
+            last_run_at=last_run_at, next_run_at=next_run_at, last_command_id=last_command_id
+        )
+    )

@@ -1,5 +1,7 @@
-/* Git Servers — the forge host registry. Each row maps a host to the token env var to
- * inject at spawn (and the credential-helper scope). Holds no secrets, only the var name. */
+/* Git Servers — one entry per forge host, carrying the server's own credentials:
+ * a forge token (stored encrypted, write-only) and an SSH deploy key whose public half
+ * is shown here to paste into the forge. Projects on a configured server need no
+ * per-repo credentials. */
 "use client";
 
 import { useState } from "react";
@@ -15,7 +17,52 @@ const FORGE_OPTS = [
   { value: "bitbucket", label: "bitbucket" },
 ];
 
-const empty = { hostname: "", forge_type: "github", token_env_var: "", base_url: "" };
+const empty = {
+  hostname: "",
+  forge_type: "github",
+  token_env_var: "",
+  base_url: "",
+  token: "",
+  generate_ssh_key: true,
+};
+
+function PublicKey({ value }: { value: string }) {
+  const [copied, setCopied] = useState(false);
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      /* clipboard unavailable (http) — the key is selectable below */
+    }
+  };
+  return (
+    <div style={{ marginTop: 10 }}>
+      <div className="hstack" style={{ justifyContent: "space-between" }}>
+        <span className="eyebrow">SSH public key — add it to the forge (deploy key)</span>
+        <Button size="sm" variant="secondary" onClick={copy}>
+          {copied ? "Copied" : "Copy"}
+        </Button>
+      </div>
+      <pre
+        className="mono"
+        style={{
+          fontSize: "var(--text-xs)",
+          whiteSpace: "pre-wrap",
+          wordBreak: "break-all",
+          margin: "6px 0 0",
+          padding: 8,
+          border: "1px solid var(--border-default)",
+          borderRadius: 6,
+          userSelect: "all",
+        }}
+      >
+        {value}
+      </pre>
+    </div>
+  );
+}
 
 export function GitServersSection() {
   const s = useDashboard();
@@ -38,6 +85,8 @@ export function GitServersSection() {
       forge_type: h.forge_type,
       token_env_var: h.token_env_var ?? "",
       base_url: h.base_url ?? "",
+      token: "",
+      generate_ssh_key: false,
     });
     setEditing(true);
   };
@@ -47,8 +96,10 @@ export function GitServersSection() {
       <div className="section-head">
         <div className="section-title">Git Servers</div>
         <div className="section-desc">
-          Maps a git host to the token env var injected at spawn. The built-in host map is the
-          fallback when no row matches.
+          Each server carries its own credentials: a forge token (encrypted at rest, used by
+          agents&apos; <span className="mono">forge</span> + git) and an SSH deploy key — paste
+          the public key into the forge. New repositories are added by picking a server and
+          typing owner/name.
         </div>
       </div>
       <div className="section-body">
@@ -63,7 +114,7 @@ export function GitServersSection() {
               label="Hostname"
               value={form.hostname}
               onChange={(v) => setForm({ ...form, hostname: v })}
-              placeholder="git.corp.internal"
+              placeholder="github.com"
               disabled={editing}
             />
             <Select
@@ -73,17 +124,37 @@ export function GitServersSection() {
               options={FORGE_OPTS}
             />
             <Input
-              label="Token env var"
+              label={editing ? "Forge token (blank = keep current)" : "Forge token"}
+              type="password"
+              value={form.token}
+              onChange={(v) => setForm({ ...form, token: v })}
+              placeholder="stored encrypted; used by forge + git"
+            />
+            <Input
+              label="Base URL (optional)"
+              value={form.base_url}
+              onChange={(v) => setForm({ ...form, base_url: v })}
+              placeholder="https://git.corp.internal:8443"
+            />
+            <Input
+              label="Token env var override (optional)"
               value={form.token_env_var}
               onChange={(v) => setForm({ ...form, token_env_var: v })}
               placeholder="GITEA_TOKEN"
             />
-            <Input
-              label="Base URL"
-              value={form.base_url}
-              onChange={(v) => setForm({ ...form, base_url: v })}
-              placeholder="https://git.corp.internal (optional)"
-            />
+            <label className="field">
+              <span className="field-label">SSH deploy key</span>
+              <label className="hstack" style={{ gap: 8, cursor: "pointer" }}>
+                <input
+                  type="checkbox"
+                  checked={form.generate_ssh_key}
+                  onChange={(e) => setForm({ ...form, generate_ssh_key: e.target.checked })}
+                />
+                <span style={{ fontSize: "var(--text-sm)" }}>
+                  {editing ? "Regenerate keypair (replaces the current key)" : "Generate a keypair"}
+                </span>
+              </label>
+            </label>
           </div>
           <div className="hstack mt14">
             <Button variant="primary" disabled={s.cmd.busy || !form.hostname.trim()} onClick={save}>
@@ -109,6 +180,12 @@ export function GitServersSection() {
               </span>
               <div className="hstack">
                 <Badge tone="info">{h.forge_type}</Badge>
+                <Badge tone={h.has_token ? "success" : "neutral"}>
+                  {h.has_token ? "token stored" : "no token"}
+                </Badge>
+                <Badge tone={h.ssh_public_key ? "success" : "neutral"}>
+                  {h.ssh_public_key ? "ssh key" : "no ssh key"}
+                </Badge>
                 <Button size="sm" variant="secondary" onClick={() => edit(h)}>
                   Edit
                 </Button>
@@ -121,6 +198,7 @@ export function GitServersSection() {
               token env {h.token_env_var || "—"}
               {h.base_url ? ` · ${h.base_url}` : ""}
             </div>
+            {h.ssh_public_key && <PublicKey value={h.ssh_public_key} />}
           </Card>
         ))}
       </div>

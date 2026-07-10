@@ -24,6 +24,7 @@ import {
   type Host,
   type LogEntry,
   type Project,
+  type Schedule,
   type SharedContext,
 } from "@/lib/api";
 
@@ -31,6 +32,7 @@ export type Section =
   | "runs"
   | "repositories"
   | "agents"
+  | "schedules"
   | "approvals"
   | "servers"
   | "activity"
@@ -68,6 +70,7 @@ interface StoreValue {
   approvals: Approval[];
   hosts: Host[];
   commands: Command[];
+  schedules: Schedule[];
   shared: { log: LogEntry[]; context: SharedContext[] };
 
   cmd: CmdState;
@@ -81,13 +84,17 @@ interface StoreValue {
   killAgent: (projectId: string, name: string) => Promise<void>;
   deleteAgent: (projectId: string, name: string) => Promise<void>;
   submitAnswer: (answer: string, resume: boolean) => Promise<boolean>;
-  createProject: (b: ProjectBody) => Promise<boolean>;
+  createProject: (b: NewProjectBody) => Promise<boolean>;
   updateProject: (id: string, b: Omit<ProjectBody, "id">) => Promise<boolean>;
   deleteProject: (id: string) => Promise<void>;
+  syncProject: (id: string) => Promise<void>;
   submitApproval: (b: ApprovalBody) => Promise<void>;
   createHost: (b: HostBody) => Promise<boolean>;
   updateHost: (hostname: string, b: Omit<HostBody, "hostname">) => Promise<boolean>;
   deleteHost: (hostname: string) => Promise<void>;
+  createSchedule: (projectId: string, b: ScheduleBody) => Promise<boolean>;
+  updateSchedule: (id: number, b: Partial<ScheduleBody> & { enabled?: boolean }) => Promise<boolean>;
+  deleteSchedule: (id: number) => Promise<void>;
   pollCi: () => Promise<void>;
   setSharedKey: (key: string, value: string) => Promise<boolean>;
 }
@@ -106,6 +113,23 @@ export interface ProjectBody {
   git_remote: string;
   credential_ref: string;
 }
+/* New-project form. "server" mode = pick a configured git server + owner/name (Handler
+ * derives the remote, picks the disk location, and clones); "manual" = the old fields. */
+export interface NewProjectBody {
+  mode: "server" | "manual";
+  git_server: string;
+  repo: string;
+  id: string;
+  root_dir: string;
+  git_remote: string;
+  credential_ref: string;
+}
+export interface ScheduleBody {
+  name_prefix: string;
+  task: string;
+  interval_seconds: number;
+  role: string;
+}
 export interface ApprovalBody {
   branch: string;
   status: string;
@@ -118,6 +142,10 @@ export interface HostBody {
   forge_type: string;
   token_env_var: string;
   base_url: string;
+  /* Write-only: encrypted at rest server-side, never echoed back. Blank = no change. */
+  token: string;
+  /* Create: mint a deploy keypair. Update: replace the existing one. */
+  generate_ssh_key: boolean;
 }
 
 const Ctx = createContext<StoreValue | null>(null);
@@ -153,6 +181,7 @@ export function DashboardProvider({
   const [approvals, setApprovals] = useState<Approval[]>([]);
   const [hosts, setHosts] = useState<Host[]>([]);
   const [commands, setCommands] = useState<Command[]>([]);
+  const [schedules, setSchedules] = useState<Schedule[]>([]);
   const [shared, setShared] = useState<{ log: LogEntry[]; context: SharedContext[] }>({
     log: [],
     context: [],
@@ -256,6 +285,14 @@ export function DashboardProvider({
     }
   }, []);
 
+  const loadSchedules = useCallback(async () => {
+    try {
+      setSchedules(await clientRef.current.api<Schedule[]>("/schedules"));
+    } catch (e) {
+      swallow(e);
+    }
+  }, []);
+
   const loadShared = useCallback(async () => {
     try {
       const [logRows, context] = await Promise.all([
@@ -288,8 +325,9 @@ export function DashboardProvider({
     if (s === "approvals") await loadApprovals(selectedProjectRef.current);
     if (s === "servers") await loadHosts();
     if (s === "activity") await loadCommands();
+    if (s === "schedules") await loadSchedules();
     if (s === "shared") await loadShared();
-  }, [loadAgents, loadRun, loadApprovals, loadHosts, loadCommands, loadShared]);
+  }, [loadAgents, loadRun, loadApprovals, loadHosts, loadCommands, loadSchedules, loadShared]);
 
   // Initial load + polling loop. The first tick populates projects *and* agents (and the
   // active section) up front, so the Runs inbox is filled without waiting a poll interval.
@@ -316,9 +354,10 @@ export function DashboardProvider({
       if (s === "approvals") void loadApprovals(selectedProjectRef.current);
       if (s === "servers") void loadHosts();
       if (s === "activity") void loadCommands();
+      if (s === "schedules") void loadSchedules();
       if (s === "shared") void loadShared();
     },
-    [loadApprovals, loadHosts, loadCommands, loadShared],
+    [loadApprovals, loadHosts, loadCommands, loadSchedules, loadShared],
   );
 
   const selectProject = useCallback(
@@ -459,19 +498,53 @@ export function DashboardProvider({
   );
 
   const createProject = useCallback(
-    async (b: ProjectBody) => {
+    async (b: NewProjectBody) => {
       try {
-        await clientRef.current.api("/projects", {
+        const body: Record<string, unknown> =
+          b.mode === "server"
+            ? {
+                git_server: b.git_server,
+                repo: b.repo.trim(),
+                id: b.id.trim() || null,
+                credential_ref: b.credential_ref.trim() || null,
+              }
+            : {
+                id: b.id.trim(),
+                root_dir: b.root_dir.trim(),
+                git_remote: b.git_remote.trim() || null,
+                credential_ref: b.credential_ref.trim() || null,
+              };
+        const created = await clientRef.current.api<Project>("/projects", {
           method: "POST",
-          body: {
-            id: b.id.trim(),
-            root_dir: b.root_dir.trim(),
-            git_remote: b.git_remote.trim() || null,
-            credential_ref: b.credential_ref.trim() || null,
-          },
+          body,
         });
-        setCmd({ text: `repository '${b.id}' registered`, error: false, busy: false });
         await loadProjects();
+        // Server mode enqueues a clone; follow it so the operator sees the repo land.
+        if (created.sync_command_id != null) {
+          setCmd({ text: `repository '${created.id}': cloning…`, error: false, busy: true });
+          const final = await clientRef.current.trackCommand(created.sync_command_id);
+          if (!final) {
+            setCmd({
+              text: `repository '${created.id}' registered; clone still running (see Activity). Is the worker up?`,
+              error: false,
+              busy: false,
+            });
+          } else if (final.status === "done") {
+            setCmd({
+              text: `repository '${created.id}' registered and cloned`,
+              error: false,
+              busy: false,
+            });
+          } else {
+            setCmd({
+              text: `repository '${created.id}' registered but the clone failed — ${final.error ?? ""}`,
+              error: true,
+              busy: false,
+            });
+          }
+        } else {
+          setCmd({ text: `repository '${created.id}' registered`, error: false, busy: false });
+        }
         return true;
       } catch (e) {
         if (e instanceof AuthError) return false;
@@ -480,6 +553,13 @@ export function DashboardProvider({
       }
     },
     [loadProjects],
+  );
+
+  const syncProject = useCallback(
+    async (id: string) => {
+      await enqueueAndTrack(`/projects/${encodeURIComponent(id)}/sync`, undefined, `pull ${id}`);
+    },
+    [enqueueAndTrack],
   );
 
   const updateProject = useCallback(
@@ -549,6 +629,8 @@ export function DashboardProvider({
             forge_type: b.forge_type,
             token_env_var: b.token_env_var.trim() || null,
             base_url: b.base_url.trim() || null,
+            token: b.token.trim() || null,
+            generate_ssh_key: b.generate_ssh_key,
           },
         });
         setCmd({ text: `git server '${b.hostname}' added`, error: false, busy: false });
@@ -566,13 +648,16 @@ export function DashboardProvider({
   const updateHost = useCallback(
     async (hostname: string, b: Omit<HostBody, "hostname">) => {
       try {
+        const body: Record<string, unknown> = {
+          forge_type: b.forge_type,
+          token_env_var: b.token_env_var.trim() || null,
+          base_url: b.base_url.trim() || null,
+        };
+        if (b.token.trim()) body.token = b.token.trim();
+        if (b.generate_ssh_key) body.regenerate_ssh_key = true;
         await clientRef.current.api(`/hosts/${encodeURIComponent(hostname)}`, {
           method: "PATCH",
-          body: {
-            forge_type: b.forge_type,
-            token_env_var: b.token_env_var.trim() || null,
-            base_url: b.base_url.trim() || null,
-          },
+          body,
         });
         setCmd({ text: `git server '${hostname}' updated`, error: false, busy: false });
         await loadHosts();
@@ -584,6 +669,63 @@ export function DashboardProvider({
       }
     },
     [loadHosts],
+  );
+
+  const createSchedule = useCallback(
+    async (projectId: string, b: ScheduleBody) => {
+      try {
+        await clientRef.current.api(`/projects/${encodeURIComponent(projectId)}/schedules`, {
+          method: "POST",
+          body: {
+            name_prefix: b.name_prefix.trim(),
+            task: b.task.trim(),
+            interval_seconds: b.interval_seconds,
+            role: b.role || null,
+          },
+        });
+        setCmd({
+          text: `schedule '${b.name_prefix}' created — first run on the worker's next pass`,
+          error: false,
+          busy: false,
+        });
+        await loadSchedules();
+        return true;
+      } catch (e) {
+        if (e instanceof AuthError) return false;
+        setCmd({ text: (e as Error).message, error: true, busy: false });
+        return false;
+      }
+    },
+    [loadSchedules],
+  );
+
+  const updateSchedule = useCallback(
+    async (id: number, b: Partial<ScheduleBody> & { enabled?: boolean }) => {
+      try {
+        await clientRef.current.api(`/schedules/${id}`, { method: "PATCH", body: b });
+        await loadSchedules();
+        return true;
+      } catch (e) {
+        if (e instanceof AuthError) return false;
+        setCmd({ text: (e as Error).message, error: true, busy: false });
+        return false;
+      }
+    },
+    [loadSchedules],
+  );
+
+  const deleteSchedule = useCallback(
+    async (id: number) => {
+      try {
+        await clientRef.current.api(`/schedules/${id}`, { method: "DELETE" });
+        setCmd({ text: `schedule ${id} removed`, error: false, busy: false });
+        await loadSchedules();
+      } catch (e) {
+        if (e instanceof AuthError) return;
+        setCmd({ text: (e as Error).message, error: true, busy: false });
+      }
+    },
+    [loadSchedules],
   );
 
   const deleteHost = useCallback(
@@ -641,6 +783,7 @@ export function DashboardProvider({
     approvals,
     hosts,
     commands,
+    schedules,
     shared,
     cmd,
     lastError,
@@ -653,10 +796,14 @@ export function DashboardProvider({
     createProject,
     updateProject,
     deleteProject,
+    syncProject,
     submitApproval,
     createHost,
     updateHost,
     deleteHost,
+    createSchedule,
+    updateSchedule,
+    deleteSchedule,
     pollCi,
     setSharedKey,
   };

@@ -7,6 +7,7 @@ import { useDashboard, type Section } from "@/components/store";
 import { RunsSection } from "@/components/sections/RunsSection";
 import { RepositoriesSection } from "@/components/sections/RepositoriesSection";
 import { AgentsSection } from "@/components/sections/AgentsSection";
+import { SchedulesSection } from "@/components/sections/SchedulesSection";
 import { ApprovalsSection } from "@/components/sections/ApprovalsSection";
 import { GitServersSection } from "@/components/sections/GitServersSection";
 import { ActivitySection } from "@/components/sections/ActivitySection";
@@ -28,6 +29,7 @@ const NAV: NavDef[] = [
   },
   { key: "repositories", label: "Repositories", count: (s) => s.projects.length },
   { key: "agents", label: "Agents", count: (s) => s.agents.length },
+  { key: "schedules", label: "Schedules", count: (s) => s.schedules.length },
   { key: "approvals", label: "Approvals", count: (s) => s.approvals.length },
   { key: "servers", label: "Git Servers", count: (s) => s.hosts.length },
   { key: "activity", label: "Activity", count: (s) => s.commands.length },
@@ -90,6 +92,7 @@ export function Dashboard({ onSignOut }: { onSignOut: () => void }) {
           <div className="main-scroll">
             {s.section === "repositories" && <RepositoriesSection />}
             {s.section === "agents" && <AgentsSection />}
+            {s.section === "schedules" && <SchedulesSection />}
             {s.section === "approvals" && <ApprovalsSection />}
             {s.section === "servers" && <GitServersSection />}
             {s.section === "activity" && <ActivitySection />}

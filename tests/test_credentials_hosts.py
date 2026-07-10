@@ -46,8 +46,8 @@ def test_credential_config_uses_registry_base_url(env):
     assert "$FORGE_TOKEN" in value
 
 
-def test_db_scheme_is_reserved_not_yet_resolvable():
+def test_db_scheme_requires_host_form():
     import pytest
 
-    with pytest.raises(credentials.CredentialError, match="reserved"):
+    with pytest.raises(credentials.CredentialError, match="db:host:<hostname>"):
         credentials.resolve("db:42")

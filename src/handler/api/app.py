@@ -14,7 +14,16 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
 from ..config import get_settings
-from .routes import agents, approvals, commands, hosts, interaction, projects, shared
+from .routes import (
+    agents,
+    approvals,
+    commands,
+    hosts,
+    interaction,
+    projects,
+    schedules,
+    shared,
+)
 
 _STATIC_DIR = Path(__file__).parent / "static"
 
@@ -38,6 +47,7 @@ def create_app() -> FastAPI:
     app.include_router(approvals.router)
     app.include_router(commands.router)
     app.include_router(hosts.router)
+    app.include_router(schedules.router)
     app.include_router(shared.router)
 
     # Optional CORS, only for operators who host the UI on a different origin than the

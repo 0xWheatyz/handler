@@ -103,7 +103,8 @@ Configuration is entirely environment-driven (see [`.env.example`](.env.example)
 | `SHARED_CONTEXT_WRITE_TOKEN` | Higher-trust token gating `PUT /shared/context/:key` | falls back to `AUTH_TOKEN` |
 | `ADMIN_TOKEN` | Gates the web control surface (enqueue commands, project/host CRUD, credential edits) | falls back to `AUTH_TOKEN` |
 | `WEBHOOK_URL` | Generic target for the `Notification` hook (ntfy, Slack, …) | unset → no-op |
-| `PROJECTS_ROOT` | Base dir for per-project roots / worktrees | `./projects` |
+| `HANDLER_SECRET_KEY` | Fernet key encrypting git-server tokens + SSH keys at rest (set the same value on API and control) | unset → secret store disabled |
+| `PROJECTS_ROOT` | Base dir for per-project roots / worktrees / auto-clones | `./projects` |
 | `CLAUDE_BIN` / `MISE_BIN` / `TMUX_BIN` / `FORGE_BIN` / `GIT_BIN` | Binary overrides | `claude` / `mise` / `tmux` / `forge` / `git` |
 | `FORGE_VERSION` | Pinned forge version verified at spawn (Phase 2) | unset → skip check |
 | `PROTECTED_BRANCHES` | Branches a direct push needs an approval to reach (Phase 2) | `main,master` |
@@ -193,25 +194,42 @@ and the worker in the control container executes it and writes the result back:
 
 What the dashboard can now do (all state-changing actions require `ADMIN_TOKEN`):
 
-- **Projects** — create / edit / delete (`root_dir`, `git_remote`, `credential_ref`).
+- **Git servers** — one entry per forge host, and the server **owns its credentials**:
+  - a **forge token**, submitted once and stored **encrypted** (`HANDLER_SECRET_KEY`,
+    Fernet) — the API never returns it, only a `has_token` flag. Every project on that
+    server uses it automatically (for both `forge` and git-over-HTTPS), no per-repo setup.
+  - an **SSH deploy key** (ed25519), generated server-side; the **public key is shown in
+    the dashboard** to paste into GitHub/Gitea/… as a deploy or account key. The private
+    key is encrypted at rest and only ever materialized (0600) in the control container.
+- **Projects** — add a repo by picking a **configured git server** and typing
+  **`owner/name`** — that's the whole form. Handler derives the remote (ssh when the
+  server has a deploy key, https via the stored token otherwise), computes `root_dir`
+  under `PROJECTS_ROOT` (stateless workflows don't care where the clone lives), and
+  enqueues a `sync` command so the worker clones it. Manual mode (existing `root_dir`)
+  still works; every project with a remote gets a **Pull now** button, and spawn always
+  pulls first.
+- **Schedules** — recurring agent spawns: a name prefix, a prompt, and an interval. The
+  worker fires each due schedule as a normal queued `spawn` with a timestamped agent name
+  (`nightly-20260710-090000`), so runs are fresh, stateless agents and show up in
+  Activity. The canonical prompt keeps its state in the repo: *"Read @notes.md, continue
+  from there; before finishing, overwrite that file."*
 - **Agents** — spawn (name, role, worktree/subdir, task) and kill via the queue; delete the
   row; plus the existing checkmark / log / answer-resume views.
 - **Approvals** — record an operator verdict per branch (approve/reject); the deploy gate
   treats an operator verdict as a genuine second party (no self-approval).
-- **Forge hosts** — a registry mapping a host to the token env var to inject at spawn, so
-  self-hosted forges work without a code change (the built-in host map is the fallback).
-- **Credentials** — manage a project's `credential_ref` **pointer**. The DB still never
-  stores a raw token: web-settable schemes are `env:` / `file:` / `db:` (the `cmd:` scheme
-  is CLI-only, since it would run an arbitrary command in the control container). `db:` is
-  reserved for a future encrypted secret store.
+- **Credentials** — a project's `credential_ref` **pointer** still overrides everything.
+  Web-settable schemes are `env:` / `file:` / `db:host:<hostname>` (the `cmd:` scheme is
+  CLI-only, since it would run an arbitrary command in the control container).
+  `db:host:<hostname>` reads the named git server's encrypted stored token.
 - **Activity** — every enqueued command with its status (queued → running → done/failed) —
   the audit log of what the dashboard triggered. The UI polls `GET /commands/{id}` for
   live status.
 
 The command queue is exposed over HTTP as `POST …/agents/spawn`, `POST …/agents/{n}/kill`,
-`POST …/approvals`, `POST …/forge-init`, `POST …/poll-ci`, and `GET /commands[/{id}]`;
-hosts as `/hosts`; project mutation as `PATCH`/`DELETE /projects/{id}`. Run the worker with
-`handler worker` (the control image's default command).
+`POST …/approvals`, `POST …/forge-init`, `POST …/poll-ci`, `POST …/sync`, and
+`GET /commands[/{id}]`; hosts as `/hosts`; schedules as `/schedules` +
+`/projects/{id}/schedules`; project mutation as `PATCH`/`DELETE /projects/{id}`. Run the
+worker with `handler worker` (the control image's default command).
 
 ## Control CLI
 
@@ -223,6 +241,7 @@ handler spawn  --project leeworks-api --name junior --role junior --worktree fea
 handler list   [--project leeworks-api]
 handler attach --project leeworks-api --name junior
 handler kill   --project leeworks-api --name junior
+handler sync   --project leeworks-api               # clone or fast-forward the repo now
 
 # Phase 2 — forge workflow
 handler forge-init --project leeworks-api          # write + commit the role skills
@@ -253,6 +272,10 @@ All routes require `Authorization: Bearer <AUTH_TOKEN>`. `GET /health` is unauth
 | `GET /projects/:p/agents/:name/log` | The agent's log history (paginated) |
 | `POST /projects/:p/agents/:name/answer` | Backfill the operator's answer to an open question |
 | `POST /projects/:p/agents/:name/resume` | Feed the answer back via `claude --resume` |
+| `GET /hosts` · `POST /hosts` · `PATCH`/`DELETE /hosts/:h` | Git servers (token stored encrypted; `ssh_public_key` returned) |
+| `GET /schedules` · `GET`/`POST /projects/:p/schedules` | Recurring agent spawns |
+| `PATCH`/`DELETE /schedules/:id` | Edit / pause / remove a schedule |
+| `POST /projects/:p/sync` | Clone-or-pull the project's repo (enqueued) |
 | `GET /shared/log` | Cross-project feed of entries explicitly marked `global` |
 | `GET /shared/context` · `GET /shared/context/:key` | Read shared key/value facts |
 | `PUT /shared/context/:key` | Write a shared fact — requires the shared-write token |
@@ -304,22 +327,45 @@ project's `credential_ref` (and optionally a `FORGE_VERSION` pin).
   the runs tied to that commit and backfills the authoritative verdict — one interface,
   any forge, no inbound webhook.
 
-### Credentials — resolution, not storage (README 3.7)
+### Credentials — resolution over raw storage (README 3.7)
 
-The database never stores a raw token. A project's `credential_ref` is a **pointer**:
+The database never stores a *usable* secret. A project's `credential_ref` is a **pointer**:
 
 | Form | Meaning |
 |---|---|
 | `env:VAR_NAME` | read the value from an environment variable |
 | `file:/path` | read (and strip) the value from a file |
-| `cmd:some command` | run the command; its stdout is the value |
+| `cmd:some command` | run the command; its stdout is the value (CLI-only) |
+| `db:host:<hostname>` | decrypt the named git server's stored token (`HANDLER_SECRET_KEY`) |
 
-At spawn the control layer resolves the pointer and injects the value into that one
-agent's environment as `FORGE_TOKEN` (plus the host-specific `GITHUB_TOKEN` /
-`GITEA_TOKEN` / … when the remote is recognized). A repo-local git credential helper is
-installed that hands the same value back for HTTPS push/pull — so one secret services both
-`forge` and `git`, and the raw token lives only in the process environment, never on disk
-or in the database.
+When a project has **no** `credential_ref`, the git server matching its remote supplies
+the token automatically (its stored token, decrypted at spawn) — so projects added from a
+configured server need zero per-repo credential setup.
+
+At spawn the control layer resolves the token and injects it into that one agent's
+environment as `FORGE_TOKEN` (plus the host-specific `GITHUB_TOKEN` / `GITEA_TOKEN` / …
+when the remote is recognized). A repo-local git credential helper is installed that
+hands the same value back for HTTPS push/pull — so one secret services both `forge` and
+`git`, and the raw token lives only in the process environment. For **SSH remotes** the
+server's deploy key is materialized to a 0600 file in the control container and pinned
+via `GIT_SSH_COMMAND` / repo-local `core.sshCommand`, so agents' pushes over ssh just
+work. Tokens and private keys stored in the database are Fernet-encrypted with
+`HANDLER_SECRET_KEY`; without the key a database dump holds only ciphertext.
+
+### Scheduled agents
+
+A **schedule** spawns a fresh agent every `interval_seconds`: pick a repository, a name
+prefix, a role, and a standing prompt. On each firing the worker enqueues an ordinary
+`spawn` command (visible in Activity) with a timestamped agent name, and the repo is
+pulled before the run — every run starts stateless from the remote's latest state.
+Continuity lives in the repo itself; the canonical prompt is:
+
+> Read @notes.md and continue from where it left off. Before finishing, overwrite
+> @notes.md with the current state so the next run can pick up from there.
+
+Missed intervals (worker down) collapse into a single catch-up run. Manage schedules in
+the dashboard's **Schedules** pane or via `GET/POST /projects/:p/schedules`,
+`PATCH`/`DELETE /schedules/:id`.
 
 ## Development
 
@@ -341,7 +387,7 @@ and `control.spawn.resume` — are the mock points that stand in for live
 
 The dashboard (`frontend/`) is a **Next.js** app (React + TypeScript) that builds to a
 **static export** — the `Claude Activity` Control Center: a left-nav hub over Runs,
-Repositories, Agents, Approvals, Git Servers, Activity, and Shared. It is a pure client of
+Repositories, Agents, Schedules, Approvals, Git Servers, Activity, and Shared. It is a pure client of
 the API (same contract as `curl`): the browser prompts for the token once, stores it in
 `localStorage`, and attaches it to every call. All API values render as React text
 (never `dangerouslySetInnerHTML`) so agent-authored strings can't inject markup.
