@@ -1,8 +1,9 @@
-"""Agent listing/registration and the read views (checkmark, log).
+"""Agent listing/registration, read views (checkmark, log), and lifecycle actions.
 
-The agent *row* is registered here (the API mirror listed in README 3.3); the agent
-*process* is spawned by the control CLI. All routes are nested under
-``/projects/{project}`` so nothing crosses a project boundary.
+The agent *row* is registered here; the agent *process* (tmux + claude) is created by the
+control worker, so ``spawn``/``kill`` enqueue a command (admin-gated) rather than acting
+in-process — the API container has no tmux/git/claude and does not own the sessions. All
+routes are nested under ``/projects/{project}`` so nothing crosses a project boundary.
 """
 
 from __future__ import annotations
@@ -12,8 +13,8 @@ from sqlalchemy import Connection
 from sqlalchemy.exc import IntegrityError
 
 from ...db import repository as repo
-from ..deps import db_conn, require_auth
-from ..schemas import AgentIn, AgentOut, CheckmarkOut, LogEntryOut
+from ..deps import db_conn, require_admin, require_auth
+from ..schemas import AgentIn, AgentOut, CheckmarkOut, CommandOut, LogEntryOut, SpawnIn
 from .common import resolve_agent
 
 router = APIRouter(
@@ -49,9 +50,56 @@ def create_agent(project: str, body: AgentIn, conn: Connection = Depends(db_conn
             name=body.name,
             working_dir=body.working_dir,
             status=body.status,
+            role=body.role,
         )
     except IntegrityError as exc:  # pragma: no cover - guarded above
         raise HTTPException(status.HTTP_409_CONFLICT, detail="agent exists") from exc
+
+
+@router.post(
+    "/spawn",
+    response_model=CommandOut,
+    status_code=status.HTTP_202_ACCEPTED,
+    dependencies=[Depends(require_admin)],
+)
+def enqueue_spawn(project: str, body: SpawnIn, conn: Connection = Depends(db_conn)) -> dict:
+    """Enqueue a spawn; the worker creates the agent row + tmux session and reports back."""
+    _require_project(conn, project)
+    if repo.get_agent_by_name(conn, project, body.name) is not None:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail=f"agent '{body.name}' already exists in project '{project}'",
+        )
+    payload = body.model_dump(exclude={"name"}, exclude_none=True)
+    return repo.enqueue_command(
+        conn,
+        "spawn",
+        project_id=project,
+        agent_name=body.name,
+        payload=payload,
+        requested_by="operator:web",
+    )
+
+
+@router.post(
+    "/{name}/kill",
+    response_model=CommandOut,
+    status_code=status.HTTP_202_ACCEPTED,
+    dependencies=[Depends(require_admin)],
+)
+def enqueue_kill(project: str, name: str, conn: Connection = Depends(db_conn)) -> dict:
+    resolve_agent(conn, project, name)
+    return repo.enqueue_command(
+        conn, "kill", project_id=project, agent_name=name, requested_by="operator:web"
+    )
+
+
+@router.delete("/{name}", dependencies=[Depends(require_admin)])
+def delete_agent(project: str, name: str, conn: Connection = Depends(db_conn)) -> dict:
+    """Remove the agent row (does not kill a live session — kill first)."""
+    resolve_agent(conn, project, name)
+    repo.delete_agent(conn, project, name)
+    return {"deleted": name}
 
 
 @router.get("/{name}/checkmark", response_model=CheckmarkOut)

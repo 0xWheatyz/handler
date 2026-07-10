@@ -21,7 +21,16 @@ from typing import Any
 
 from sqlalchemy import Connection, select
 
-from .tables import agents, approvals, checkmarks, log_entries, projects, shared_context
+from .tables import (
+    agents,
+    approvals,
+    checkmarks,
+    commands,
+    forge_hosts,
+    log_entries,
+    projects,
+    shared_context,
+)
 from .upsert import upsert_checkmark
 
 
@@ -237,12 +246,19 @@ def record_approval(
     project_id: str,
     branch: str,
     status: str,
-    approved_by_agent_id: int,
+    approved_by_agent_id: int | None = None,
     pr_ref: str | None = None,
     note: str | None = None,
     approved_sha: str | None = None,
+    actor: str | None = None,
 ) -> dict:
-    """Insert an approval/rejection record for a branch (the senior agent's verdict)."""
+    """Insert an approval/rejection record for a branch.
+
+    An agent verdict passes ``approved_by_agent_id``; an operator verdict from the
+    dashboard passes ``actor`` (e.g. ``operator:web``) and leaves the agent id null. The
+    deploy gate treats a null agent id as a genuinely different party than any pushing
+    agent, so operator approvals satisfy the "no self-approval" rule.
+    """
     result = conn.execute(
         approvals.insert().values(
             project_id=project_id,
@@ -251,6 +267,7 @@ def record_approval(
             pr_ref=pr_ref,
             status=status,
             approved_by_agent_id=approved_by_agent_id,
+            actor=actor,
             note=note,
             created_at=_now(),
         )
@@ -258,6 +275,17 @@ def record_approval(
     approval_id = result.inserted_primary_key[0]
     row = conn.execute(select(approvals).where(approvals.c.id == approval_id)).first()
     return dict(row._mapping)
+
+
+def list_approvals(
+    conn: Connection, project_id: str, branch: str | None = None, limit: int = 100
+) -> list[dict]:
+    """Approvals for a project (optionally one branch), newest first — the UI's view."""
+    stmt = select(approvals).where(approvals.c.project_id == project_id)
+    if branch is not None:
+        stmt = stmt.where(approvals.c.branch == branch)
+    rows = conn.execute(stmt.order_by(approvals.c.id.desc()).limit(limit)).all()
+    return [dict(r._mapping) for r in rows]
 
 
 def update_ci_status(conn: Connection, log_entry_id: int, ci_status: str) -> bool:
@@ -291,3 +319,168 @@ def set_shared_context(conn: Connection, key: str, value: str, agent_id: int | N
     )
     conn.execute(stmt)
     return get_shared_context_key(conn, key)
+
+
+# --------------------------------------------------- projects & agents (web management)
+
+
+def update_project(conn: Connection, project_id: str, **fields: Any) -> dict | None:
+    """Patch a project's editable columns (root_dir / git_remote / credential_ref).
+
+    Only known columns are applied; an empty patch is a no-op read. Returns the row.
+    """
+    allowed = {"root_dir", "git_remote", "credential_ref"}
+    values = {k: v for k, v in fields.items() if k in allowed}
+    if values:
+        conn.execute(projects.update().where(projects.c.id == project_id).values(**values))
+    return get_project(conn, project_id)
+
+
+def delete_project(conn: Connection, project_id: str) -> bool:
+    result = conn.execute(projects.delete().where(projects.c.id == project_id))
+    return result.rowcount > 0
+
+
+def delete_agent(conn: Connection, project_id: str, name: str) -> bool:
+    result = conn.execute(
+        agents.delete().where(agents.c.project_id == project_id, agents.c.name == name)
+    )
+    return result.rowcount > 0
+
+
+# ------------------------------------------------------------- command queue / audit log
+
+
+def enqueue_command(
+    conn: Connection,
+    type: str,
+    *,
+    project_id: str | None = None,
+    agent_name: str | None = None,
+    payload: dict | None = None,
+    requested_by: str | None = None,
+) -> dict:
+    """Insert a ``queued`` control command for the worker to pick up. Returns the row."""
+    result = conn.execute(
+        commands.insert().values(
+            project_id=project_id,
+            agent_name=agent_name,
+            type=type,
+            payload=payload,
+            status="queued",
+            requested_by=requested_by,
+            created_at=_now(),
+        )
+    )
+    return get_command(conn, result.inserted_primary_key[0])
+
+
+def get_command(conn: Connection, command_id: int) -> dict | None:
+    row = conn.execute(select(commands).where(commands.c.id == command_id)).first()
+    return _row_to_dict(row)
+
+
+def list_commands(
+    conn: Connection, project_id: str | None = None, limit: int = 100, offset: int = 0
+) -> list[dict]:
+    stmt = select(commands)
+    if project_id is not None:
+        stmt = stmt.where(commands.c.project_id == project_id)
+    rows = conn.execute(
+        stmt.order_by(commands.c.id.desc()).limit(limit).offset(offset)
+    ).all()
+    return [dict(r._mapping) for r in rows]
+
+
+def claim_next_command(conn: Connection, worker_id: str) -> dict | None:
+    """Atomically claim the oldest queued command, flipping it to ``running``.
+
+    Postgres uses ``FOR UPDATE SKIP LOCKED`` so multiple workers never grab the same row;
+    on SQLite (single writer per transaction) the guarded ``WHERE status='queued'`` update
+    plus a rowcount check is enough. Returns the claimed row, or ``None`` when the queue is
+    empty or another worker won the race.
+    """
+    sel = (
+        select(commands.c.id)
+        .where(commands.c.status == "queued")
+        .order_by(commands.c.id.asc())
+        .limit(1)
+    )
+    if conn.dialect.name == "postgresql":
+        sel = sel.with_for_update(skip_locked=True)
+    row = conn.execute(sel).first()
+    if row is None:
+        return None
+    command_id = row[0]
+    result = conn.execute(
+        commands.update()
+        .where(commands.c.id == command_id, commands.c.status == "queued")
+        .values(status="running", claimed_by=worker_id, claimed_at=_now())
+    )
+    if result.rowcount != 1:
+        return None  # lost the race to another worker
+    return get_command(conn, command_id)
+
+
+def finish_command(
+    conn: Connection,
+    command_id: int,
+    status: str,
+    result: dict | None = None,
+    error: str | None = None,
+) -> None:
+    """Mark a claimed command ``done`` or ``failed`` with its result/error."""
+    conn.execute(
+        commands.update()
+        .where(commands.c.id == command_id)
+        .values(status=status, result=result, error=error, finished_at=_now())
+    )
+
+
+# ---------------------------------------------------------------- forge hosts (registry)
+
+
+def list_hosts(conn: Connection) -> list[dict]:
+    rows = conn.execute(select(forge_hosts).order_by(forge_hosts.c.hostname)).all()
+    return [dict(r._mapping) for r in rows]
+
+
+def get_host(conn: Connection, hostname: str) -> dict | None:
+    row = conn.execute(
+        select(forge_hosts).where(forge_hosts.c.hostname == hostname)
+    ).first()
+    return _row_to_dict(row)
+
+
+def create_host(
+    conn: Connection,
+    hostname: str,
+    forge_type: str,
+    token_env_var: str | None = None,
+    base_url: str | None = None,
+) -> dict:
+    conn.execute(
+        forge_hosts.insert().values(
+            hostname=hostname,
+            forge_type=forge_type,
+            token_env_var=token_env_var,
+            base_url=base_url,
+            created_at=_now(),
+        )
+    )
+    return get_host(conn, hostname)
+
+
+def update_host(conn: Connection, hostname: str, **fields: Any) -> dict | None:
+    allowed = {"forge_type", "token_env_var", "base_url"}
+    values = {k: v for k, v in fields.items() if k in allowed}
+    if values:
+        conn.execute(
+            forge_hosts.update().where(forge_hosts.c.hostname == hostname).values(**values)
+        )
+    return get_host(conn, hostname)
+
+
+def delete_host(conn: Connection, hostname: str) -> bool:
+    result = conn.execute(forge_hosts.delete().where(forge_hosts.c.hostname == hostname))
+    return result.rowcount > 0

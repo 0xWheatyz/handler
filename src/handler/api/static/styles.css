@@ -90,6 +90,7 @@ textarea { resize: vertical; }
 .tabs button.active { background: var(--accent); border-color: var(--accent); color: #fff; }
 
 .banner { margin: 0; padding: 0.5rem 1rem; background: rgba(229,72,77,0.12); }
+.banner.ok { background: rgba(53,194,106,0.12); color: var(--green); }
 
 /* --- layout --- */
 .layout {
@@ -177,3 +178,27 @@ table.log th { color: var(--muted); font-weight: 500; font-size: 0.8rem; }
 
 .badge-visibility-project { background: rgba(90,101,114,0.2); color: var(--grey); }
 .badge-visibility-global  { background: transparent; color: var(--blue); border-color: var(--blue); }
+
+.badge-role-junior { background: rgba(76,141,255,0.14); color: var(--blue); }
+.badge-role-senior { background: rgba(232,163,61,0.16); color: var(--amber); }
+.badge-role-deploy { background: rgba(53,194,106,0.16); color: var(--green); }
+
+.badge-approval-approved { background: rgba(53,194,106,0.18); color: var(--green); }
+.badge-approval-rejected { background: rgba(229,72,77,0.18); color: var(--red); }
+
+.badge-cmd-queued  { background: rgba(90,101,114,0.2); color: var(--grey); }
+.badge-cmd-running { background: rgba(232,163,61,0.18); color: var(--amber); }
+.badge-cmd-done    { background: rgba(53,194,106,0.18); color: var(--green); }
+.badge-cmd-failed  { background: rgba(229,72,77,0.18); color: var(--red); }
+
+/* --- management forms --- */
+.form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 0.5rem; margin-bottom: 0.5rem; }
+.toolbar { display: flex; gap: 0.5rem; margin-top: 0.6rem; align-items: center; }
+.spacer { flex: 1; }
+h3 { display: flex; align-items: center; gap: 0.5rem; }
+button.small { padding: 0.2rem 0.55rem; font-size: 0.8rem; }
+button.danger { color: var(--red); border-color: var(--border); }
+button.danger:hover:not(:disabled) { border-color: var(--red); }
+.small { font-size: 0.8rem; }
+.card > .form-grid + .muted { margin: 0.25rem 0 0; }
+.card code { background: var(--bg); padding: 0.05rem 0.3rem; border-radius: 4px; }

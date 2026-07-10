@@ -1,8 +1,9 @@
-"""Answer + resume routes, including the mocked control seam."""
+"""Answer + resume routes. Resume now enqueues a command for the control worker (the tmux
+session lives in the control container), so we assert on the queued command, not an
+in-process seam call."""
 
 from __future__ import annotations
 
-from handler.control import spawn
 from handler.db import repository as repo
 from handler.db.engine import get_engine
 
@@ -43,34 +44,29 @@ def test_answer_with_no_open_question_is_404(client, auth, env):
     assert r.status_code == 404
 
 
-def test_resume_calls_control_seam(client, auth, env, monkeypatch):
+def test_resume_enqueues_command_with_the_answer(client, auth, env):
     _seed_agent_with_question(env)
     client.post(
         "/projects/proj/agents/api/answer", json={"answer": "Postgres"}, headers=auth
     )
 
-    calls = []
-
-    def fake_resume(agent, answer):
-        calls.append((agent["name"], answer))
-        return True, "delivered"
-
-    monkeypatch.setattr(spawn, "resume", fake_resume)
-
     r = client.post("/projects/proj/agents/api/resume", json={}, headers=auth)
-    assert r.status_code == 200
-    assert r.json()["resumed"] is True
-    assert calls == [("api", "Postgres")]
+    assert r.status_code == 202
+    body = r.json()
+    assert body["type"] == "resume"
+    assert body["agent_name"] == "api"
+    assert body["status"] == "queued"
+    # The API resolves the stored answer and hands it to the worker via the payload.
+    assert body["payload"]["answer"] == "Postgres"
 
     with get_engine().begin() as conn:
-        a = repo.get_agent_by_name(conn, "proj", "api")
-        assert a["status"] == "working"
+        commands = repo.list_commands(conn, project_id="proj")
+        assert [c["type"] for c in commands] == ["resume"]
 
 
-def test_resume_without_answer_is_400(client, auth, env, monkeypatch):
+def test_resume_without_answer_is_400(client, auth, env):
     with get_engine().begin() as conn:
         repo.create_project(conn, "proj", "/tmp/proj")
         repo.create_agent(conn, "proj", "api", "/tmp/proj/api")
-    monkeypatch.setattr(spawn, "resume", lambda a, ans: (True, "x"))
     r = client.post("/projects/proj/agents/api/resume", json={}, headers=auth)
     assert r.status_code == 400

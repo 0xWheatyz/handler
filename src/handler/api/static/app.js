@@ -6,6 +6,10 @@
  *
  * Security: every value from the API is rendered with Alpine `x-text` (textContent)
  * in index.html — never x-html — so agent-authored strings can't inject markup.
+ *
+ * Control actions (spawn/kill/resume/approve/…) are async: the API enqueues a command
+ * and the control worker executes it. enqueueAndTrack() posts the command, then polls
+ * GET /commands/{id} until it reaches done/failed, surfacing the result in a banner.
  */
 
 const TOKEN_KEY = "handler_token";
@@ -35,16 +39,25 @@ function app() {
     logLimit: LOG_LIMIT,
     logOffset: 0,
     shared: { log: [], context: [] },
+    approvals: [],
+    hosts: [],
+    commands: [],
 
-    // --- answer form ---
+    // --- forms ---
     answerText: "",
     answerBusy: false,
     answerMsg: "",
     answerError: false,
+    spawnForm: { name: "", role: "", placement: "worktree", worktree: "", subdir: "", task: "" },
+    approvalForm: { branch: "", status: "approved", agent_name: "", sha: "", note: "" },
+    projectForm: { id: "", root_dir: "", git_remote: "", credential_ref: "", _editing: false },
+    hostForm: { hostname: "", forge_type: "github", token_env_var: "", base_url: "", _editing: false },
+    sharedForm: { key: "", value: "" },
 
     // --- ui ---
     tab: "agents",
     lastError: "",
+    cmd: { text: "", error: false, busy: false },
     _poll: null,
 
     get selectedAgent() {
@@ -120,7 +133,10 @@ function app() {
       if (!res.ok) {
         let detail = `${res.status}`;
         try {
-          detail = (await res.json()).detail || detail;
+          const body = await res.json();
+          detail = body.detail || detail;
+          // Pydantic 422 returns a list of validation errors.
+          if (Array.isArray(detail)) detail = detail.map((d) => d.msg || JSON.stringify(d)).join("; ");
         } catch (_) {}
         const err = new Error(detail);
         err.status = res.status;
@@ -128,6 +144,50 @@ function app() {
       }
       if (res.status === 204) return null;
       return res.json();
+    },
+
+    _sleep(ms) {
+      return new Promise((r) => setTimeout(r, ms));
+    },
+
+    /* Post a control action, then poll its command to a terminal state. */
+    async enqueueAndTrack(path, body, label) {
+      this.cmd = { text: `${label}: queued…`, error: false, busy: true };
+      try {
+        const command = await this.api(path, { method: "POST", body });
+        return await this._trackCommand(command.id, label);
+      } catch (e) {
+        if (e instanceof AuthError) return null;
+        this.cmd = { text: `${label} failed: ${e.message}`, error: true, busy: false };
+        return null;
+      }
+    },
+
+    async _trackCommand(id, label) {
+      for (let i = 0; i < 40; i++) {
+        let c;
+        try {
+          c = await this.api(`/commands/${id}`);
+        } catch (e) {
+          if (e instanceof AuthError) return null;
+          this.cmd = { text: `${label}: ${e.message}`, error: true, busy: false };
+          return null;
+        }
+        if (c.status === "done" || c.status === "failed") {
+          const ok = c.status === "done";
+          const detail = c.error || (c.result ? JSON.stringify(c.result) : "");
+          this.cmd = {
+            text: `${label} ${ok ? "done" : "failed"}${detail ? " — " + detail : ""}`,
+            error: !ok,
+            busy: false,
+          };
+          return c;
+        }
+        this.cmd = { text: `${label}: ${c.status}…`, error: false, busy: true };
+        await this._sleep(600);
+      }
+      this.cmd = { text: `${label}: still running (see Activity). Is the worker up?`, error: false, busy: false };
+      return null;
     },
 
     // --- lifecycle ---
@@ -154,10 +214,15 @@ function app() {
     /* One poll cycle for whatever view is active. Swallows AuthError (already handled). */
     async tick() {
       try {
-        if (this.tab === "shared") {
-          await this.loadShared();
+        if (this.tab === "shared") return await this.loadShared();
+        if (this.tab === "activity") return await this.loadCommands();
+        if (this.tab === "hosts") return await this.loadHosts();
+        if (this.tab === "projects") return await this.loadProjects();
+        if (this.tab === "approvals") {
+          if (this.selectedProjectId) await this.loadApprovals();
           return;
         }
+        // agents tab
         if (this.selectedProjectId) await this.loadAgents();
         if (this.selectedAgentName) {
           await this.loadCheckmark();
@@ -169,6 +234,12 @@ function app() {
     },
 
     refresh() {
+      this.tick();
+    },
+
+    switchTab(tab) {
+      this.tab = tab;
+      this.cmd = { text: "", error: false, busy: false };
       this.tick();
     },
 
@@ -190,14 +261,61 @@ function app() {
       this.log = [];
       this.logOffset = 0;
       await this.loadAgents();
+      if (this.tab === "approvals") await this.loadApprovals();
+    },
+
+    resetProjectForm() {
+      this.projectForm = { id: "", root_dir: "", git_remote: "", credential_ref: "", _editing: false };
+    },
+    editProject(p) {
+      this.projectForm = {
+        id: p.id,
+        root_dir: p.root_dir,
+        git_remote: p.git_remote || "",
+        credential_ref: p.credential_ref || "",
+        _editing: true,
+      };
+    },
+    async saveProject() {
+      const f = this.projectForm;
+      const body = {
+        root_dir: f.root_dir.trim(),
+        git_remote: f.git_remote.trim() || null,
+        credential_ref: f.credential_ref.trim() || null,
+      };
+      try {
+        if (f._editing) {
+          await this.api(`/projects/${encodeURIComponent(f.id)}`, { method: "PATCH", body });
+          this.cmd = { text: `project '${f.id}' updated`, error: false, busy: false };
+        } else {
+          await this.api("/projects", { method: "POST", body: { id: f.id.trim(), ...body } });
+          this.cmd = { text: `project '${f.id}' created`, error: false, busy: false };
+        }
+        this.resetProjectForm();
+        await this.loadProjects();
+      } catch (e) {
+        if (e instanceof AuthError) return;
+        this.cmd = { text: e.message, error: true, busy: false };
+      }
+    },
+    async deleteProject(id) {
+      if (!confirm(`Delete project '${id}'? Its agents/log rows go with it.`)) return;
+      try {
+        await this.api(`/projects/${encodeURIComponent(id)}`, { method: "DELETE" });
+        this.cmd = { text: `project '${id}' deleted`, error: false, busy: false };
+        if (this.selectedProjectId === id) this.selectedProjectId = "";
+        await this.loadProjects();
+      } catch (e) {
+        if (e instanceof AuthError) return;
+        this.cmd = { text: e.message, error: true, busy: false };
+      }
     },
 
     // --- agents ---
     async loadAgents() {
       const p = this.selectedProjectId;
       if (!p) return;
-      const agents = await this.api(`/projects/${encodeURIComponent(p)}/agents`);
-      this.agents = agents;
+      this.agents = await this.api(`/projects/${encodeURIComponent(p)}/agents`);
       this.lastError = "";
     },
 
@@ -213,6 +331,39 @@ function app() {
 
     _agentPath() {
       return `/projects/${encodeURIComponent(this.selectedProjectId)}/agents/${encodeURIComponent(this.selectedAgentName)}`;
+    },
+
+    async spawnAgent() {
+      const f = this.spawnForm;
+      const body = { name: f.name.trim(), role: f.role || null, task: f.task.trim() || null };
+      if (f.placement === "worktree" && f.worktree.trim()) body.worktree = f.worktree.trim();
+      if (f.placement === "subdir" && f.subdir.trim()) body.subdir = f.subdir.trim();
+      const p = encodeURIComponent(this.selectedProjectId);
+      const final = await this.enqueueAndTrack(`/projects/${p}/agents/spawn`, body, `spawn ${body.name}`);
+      if (final && final.status === "done") {
+        this.spawnForm = { name: "", role: "", placement: "worktree", worktree: "", subdir: "", task: "" };
+      }
+      await this.loadAgents();
+    },
+
+    async killAgent(name) {
+      const p = encodeURIComponent(this.selectedProjectId);
+      await this.enqueueAndTrack(`/projects/${p}/agents/${encodeURIComponent(name)}/kill`, undefined, `kill ${name}`);
+      await this.loadAgents();
+    },
+
+    async deleteAgent(name) {
+      if (!confirm(`Delete the agent row '${name}'? (Kill the session first if live.)`)) return;
+      const p = encodeURIComponent(this.selectedProjectId);
+      try {
+        await this.api(`/projects/${p}/agents/${encodeURIComponent(name)}`, { method: "DELETE" });
+        this.cmd = { text: `agent row '${name}' deleted`, error: false, busy: false };
+        if (this.selectedAgentName === name) this.selectedAgentName = null;
+        await this.loadAgents();
+      } catch (e) {
+        if (e instanceof AuthError) return;
+        this.cmd = { text: e.message, error: true, busy: false };
+      }
     },
 
     async loadCheckmark() {
@@ -259,17 +410,12 @@ function app() {
       try {
         await this.api(`${this._agentPath()}/answer`, { method: "POST", body: { answer: text } });
         if (resume) {
-          const r = await this.api(`${this._agentPath()}/resume`, { method: "POST", body: { answer: text } });
-          if (r.resumed) {
-            this.answerMsg = "Answered and resumed.";
-            this.answerText = "";
-            await this.tick(); // flip the badge to working without waiting a full interval
-          } else {
-            this.answerError = true;
-            this.answerMsg = `Answer saved, but resume failed: ${r.detail || "unknown error"}`;
-            await this.loadCheckmark();
-            await this.loadLog();
-          }
+          this.answerMsg = "Answer saved; resume enqueued.";
+          this.answerText = "";
+          await this.enqueueAndTrack(`${this._agentPath()}/resume`, { answer: text }, "resume");
+          await this.loadAgents();
+          await this.loadCheckmark();
+          await this.loadLog();
         } else {
           this.answerMsg = "Answer saved (agent still paused).";
           this.answerText = "";
@@ -285,12 +431,104 @@ function app() {
       }
     },
 
-    // --- shared tab ---
-    switchToShared() {
-      this.tab = "shared";
-      this.loadShared();
+    // --- approvals ---
+    async loadApprovals() {
+      if (!this.selectedProjectId) {
+        this.approvals = [];
+        return;
+      }
+      try {
+        this.approvals = await this.api(`/projects/${encodeURIComponent(this.selectedProjectId)}/approvals`);
+        this.lastError = "";
+      } catch (e) {
+        if (!(e instanceof AuthError)) this.lastError = e.message;
+      }
+    },
+    async submitApproval() {
+      const f = this.approvalForm;
+      const body = {
+        branch: f.branch.trim(),
+        status: f.status,
+        agent_name: f.agent_name.trim() || null,
+        sha: f.sha.trim() || null,
+        note: f.note.trim() || null,
+      };
+      const p = encodeURIComponent(this.selectedProjectId);
+      await this.enqueueAndTrack(`/projects/${p}/approvals`, body, `${f.status} ${f.branch}`);
+      this.approvalForm = { branch: "", status: "approved", agent_name: "", sha: "", note: "" };
+      await this.loadApprovals();
     },
 
+    // --- hosts ---
+    async loadHosts() {
+      try {
+        this.hosts = await this.api("/hosts");
+        this.lastError = "";
+      } catch (e) {
+        if (!(e instanceof AuthError)) this.lastError = e.message;
+      }
+    },
+    resetHostForm() {
+      this.hostForm = { hostname: "", forge_type: "github", token_env_var: "", base_url: "", _editing: false };
+    },
+    editHost(h) {
+      this.hostForm = {
+        hostname: h.hostname,
+        forge_type: h.forge_type,
+        token_env_var: h.token_env_var || "",
+        base_url: h.base_url || "",
+        _editing: true,
+      };
+    },
+    async saveHost() {
+      const f = this.hostForm;
+      const body = {
+        forge_type: f.forge_type,
+        token_env_var: f.token_env_var.trim() || null,
+        base_url: f.base_url.trim() || null,
+      };
+      try {
+        if (f._editing) {
+          await this.api(`/hosts/${encodeURIComponent(f.hostname)}`, { method: "PATCH", body });
+          this.cmd = { text: `host '${f.hostname}' updated`, error: false, busy: false };
+        } else {
+          await this.api("/hosts", { method: "POST", body: { hostname: f.hostname.trim(), ...body } });
+          this.cmd = { text: `host '${f.hostname}' created`, error: false, busy: false };
+        }
+        this.resetHostForm();
+        await this.loadHosts();
+      } catch (e) {
+        if (e instanceof AuthError) return;
+        this.cmd = { text: e.message, error: true, busy: false };
+      }
+    },
+    async deleteHost(hostname) {
+      if (!confirm(`Delete host '${hostname}'?`)) return;
+      try {
+        await this.api(`/hosts/${encodeURIComponent(hostname)}`, { method: "DELETE" });
+        this.cmd = { text: `host '${hostname}' deleted`, error: false, busy: false };
+        await this.loadHosts();
+      } catch (e) {
+        if (e instanceof AuthError) return;
+        this.cmd = { text: e.message, error: true, busy: false };
+      }
+    },
+
+    // --- activity / commands ---
+    async loadCommands() {
+      try {
+        this.commands = await this.api("/commands?limit=50");
+        this.lastError = "";
+      } catch (e) {
+        if (!(e instanceof AuthError)) this.lastError = e.message;
+      }
+    },
+    async pollCiGlobal() {
+      await this.enqueueAndTrack("/poll-ci", undefined, "poll-ci (all projects)");
+      await this.loadCommands();
+    },
+
+    // --- shared tab ---
     async loadShared() {
       try {
         const [log, context] = await Promise.all([
@@ -301,6 +539,20 @@ function app() {
         this.lastError = "";
       } catch (e) {
         if (!(e instanceof AuthError)) this.lastError = e.message;
+      }
+    },
+    async setSharedContext() {
+      const key = this.sharedForm.key.trim();
+      const value = this.sharedForm.value.trim();
+      if (!key || !value) return;
+      try {
+        await this.api(`/shared/context/${encodeURIComponent(key)}`, { method: "PUT", body: { value } });
+        this.cmd = { text: `shared context '${key}' set`, error: false, busy: false };
+        this.sharedForm = { key: "", value: "" };
+        await this.loadShared();
+      } catch (e) {
+        if (e instanceof AuthError) return;
+        this.cmd = { text: e.message, error: true, busy: false };
       }
     },
 

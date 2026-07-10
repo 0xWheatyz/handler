@@ -31,6 +31,11 @@ GATE_STATUSES = ("pass", "fail", "unknown")
 CI_STATUSES = ("not_applicable", "pending", "pass", "fail")
 VISIBILITIES = ("project", "global")
 APPROVAL_STATUSES = ("approved", "rejected")
+# The control actions the API enqueues and the control-container worker executes.
+COMMAND_TYPES = ("spawn", "kill", "resume", "approve", "reject", "forge_init", "poll_ci")
+COMMAND_STATUSES = ("queued", "running", "done", "failed")
+# Forge families a host can belong to (drives per-host token env conventions).
+FORGE_TYPES = ("github", "gitlab", "gitea", "forgejo", "bitbucket")
 
 
 def _in(column: str, values: tuple[str, ...]) -> str:
@@ -133,9 +138,56 @@ approvals = Table(
     Column("approved_sha", String),  # the HEAD the reviewer signed off on, when known
     Column("pr_ref", String),  # optional forge PR number/URL, for traceability
     Column("status", String, nullable=False),
-    Column("approved_by_agent_id", BigInteger, ForeignKey("agents.id"), nullable=False),
+    # The reviewing agent, when an agent recorded the verdict. Nullable so an operator can
+    # approve/reject from the dashboard (no acting agent) — such rows set ``actor`` instead.
+    Column("approved_by_agent_id", BigInteger, ForeignKey("agents.id")),
+    # Human-readable actor label for a non-agent verdict, e.g. "operator:web". The deploy
+    # gate's "different agent than the pusher" check treats a null agent id as a genuine
+    # second party, so operator approvals satisfy it.
+    Column("actor", String),
     Column("note", String),
     Column("created_at", PortableTimestamp, nullable=False, server_default=func.now()),
     CheckConstraint(_in("status", APPROVAL_STATUSES), name="ck_approvals_status"),
     Index("ix_approvals_project_branch", "project_id", "branch"),
+)
+
+# The control-action queue + audit log (README §"web management"). The API writes a
+# ``queued`` row; the worker in the control container claims it (status -> ``running``),
+# dispatches to the matching control function, and writes ``done``/``failed`` back with a
+# result/error. ``project_id`` is nullable because poll_ci can sweep every project at once.
+commands = Table(
+    "commands",
+    metadata,
+    Column("id", PortableBigInt, primary_key=True, autoincrement=True),
+    Column("project_id", String, ForeignKey("projects.id")),
+    Column("agent_name", String),  # target agent for spawn/kill/resume; null otherwise
+    Column("type", String, nullable=False),
+    Column("payload", PortableJSON),  # type-specific args (role/worktree/task, branch/sha…)
+    Column("status", String, nullable=False, server_default="queued"),
+    Column("result", PortableJSON),
+    Column("error", String),
+    Column("requested_by", String),  # actor label, e.g. "operator:web"
+    Column("claimed_by", String),  # worker id that claimed the command
+    Column("created_at", PortableTimestamp, nullable=False, server_default=func.now()),
+    Column("claimed_at", PortableTimestamp),
+    Column("finished_at", PortableTimestamp),
+    CheckConstraint(_in("type", COMMAND_TYPES), name="ck_commands_type"),
+    CheckConstraint(_in("status", COMMAND_STATUSES), name="ck_commands_status"),
+    # The worker claims oldest-queued-first; this index serves that hot path.
+    Index("ix_commands_status_id", "status", "id"),
+)
+
+# Web-managed forge hosts (README §"web management"). Makes the host->token-env mapping
+# that ``control.credentials`` used to hardcode into an editable registry, and lets
+# operators register self-hosted forges without a code change. The built-in map in
+# ``control.credentials`` remains the fallback when a host has no row here.
+forge_hosts = Table(
+    "forge_hosts",
+    metadata,
+    Column("hostname", String, primary_key=True),  # e.g. "github.com", "git.corp.internal"
+    Column("forge_type", String, nullable=False),
+    Column("token_env_var", String),  # per-host env name to inject, e.g. "GITHUB_TOKEN"
+    Column("base_url", String),  # HTTPS base for the credential-helper scope, when non-default
+    Column("created_at", PortableTimestamp, nullable=False, server_default=func.now()),
+    CheckConstraint(_in("forge_type", FORGE_TYPES), name="ck_forge_hosts_type"),
 )

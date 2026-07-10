@@ -15,7 +15,7 @@ import sys
 
 from ..db import repository as repo
 from ..db.engine import connection
-from . import poller, skills_gen, spawn, tmux
+from . import poller, skills_gen, spawn, tmux, worker
 
 
 def _cmd_spawn(args: argparse.Namespace) -> int:
@@ -191,6 +191,15 @@ def _cmd_forge_init(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_worker(args: argparse.Namespace) -> int:
+    print(
+        f"worker starting (poll={args.interval}s, ci-sweep={args.ci_interval}s); "
+        "draining control commands + sweeping CI"
+    )
+    worker.run(poll_interval=args.interval, ci_interval=args.ci_interval)
+    return 0  # pragma: no cover - run loops until interrupted
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="handler", description="Handler control layer")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -244,6 +253,17 @@ def build_parser() -> argparse.ArgumentParser:
     p_forge.add_argument("--project", required=True)
     p_forge.add_argument("--no-commit", action="store_true", help="write but don't git-commit")
     p_forge.set_defaults(func=_cmd_forge_init)
+
+    p_worker = sub.add_parser(
+        "worker", help="run the control worker: drain enqueued commands + sweep CI"
+    )
+    p_worker.add_argument(
+        "--interval", type=float, default=2.0, help="seconds to idle when the queue is empty"
+    )
+    p_worker.add_argument(
+        "--ci-interval", type=float, default=30.0, help="seconds between CI sweeps (0 disables)"
+    )
+    p_worker.set_defaults(func=_cmd_worker)
 
     return parser
 

@@ -159,7 +159,10 @@ def _approval_ok(
             f"branch '{branch}' has no standing approval. A senior agent must approve it "
             "before it can be merged or deployed."
         )
-    if approval["approved_by_agent_id"] == ident.agent_id:
+    # No self-approval. A null approver id is an operator verdict from the dashboard — a
+    # genuinely different party than any pushing agent — so it never trips this check.
+    approver_id = approval.get("approved_by_agent_id")
+    if approver_id is not None and approver_id == ident.agent_id:
         return False, (
             f"branch '{branch}' was approved by this same agent. Review must come from a "
             "different agent — no self-approval."
@@ -170,7 +173,11 @@ def _approval_ok(
             f"the approval for '{branch}' was for commit {approved_sha[:12]}, but HEAD is "
             f"now {current_sha[:12]}. The new commits must be re-reviewed."
         )
-    return True, f"branch '{branch}' approved by agent id={approval['approved_by_agent_id']}"
+    if approver_id is not None:
+        by = f"agent id={approver_id}"
+    else:
+        by = approval.get("actor") or "operator"
+    return True, f"branch '{branch}' approved by {by}"
 
 
 def handle_merge_deploy(conn: Connection, ident: Identity, hook_input: HookInput) -> dict:

@@ -36,11 +36,13 @@ def require_auth(
     settings: Settings = Depends(get_settings),
 ) -> None:
     token = creds.credentials if creds else None
-    # The shared-context write token is higher-trust, so it also grants normal access;
-    # a single request carries one bearer, and it should never be rejected for being the
-    # more privileged one.
-    valid = _check(token, settings.auth_token) or _check(
-        token, settings.effective_shared_write_token
+    # The shared-context write and admin tokens are higher-trust, so they also grant
+    # normal access; a single request carries one bearer, and it should never be rejected
+    # for being the more privileged one.
+    valid = (
+        _check(token, settings.auth_token)
+        or _check(token, settings.effective_shared_write_token)
+        or _check(token, settings.effective_admin_token)
     )
     if not valid:
         raise HTTPException(
@@ -60,5 +62,21 @@ def require_shared_write(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="shared-context write requires the shared-context write token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+
+def require_admin(
+    creds: HTTPAuthorizationCredentials | None = Depends(_bearer),
+    settings: Settings = Depends(get_settings),
+) -> None:
+    """Gate for the web control surface: enqueuing control commands, project/host CRUD,
+    and credential-pointer edits. Requires specifically the admin token (which defaults to
+    the global token when ADMIN_TOKEN is unset)."""
+    token = creds.credentials if creds else None
+    if not _check(token, settings.effective_admin_token):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="this action requires the admin token",
             headers={"WWW-Authenticate": "Bearer"},
         )

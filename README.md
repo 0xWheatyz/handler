@@ -101,6 +101,7 @@ Configuration is entirely environment-driven (see [`.env.example`](.env.example)
 | `DATABASE_URL` | `sqlite:////abs/path.db` or `postgresql+psycopg://…` | `sqlite:///./handler.db` |
 | `AUTH_TOKEN` | Global bearer token gating every API route | *(required for the API)* |
 | `SHARED_CONTEXT_WRITE_TOKEN` | Higher-trust token gating `PUT /shared/context/:key` | falls back to `AUTH_TOKEN` |
+| `ADMIN_TOKEN` | Gates the web control surface (enqueue commands, project/host CRUD, credential edits) | falls back to `AUTH_TOKEN` |
 | `WEBHOOK_URL` | Generic target for the `Notification` hook (ntfy, Slack, …) | unset → no-op |
 | `PROJECTS_ROOT` | Base dir for per-project roots / worktrees | `./projects` |
 | `CLAUDE_BIN` / `MISE_BIN` / `TMUX_BIN` / `FORGE_BIN` / `GIT_BIN` | Binary overrides | `claude` / `mise` / `tmux` / `forge` / `git` |
@@ -151,27 +152,71 @@ the `/var/lib/handler` data volume:
 | Image | Dockerfile | Runs | Workflow |
 |---|---|---|---|
 | `ghcr.io/0xwheatyz/handler` | [`Dockerfile`](Dockerfile) | the API (`uvicorn`) — also applies migrations on start | [`docker.yml`](.github/workflows/docker.yml) |
-| `ghcr.io/0xwheatyz/handler/control` | [`Dockerfile.control`](Dockerfile.control) | the control layer (`handler poll-ci --watch`) | [`docker-control.yml`](.github/workflows/docker-control.yml) |
+| `ghcr.io/0xwheatyz/handler/control` | [`Dockerfile.control`](Dockerfile.control) | the control worker (`handler worker`) | [`docker-control.yml`](.github/workflows/docker-control.yml) |
 
 The control image bakes in `git` + `tmux`; the `claude` and `forge` binaries are
 bring-your-own (layer or mount them in for live agent spawning — the CI poller degrades
-gracefully without `forge`).
+gracefully without `forge`). The **worker** drains the control-command queue the API
+enqueues (spawn/kill/resume/approve/reject/forge-init/poll-ci) and sweeps CI on an interval
+(subsuming `poll-ci --watch`), so the whole system is drivable from the dashboard — see
+[Web management](#web-management).
 
 [`docker-compose.yml`](docker-compose.yml) wires both up with Postgres. The API owns
 migrations, so the control service runs with `RUN_MIGRATIONS=false` and waits for the API:
 
 ```bash
 export AUTH_TOKEN="$(openssl rand -hex 32)"
-docker compose up -d                       # db + api + control (CI poller)
+export ADMIN_TOKEN="$(openssl rand -hex 32)"   # unlocks management actions in the dashboard
+docker compose up -d                           # db + api + control (worker)
 
 # One-shot control commands run against the same image:
 docker compose run --rm control handler list
 docker compose run --rm control handler spawn --project leeworks-api --name junior --task "…"
 ```
 
+## Web management
+
+The dashboard (and the API under it) manages everything — git credentials & hosts,
+projects, agents, and approvals — without dropping to the CLI. Because the API and control
+layer are **separate containers** (the API has no `git`/`tmux`/`claude` and doesn't own the
+tmux sessions), the API can't run control actions directly. Instead it **enqueues a command**
+and the worker in the control container executes it and writes the result back:
+
+```
+ Dashboard ──HTTP──▶ API (read + enqueue)              Control container
+                        │  writes a `commands` row         │  worker: claim → dispatch → result
+                        ▼                                   ▼
+                     ┌─────────────── shared database ───────────────┐
+                     │ projects  agents  approvals  commands  hosts  │
+                     └────────────────────────────────────────────────┘
+```
+
+What the dashboard can now do (all state-changing actions require `ADMIN_TOKEN`):
+
+- **Projects** — create / edit / delete (`root_dir`, `git_remote`, `credential_ref`).
+- **Agents** — spawn (name, role, worktree/subdir, task) and kill via the queue; delete the
+  row; plus the existing checkmark / log / answer-resume views.
+- **Approvals** — record an operator verdict per branch (approve/reject); the deploy gate
+  treats an operator verdict as a genuine second party (no self-approval).
+- **Forge hosts** — a registry mapping a host to the token env var to inject at spawn, so
+  self-hosted forges work without a code change (the built-in host map is the fallback).
+- **Credentials** — manage a project's `credential_ref` **pointer**. The DB still never
+  stores a raw token: web-settable schemes are `env:` / `file:` / `db:` (the `cmd:` scheme
+  is CLI-only, since it would run an arbitrary command in the control container). `db:` is
+  reserved for a future encrypted secret store.
+- **Activity** — every enqueued command with its status (queued → running → done/failed) —
+  the audit log of what the dashboard triggered. The UI polls `GET /commands/{id}` for
+  live status.
+
+The command queue is exposed over HTTP as `POST …/agents/spawn`, `POST …/agents/{n}/kill`,
+`POST …/approvals`, `POST …/forge-init`, `POST …/poll-ci`, and `GET /commands[/{id}]`;
+hosts as `/hosts`; project mutation as `PATCH`/`DELETE /projects/{id}`. Run the worker with
+`handler worker` (the control image's default command).
+
 ## Control CLI
 
-The `handler` command manages agent processes (the write side):
+The `handler` command manages agent processes directly (an alternative to the queue, for
+operators at a shell):
 
 ```bash
 handler spawn  --project leeworks-api --name junior --role junior --worktree feat/auth --task "add login"
