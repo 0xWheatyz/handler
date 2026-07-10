@@ -143,6 +143,32 @@ curl -s -X POST $BASE/projects/leeworks-api/agents/api/resume -H "$TOKEN" \
   -H 'Content-Type: application/json' -d '{}'
 ```
 
+## Containers
+
+Two images are published to GHCR, one per process, sharing the package, the database, and
+the `/var/lib/handler` data volume:
+
+| Image | Dockerfile | Runs | Workflow |
+|---|---|---|---|
+| `ghcr.io/0xwheatyz/handler` | [`Dockerfile`](Dockerfile) | the API (`uvicorn`) — also applies migrations on start | [`docker.yml`](.github/workflows/docker.yml) |
+| `ghcr.io/0xwheatyz/handler/control` | [`Dockerfile.control`](Dockerfile.control) | the control layer (`handler poll-ci --watch`) | [`docker-control.yml`](.github/workflows/docker-control.yml) |
+
+The control image bakes in `git` + `tmux`; the `claude` and `forge` binaries are
+bring-your-own (layer or mount them in for live agent spawning — the CI poller degrades
+gracefully without `forge`).
+
+[`docker-compose.yml`](docker-compose.yml) wires both up with Postgres. The API owns
+migrations, so the control service runs with `RUN_MIGRATIONS=false` and waits for the API:
+
+```bash
+export AUTH_TOKEN="$(openssl rand -hex 32)"
+docker compose up -d                       # db + api + control (CI poller)
+
+# One-shot control commands run against the same image:
+docker compose run --rm control handler list
+docker compose run --rm control handler spawn --project leeworks-api --name junior --task "…"
+```
+
 ## Control CLI
 
 The `handler` command manages agent processes (the write side):

@@ -15,6 +15,7 @@ docs
 !.env.example
 *.db
 Dockerfile
+Dockerfile.control
 docker-compose.yml
 .dockerignore
 .mise.toml
