@@ -31,6 +31,8 @@ dev = [
 handler = "handler.control.cli:main"
 
 [tool.hatch.build.targets.wheel]
+# The bundled web UI (src/handler/api/static/*) ships automatically: it lives inside the
+# packaged `src/handler` tree, and hatchling includes non-.py files there by default.
 packages = ["src/handler"]
 
 [tool.pytest.ini_options]

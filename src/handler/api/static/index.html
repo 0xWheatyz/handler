@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Handler</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+  <!-- app.js defines window.app() and MUST run before Alpine starts; both are classic
+       `defer` scripts, which execute in document order, so app.js is guaranteed first. -->
+  <script defer src="/static/app.js"></script>
+  <script defer src="/static/alpine.min.js"></script>
+</head>
+<body x-data="app()" x-cloak>
+
+  <!-- Token modal: shown until a bearer token is supplied. Holds no data. -->
+  <div class="modal-backdrop" x-show="showTokenModal">
+    <form class="modal" @submit.prevent="saveToken()">
+      <h2>Handler</h2>
+      <p class="muted">Paste your API bearer token to continue.</p>
+      <input type="password" x-model="tokenInput" placeholder="AUTH_TOKEN"
+             autocomplete="current-password" x-ref="tokenField" />
+      <p class="error" x-show="tokenError" x-text="tokenError"></p>
+      <button type="submit">Save</button>
+    </form>
+  </div>
+
+  <template x-if="!showTokenModal">
+    <div>
+      <header class="topbar">
+        <div class="brand">Handler</div>
+        <div class="topbar-controls">
+          <label class="muted" for="project-select">Project</label>
+          <select id="project-select" x-model="selectedProjectId" @change="selectProject($event.target.value)">
+            <option value="" disabled>— select —</option>
+            <template x-for="p in projects" :key="p.id">
+              <option :value="p.id" x-text="p.id"></option>
+            </template>
+          </select>
+          <nav class="tabs">
+            <button :class="{ active: tab === 'agents' }" @click="tab = 'agents'">Agents</button>
+            <button :class="{ active: tab === 'shared' }" @click="switchToShared()">Shared</button>
+          </nav>
+          <button class="ghost" @click="refresh()" title="Refresh now">↻</button>
+          <button class="ghost" @click="signOut()" title="Sign out / change token">Sign out</button>
+        </div>
+      </header>
+
+      <p class="banner error" x-show="lastError" x-text="lastError"></p>
+
+      <!-- AGENTS TAB -->
+      <main class="layout" x-show="tab === 'agents'">
+        <!-- Agent list -->
+        <section class="panel agents">
+          <h3>Agents <span class="muted" x-show="selectedProjectId" x-text="'· ' + selectedProjectId"></span></h3>
+          <p class="muted" x-show="selectedProjectId && agents.length === 0">No agents in this project.</p>
+          <p class="muted" x-show="!selectedProjectId">Select a project.</p>
+          <ul class="agent-list">
+            <template x-for="a in agents" :key="a.id">
+              <li :class="{ selected: a.name === selectedAgentName }" @click="selectAgent(a.name)">
+                <span class="agent-name" x-text="a.name"></span>
+                <span class="badge" :class="badgeClass('status', a.status)" x-text="a.status"></span>
+                <span class="needs-answer" x-show="a.status === 'paused_for_input'">needs answer</span>
+              </li>
+            </template>
+          </ul>
+        </section>
+
+        <!-- Agent detail -->
+        <section class="panel detail" x-show="selectedAgentName">
+          <h3>
+            <span x-text="selectedAgentName"></span>
+            <span class="badge" x-show="selectedAgent" :class="badgeClass('status', selectedAgent?.status)"
+                  x-text="selectedAgent?.status"></span>
+          </h3>
+
+          <!-- Checkmark -->
+          <div class="card">
+            <h4>Checkmark</h4>
+            <p class="muted" x-show="checkmarkMissing">No checkpoint recorded yet.</p>
+            <dl class="kv" x-show="checkmark && !checkmarkMissing">
+              <dt>Status</dt>
+              <dd><span class="badge" :class="badgeClass('status', checkmark?.status)" x-text="checkmark?.status"></span></dd>
+              <dt>Where it stopped</dt>
+              <dd x-text="checkmark?.where_it_stopped || '—'"></dd>
+              <dt>Open question</dt>
+              <dd x-text="checkmark?.open_question || '—'"></dd>
+              <dt>Next steps</dt>
+              <dd>
+                <ul class="next-steps" x-show="checkmark?.next_steps?.length">
+                  <template x-for="(step, i) in (checkmark?.next_steps || [])" :key="i">
+                    <li x-text="step"></li>
+                  </template>
+                </ul>
+                <span x-show="!checkmark?.next_steps?.length">—</span>
+              </dd>
+              <dt>Tests</dt>
+              <dd>
+                <span class="badge" :class="badgeClass('gate', checkmark?.tests_status)" x-text="checkmark?.tests_status"></span>
+                <span class="muted" x-text="fmt(checkmark?.tested_at)"></span>
+              </dd>
+              <dt>Build</dt>
+              <dd>
+                <span class="badge" :class="badgeClass('gate', checkmark?.build_status)" x-text="checkmark?.build_status"></span>
+                <span class="muted" x-text="fmt(checkmark?.built_at)"></span>
+              </dd>
+              <dt>Checkpoint at</dt>
+              <dd class="muted" x-text="fmt(checkmark?.checkpoint_at)"></dd>
+            </dl>
+          </div>
+
+          <!-- Answer form -->
+          <div class="card answer" x-show="selectedAgent?.status === 'paused_for_input'">
+            <h4>Answer this question</h4>
+            <p class="question" x-text="checkmark?.open_question || '(no question text on the checkmark)'"></p>
+            <textarea x-model="answerText" rows="3" placeholder="Your answer…"></textarea>
+            <div class="answer-actions">
+              <button @click="submitAnswer(false)" :disabled="answerBusy || !answerText.trim()">Answer</button>
+              <button class="primary" @click="submitAnswer(true)" :disabled="answerBusy || !answerText.trim()">Answer &amp; Resume</button>
+            </div>
+            <p class="answer-msg" :class="{ error: answerError }" x-show="answerMsg" x-text="answerMsg"></p>
+          </div>
+
+          <!-- Log -->
+          <div class="card">
+            <h4>Log <span class="muted">(newest first)</span></h4>
+            <p class="muted" x-show="log.length === 0">No log entries.</p>
+            <div class="table-wrap" x-show="log.length">
+              <table class="log">
+                <thead>
+                  <tr><th>When</th><th>Status</th><th>Summary</th><th>Q / A</th><th>Vis</th><th>Push</th><th>CI</th></tr>
+                </thead>
+                <tbody>
+                  <template x-for="e in log" :key="e.id">
+                    <tr>
+                      <td class="muted nowrap" x-text="fmt(e.created_at)"></td>
+                      <td><span class="badge" :class="badgeClass('status', e.status)" x-text="e.status"></span></td>
+                      <td x-text="e.summary || '—'"></td>
+                      <td>
+                        <div x-show="e.question"><strong>Q:</strong> <span x-text="e.question"></span></div>
+                        <div x-show="e.answer"><strong>A:</strong> <span x-text="e.answer"></span></div>
+                        <span x-show="!e.question && !e.answer">—</span>
+                      </td>
+                      <td><span class="badge" :class="badgeClass('visibility', e.visibility)" x-text="e.visibility"></span></td>
+                      <td class="mono" x-text="e.push_sha ? e.push_sha.slice(0,7) : '—'"></td>
+                      <td><span class="badge" :class="badgeClass('ci', e.ci_status)" x-text="e.ci_status"></span></td>
+                    </tr>
+                  </template>
+                </tbody>
+              </table>
+            </div>
+            <div class="pager">
+              <button @click="pagePrev()" :disabled="logOffset === 0">‹ Newer</button>
+              <span class="muted" x-text="'offset ' + logOffset"></span>
+              <button @click="pageNext()" :disabled="log.length < logLimit">Older ›</button>
+            </div>
+          </div>
+        </section>
+      </main>
+
+      <!-- SHARED TAB -->
+      <main class="layout" x-show="tab === 'shared'">
+        <section class="panel">
+          <h3>Global feed</h3>
+          <p class="muted" x-show="shared.log.length === 0">No global log entries.</p>
+          <div class="table-wrap" x-show="shared.log.length">
+            <table class="log">
+              <thead><tr><th>When</th><th>Agent</th><th>Status</th><th>Summary</th><th>CI</th></tr></thead>
+              <tbody>
+                <template x-for="e in shared.log" :key="e.id">
+                  <tr>
+                    <td class="muted nowrap" x-text="fmt(e.created_at)"></td>
+                    <td class="mono" x-text="e.agent_id"></td>
+                    <td><span class="badge" :class="badgeClass('status', e.status)" x-text="e.status"></span></td>
+                    <td x-text="e.summary || '—'"></td>
+                    <td><span class="badge" :class="badgeClass('ci', e.ci_status)" x-text="e.ci_status"></span></td>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+          </div>
+        </section>
+        <section class="panel">
+          <h3>Shared context <span class="muted">(read-only)</span></h3>
+          <p class="muted" x-show="shared.context.length === 0">No shared context keys.</p>
+          <div class="table-wrap" x-show="shared.context.length">
+            <table class="log">
+              <thead><tr><th>Key</th><th>Value</th><th>Updated</th></tr></thead>
+              <tbody>
+                <template x-for="c in shared.context" :key="c.key">
+                  <tr>
+                    <td class="mono" x-text="c.key"></td>
+                    <td x-text="c.value"></td>
+                    <td class="muted nowrap" x-text="fmt(c.updated_at)"></td>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+          </div>
+        </section>
+      </main>
+    </div>
+  </template>
+
+</body>
+</html>
