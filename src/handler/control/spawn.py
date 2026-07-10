@@ -52,7 +52,9 @@ def _shell_quote(value: str) -> str:
     return "'" + value.replace("'", "'\\''") + "'"
 
 
-def _install_git_credentials(working_dir: str, git_remote: str | None) -> None:
+def _install_git_credentials(
+    working_dir: str, git_remote: str | None, conn=None
+) -> None:
     """Install a repo-local git credential helper that reads the injected token.
 
     The helper hands back ``$FORGE_TOKEN`` from the environment, so the raw value is never
@@ -61,7 +63,7 @@ def _install_git_credentials(working_dir: str, git_remote: str | None) -> None:
     A no-op for ssh/unknown remotes (deploy keys handle those). Best-effort — a
     working_dir that isn't a git repo yet shouldn't block the spawn.
     """
-    cfg = credentials.git_credential_config(git_remote)
+    cfg = credentials.git_credential_config(git_remote, conn)
     if cfg is not None:
         key, value = cfg
         gitops.config_local(working_dir, key, value)
@@ -116,9 +118,12 @@ def spawn(
     }
     if role:
         env["HANDLER_AGENT_ROLE"] = role
-    env.update(credentials.credential_env(token, project.get("git_remote")))
-    if token:
-        _install_git_credentials(working_dir, project.get("git_remote"))
+    # A short read connection lets credential/host resolution consult the forge_hosts
+    # registry (falling back to the built-in host map when a host has no row).
+    with connection() as conn:
+        env.update(credentials.credential_env(token, project.get("git_remote"), conn))
+        if token:
+            _install_git_credentials(working_dir, project.get("git_remote"), conn)
 
     # Verify the pinned forge version, if one is configured. Non-fatal: a version drift
     # is recorded as a warning rather than blocking the spawn, since not every agent

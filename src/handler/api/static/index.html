@@ -16,8 +16,9 @@
   <div class="modal-backdrop" x-show="showTokenModal">
     <form class="modal" @submit.prevent="saveToken()">
       <h2>Handler</h2>
-      <p class="muted">Paste your API bearer token to continue.</p>
-      <input type="password" x-model="tokenInput" placeholder="AUTH_TOKEN"
+      <p class="muted">Paste your API bearer token to continue. Management actions
+        (spawn, approve, edit projects/hosts) require the <strong>admin</strong> token.</p>
+      <input type="password" x-model="tokenInput" placeholder="AUTH_TOKEN / ADMIN_TOKEN"
              autocomplete="current-password" x-ref="tokenField" />
       <p class="error" x-show="tokenError" x-text="tokenError"></p>
       <button type="submit">Save</button>
@@ -37,8 +38,12 @@
             </template>
           </select>
           <nav class="tabs">
-            <button :class="{ active: tab === 'agents' }" @click="tab = 'agents'">Agents</button>
-            <button :class="{ active: tab === 'shared' }" @click="switchToShared()">Shared</button>
+            <button :class="{ active: tab === 'agents' }" @click="switchTab('agents')">Agents</button>
+            <button :class="{ active: tab === 'approvals' }" @click="switchTab('approvals')">Approvals</button>
+            <button :class="{ active: tab === 'projects' }" @click="switchTab('projects')">Projects</button>
+            <button :class="{ active: tab === 'hosts' }" @click="switchTab('hosts')">Hosts</button>
+            <button :class="{ active: tab === 'activity' }" @click="switchTab('activity')">Activity</button>
+            <button :class="{ active: tab === 'shared' }" @click="switchTab('shared')">Shared</button>
           </nav>
           <button class="ghost" @click="refresh()" title="Refresh now">↻</button>
           <button class="ghost" @click="signOut()" title="Sign out / change token">Sign out</button>
@@ -46,18 +51,45 @@
       </header>
 
       <p class="banner error" x-show="lastError" x-text="lastError"></p>
+      <!-- Command feedback: the async result of any enqueued control action. -->
+      <p class="banner" :class="cmd.error ? 'error' : 'ok'" x-show="cmd.text" x-text="cmd.text"></p>
 
       <!-- AGENTS TAB -->
       <main class="layout" x-show="tab === 'agents'">
-        <!-- Agent list -->
+        <!-- Agent list + spawn -->
         <section class="panel agents">
           <h3>Agents <span class="muted" x-show="selectedProjectId" x-text="'· ' + selectedProjectId"></span></h3>
-          <p class="muted" x-show="selectedProjectId && agents.length === 0">No agents in this project.</p>
           <p class="muted" x-show="!selectedProjectId">Select a project.</p>
+
+          <div class="card" x-show="selectedProjectId">
+            <h4>Spawn an agent</h4>
+            <div class="form-grid">
+              <input x-model="spawnForm.name" placeholder="name (e.g. junior)" />
+              <select x-model="spawnForm.role">
+                <option value="">role — none</option>
+                <option value="junior">junior</option>
+                <option value="senior">senior</option>
+                <option value="deploy">deploy</option>
+              </select>
+              <select x-model="spawnForm.placement">
+                <option value="worktree">git worktree on branch</option>
+                <option value="subdir">subdir under root</option>
+              </select>
+              <input x-show="spawnForm.placement === 'worktree'" x-model="spawnForm.worktree" placeholder="branch (e.g. feat/auth)" />
+              <input x-show="spawnForm.placement === 'subdir'" x-model="spawnForm.subdir" placeholder="subdir (e.g. api)" />
+            </div>
+            <textarea x-model="spawnForm.task" rows="2" placeholder="initial task / prompt (optional)"></textarea>
+            <div class="toolbar">
+              <button class="primary" @click="spawnAgent()" :disabled="cmd.busy || !spawnForm.name.trim()">Spawn</button>
+            </div>
+          </div>
+
+          <p class="muted" x-show="selectedProjectId && agents.length === 0">No agents in this project.</p>
           <ul class="agent-list">
             <template x-for="a in agents" :key="a.id">
               <li :class="{ selected: a.name === selectedAgentName }" @click="selectAgent(a.name)">
                 <span class="agent-name" x-text="a.name"></span>
+                <span class="badge" :class="badgeClass('role', a.role || 'none')" x-show="a.role" x-text="a.role"></span>
                 <span class="badge" :class="badgeClass('status', a.status)" x-text="a.status"></span>
                 <span class="needs-answer" x-show="a.status === 'paused_for_input'">needs answer</span>
               </li>
@@ -71,6 +103,9 @@
             <span x-text="selectedAgentName"></span>
             <span class="badge" x-show="selectedAgent" :class="badgeClass('status', selectedAgent?.status)"
                   x-text="selectedAgent?.status"></span>
+            <span class="spacer"></span>
+            <button class="ghost small" @click="killAgent(selectedAgentName)" :disabled="cmd.busy">Kill</button>
+            <button class="ghost small danger" @click="deleteAgent(selectedAgentName)" :disabled="cmd.busy">Delete row</button>
           </h3>
 
           <!-- Checkmark -->
@@ -157,6 +192,166 @@
         </section>
       </main>
 
+      <!-- APPROVALS TAB -->
+      <main class="layout" x-show="tab === 'approvals'">
+        <section class="panel">
+          <h3>Approvals <span class="muted" x-show="selectedProjectId" x-text="'· ' + selectedProjectId"></span></h3>
+          <p class="muted" x-show="!selectedProjectId">Select a project.</p>
+          <div class="card" x-show="selectedProjectId">
+            <h4>Record a verdict</h4>
+            <div class="form-grid">
+              <input x-model="approvalForm.branch" placeholder="branch (e.g. feat/auth)" />
+              <select x-model="approvalForm.status">
+                <option value="approved">approve</option>
+                <option value="rejected">reject</option>
+              </select>
+              <input x-model="approvalForm.agent_name" placeholder="agent (optional — reads its HEAD)" />
+              <input x-model="approvalForm.sha" placeholder="sha (optional — pins the approval)" />
+            </div>
+            <input x-model="approvalForm.note" placeholder="note (optional)" />
+            <div class="toolbar">
+              <button class="primary" @click="submitApproval()" :disabled="cmd.busy || !approvalForm.branch.trim()">Enqueue verdict</button>
+            </div>
+          </div>
+          <p class="muted" x-show="selectedProjectId && approvals.length === 0">No approvals recorded.</p>
+          <div class="table-wrap" x-show="approvals.length">
+            <table class="log">
+              <thead><tr><th>When</th><th>Branch</th><th>Verdict</th><th>By</th><th>SHA</th><th>Note</th></tr></thead>
+              <tbody>
+                <template x-for="ap in approvals" :key="ap.id">
+                  <tr>
+                    <td class="muted nowrap" x-text="fmt(ap.created_at)"></td>
+                    <td class="mono" x-text="ap.branch"></td>
+                    <td><span class="badge" :class="badgeClass('approval', ap.status)" x-text="ap.status"></span></td>
+                    <td x-text="ap.approved_by_agent_id ? ('agent ' + ap.approved_by_agent_id) : (ap.actor || '—')"></td>
+                    <td class="mono" x-text="ap.approved_sha ? ap.approved_sha.slice(0,7) : '—'"></td>
+                    <td x-text="ap.note || '—'"></td>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+          </div>
+        </section>
+      </main>
+
+      <!-- PROJECTS TAB -->
+      <main class="layout" x-show="tab === 'projects'">
+        <section class="panel">
+          <h3>Projects</h3>
+          <div class="card">
+            <h4 x-text="projectForm._editing ? ('Edit project · ' + projectForm.id) : 'Register a project'"></h4>
+            <div class="form-grid">
+              <input x-model="projectForm.id" :disabled="projectForm._editing" placeholder="id / slug (e.g. leeworks-api)" />
+              <input x-model="projectForm.root_dir" placeholder="root_dir (e.g. /var/lib/handler/projects/leeworks)" />
+              <input x-model="projectForm.git_remote" placeholder="git_remote (optional)" />
+              <input x-model="projectForm.credential_ref" placeholder="credential_ref (env:VAR / file:/path / db:id)" />
+            </div>
+            <p class="muted small">credential_ref is a <em>pointer</em>, never the token. <code>cmd:</code> is CLI-only.</p>
+            <div class="toolbar">
+              <button class="primary" @click="saveProject()" :disabled="cmd.busy || !projectForm.id.trim() || !projectForm.root_dir.trim()"
+                      x-text="projectForm._editing ? 'Save changes' : 'Create'"></button>
+              <button class="ghost" x-show="projectForm._editing" @click="resetProjectForm()">Cancel</button>
+            </div>
+          </div>
+          <div class="table-wrap" x-show="projects.length">
+            <table class="log">
+              <thead><tr><th>ID</th><th>root_dir</th><th>git_remote</th><th>credential_ref</th><th></th></tr></thead>
+              <tbody>
+                <template x-for="p in projects" :key="p.id">
+                  <tr>
+                    <td class="mono" x-text="p.id"></td>
+                    <td class="mono" x-text="p.root_dir"></td>
+                    <td class="mono" x-text="p.git_remote || '—'"></td>
+                    <td class="mono" x-text="p.credential_ref || '—'"></td>
+                    <td class="nowrap">
+                      <button class="ghost small" @click="editProject(p)">Edit</button>
+                      <button class="ghost small danger" @click="deleteProject(p.id)">Delete</button>
+                    </td>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+          </div>
+        </section>
+      </main>
+
+      <!-- HOSTS TAB -->
+      <main class="layout" x-show="tab === 'hosts'">
+        <section class="panel">
+          <h3>Forge hosts</h3>
+          <p class="muted small">Maps a git host to the token env var to inject at spawn (and the credential-helper scope).
+            Holds no secrets — only the env-var name.</p>
+          <div class="card">
+            <h4 x-text="hostForm._editing ? ('Edit host · ' + hostForm.hostname) : 'Register a host'"></h4>
+            <div class="form-grid">
+              <input x-model="hostForm.hostname" :disabled="hostForm._editing" placeholder="hostname (e.g. git.corp.internal)" />
+              <select x-model="hostForm.forge_type">
+                <option value="github">github</option>
+                <option value="gitlab">gitlab</option>
+                <option value="gitea">gitea</option>
+                <option value="forgejo">forgejo</option>
+                <option value="bitbucket">bitbucket</option>
+              </select>
+              <input x-model="hostForm.token_env_var" placeholder="token env var (e.g. GITEA_TOKEN)" />
+              <input x-model="hostForm.base_url" placeholder="base_url (optional, e.g. https://git.corp.internal)" />
+            </div>
+            <div class="toolbar">
+              <button class="primary" @click="saveHost()" :disabled="cmd.busy || !hostForm.hostname.trim()"
+                      x-text="hostForm._editing ? 'Save changes' : 'Create'"></button>
+              <button class="ghost" x-show="hostForm._editing" @click="resetHostForm()">Cancel</button>
+            </div>
+          </div>
+          <p class="muted" x-show="hosts.length === 0">No hosts registered (built-in host map still applies).</p>
+          <div class="table-wrap" x-show="hosts.length">
+            <table class="log">
+              <thead><tr><th>Hostname</th><th>Type</th><th>Token env var</th><th>Base URL</th><th></th></tr></thead>
+              <tbody>
+                <template x-for="h in hosts" :key="h.hostname">
+                  <tr>
+                    <td class="mono" x-text="h.hostname"></td>
+                    <td x-text="h.forge_type"></td>
+                    <td class="mono" x-text="h.token_env_var || '—'"></td>
+                    <td class="mono" x-text="h.base_url || '—'"></td>
+                    <td class="nowrap">
+                      <button class="ghost small" @click="editHost(h)">Edit</button>
+                      <button class="ghost small danger" @click="deleteHost(h.hostname)">Delete</button>
+                    </td>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+          </div>
+        </section>
+      </main>
+
+      <!-- ACTIVITY TAB -->
+      <main class="layout" x-show="tab === 'activity'">
+        <section class="panel">
+          <h3>Activity <span class="muted">· control commands</span>
+            <span class="spacer"></span>
+            <button class="ghost small" @click="pollCiGlobal()" :disabled="cmd.busy">Sweep CI now</button>
+          </h3>
+          <p class="muted" x-show="commands.length === 0">No commands yet.</p>
+          <div class="table-wrap" x-show="commands.length">
+            <table class="log">
+              <thead><tr><th>When</th><th>Type</th><th>Project</th><th>Agent</th><th>Status</th><th>Result / Error</th></tr></thead>
+              <tbody>
+                <template x-for="c in commands" :key="c.id">
+                  <tr>
+                    <td class="muted nowrap" x-text="fmt(c.created_at)"></td>
+                    <td class="mono" x-text="c.type"></td>
+                    <td class="mono" x-text="c.project_id || '—'"></td>
+                    <td class="mono" x-text="c.agent_name || '—'"></td>
+                    <td><span class="badge" :class="badgeClass('cmd', c.status)" x-text="c.status"></span></td>
+                    <td class="mono small" x-text="c.error || (c.result ? JSON.stringify(c.result) : '—')"></td>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+          </div>
+        </section>
+      </main>
+
       <!-- SHARED TAB -->
       <main class="layout" x-show="tab === 'shared'">
         <section class="panel">
@@ -180,7 +375,18 @@
           </div>
         </section>
         <section class="panel">
-          <h3>Shared context <span class="muted">(read-only)</span></h3>
+          <h3>Shared context</h3>
+          <div class="card">
+            <h4>Set a key</h4>
+            <div class="form-grid">
+              <input x-model="sharedForm.key" placeholder="key" />
+              <input x-model="sharedForm.value" placeholder="value" />
+            </div>
+            <p class="muted small">Requires the shared-context write token (or admin/global if unset).</p>
+            <div class="toolbar">
+              <button class="primary" @click="setSharedContext()" :disabled="!sharedForm.key.trim() || !sharedForm.value.trim()">Set</button>
+            </div>
+          </div>
           <p class="muted" x-show="shared.context.length === 0">No shared context keys.</p>
           <div class="table-wrap" x-show="shared.context.length">
             <table class="log">

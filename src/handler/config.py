@@ -26,6 +26,12 @@ class Settings(BaseSettings):
     # auth_token when unset (README 3.4 open question, resolved to "gate it").
     shared_context_write_token: str | None = None
 
+    # Optional admin token gating the state-changing control surface exposed to the web:
+    # enqueuing control commands (spawn/kill/resume/approve/…), project CRUD, host CRUD,
+    # and credential-pointer edits. Falls back to auth_token when unset. A single global
+    # token, like auth_token — per-user RBAC is future work.
+    admin_token: str | None = None
+
     # Optional generic webhook target for the Notification hook. No-op when unset.
     webhook_url: str | None = None
 
@@ -69,6 +75,11 @@ class Settings(BaseSettings):
     def effective_shared_write_token(self) -> str:
         """Token required to write shared_context; defaults to the global token."""
         return self.shared_context_write_token or self.auth_token
+
+    @property
+    def effective_admin_token(self) -> str:
+        """Token required for the web control surface; defaults to the global token."""
+        return self.admin_token or self.auth_token
 
 
 @lru_cache

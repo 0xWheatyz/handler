@@ -59,7 +59,8 @@ VOLUME /var/lib/handler
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD handler list >/dev/null 2>&1 || exit 1
 
-# Default to the CI poller — the one long-running control process. Override the command
-# for one-shot control operations, e.g. `docker compose run --rm control handler list`.
+# Default to the worker: it drains the control-command queue the API enqueues
+# (spawn/kill/resume/approve/…) and sweeps CI on an interval (subsuming `poll-ci --watch`).
+# Override for one-shot control operations, e.g. `docker compose run --rm control handler list`.
 ENTRYPOINT ["docker-entrypoint.sh"]
-CMD ["handler", "poll-ci", "--watch"]
+CMD ["handler", "worker"]

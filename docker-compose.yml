@@ -22,12 +22,14 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
-  # Control layer: the `handler` CLI running the CI poller loop. Shares the database and
-  # the handler-data volume with the API. It waits for the API (which owns migrations),
-  # so RUN_MIGRATIONS is off here to avoid a startup race. Run one-shot control commands
-  # against the same image with, e.g., `docker compose run --rm control handler list`.
-  # Live agent spawning also needs `git`/`tmux` (baked in) plus bring-your-own
-  # `claude`/`forge` binaries — layer or mount those in.
+  # Control layer: the `handler` worker. Drains the control-command queue the API enqueues
+  # (spawn/kill/resume/approve/reject/forge-init/poll-ci) and sweeps CI on an interval.
+  # Shares the database and the handler-data volume with the API. It waits for the API
+  # (which owns migrations), so RUN_MIGRATIONS is off here to avoid a startup race. Run
+  # one-shot control commands against the same image with, e.g.,
+  # `docker compose run --rm control handler list`. Live agent spawning also needs
+  # `git`/`tmux` (baked in) plus bring-your-own `claude`/`forge` binaries — layer or mount
+  # those in.
   control:
     image: ghcr.io/0xwheatyz/handler/control:latest
     build:

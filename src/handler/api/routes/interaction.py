@@ -1,10 +1,11 @@
 """Answer + resume — the async replacement for a human sitting at the tmux TTY.
 
-``answer`` writes the operator's reply into the log entry that recorded the question
-(the sole API mutation of ``log_entries``). ``resume`` then feeds that answer back to
-the agent via ``claude --resume``, routed through the control-layer seam so it stays
-mockable and the API/control boundary is explicit. They are two endpoints (README 3.3)
-so the operator can answer many questions, then resume.
+``answer`` writes the operator's reply into the log entry that recorded the question (the
+sole API mutation of ``log_entries``). ``resume`` then enqueues a ``resume`` command: the
+control worker — which runs in the control container where the agent's tmux session
+actually lives — feeds the answer back via ``claude --resume``. (Doing this in-process in
+the API container would fail after the API/control split, since the session isn't here.)
+They are two endpoints (README 3.3) so the operator can answer many questions, then resume.
 """
 
 from __future__ import annotations
@@ -12,10 +13,9 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import Connection
 
-from ...control import spawn
 from ...db import repository as repo
-from ..deps import db_conn, require_auth
-from ..schemas import AnswerIn, AnswerOut, ResumeIn, ResumeOut
+from ..deps import db_conn, require_admin, require_auth
+from ..schemas import AnswerIn, AnswerOut, CommandOut, ResumeIn
 from .common import resolve_agent
 
 router = APIRouter(
@@ -54,15 +54,21 @@ def answer(
     return AnswerOut(log_entry_id=log_entry_id, answered=True)
 
 
-@router.post("/resume", response_model=ResumeOut)
+@router.post(
+    "/resume",
+    response_model=CommandOut,
+    status_code=status.HTTP_202_ACCEPTED,
+    dependencies=[Depends(require_admin)],
+)
 def resume(
     project: str,
     name: str,
     body: ResumeIn,
     conn: Connection = Depends(db_conn),
-) -> ResumeOut:
+) -> dict:
     agent = resolve_agent(conn, project, name)
 
+    # Resolve the answer to feed back here (the API has the log); the worker just delivers.
     answer_text = body.answer
     if answer_text is None:
         open_q = repo.get_latest_open_question(conn, agent["id"])
@@ -80,7 +86,11 @@ def resume(
             detail="no answer available to resume with; answer first or pass one",
         )
 
-    ok, detail = spawn.resume(agent, answer_text)
-    if ok:
-        repo.set_agent_status(conn, agent["id"], "working")
-    return ResumeOut(agent=name, resumed=ok, detail=detail)
+    return repo.enqueue_command(
+        conn,
+        "resume",
+        project_id=project,
+        agent_name=name,
+        payload={"answer": answer_text},
+        requested_by="operator:web",
+    )
