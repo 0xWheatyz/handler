@@ -1,0 +1,20 @@
+# Keep the build context to what the image actually needs: pyproject.toml,
+# README.md (referenced by pyproject), src/, alembic.ini, docker-entrypoint.sh.
+.git
+.github
+.venv
+.omc
+.pytest_cache
+.ruff_cache
+**/__pycache__
+*.py[cod]
+tests
+docs
+.env
+.env.*
+!.env.example
+*.db
+Dockerfile
+docker-compose.yml
+.dockerignore
+.mise.toml

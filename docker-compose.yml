@@ -1,0 +1,42 @@
+# Local/dev deployment: API + Postgres. For a single-node SQLite deploy, drop the
+# `db` service and DATABASE_URL override — the image defaults to SQLite on the
+# handler-data volume.
+services:
+  api:
+    image: ghcr.io/0xwheatyz/handler:latest
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql+psycopg://handler:handler@db:5432/handler
+      # Required — the API refuses to start without it. Set in .env or the shell.
+      AUTH_TOKEN: ${AUTH_TOKEN:?set AUTH_TOKEN in .env or the environment}
+      SHARED_CONTEXT_WRITE_TOKEN: ${SHARED_CONTEXT_WRITE_TOKEN:-}
+      WEBHOOK_URL: ${WEBHOOK_URL:-}
+      UI_ENABLED: ${UI_ENABLED:-true}
+      CORS_ORIGINS: ${CORS_ORIGINS:-}
+    volumes:
+      - handler-data:/var/lib/handler
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: handler
+      POSTGRES_PASSWORD: handler
+      POSTGRES_DB: handler
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U handler -d handler"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+volumes:
+  handler-data:
+  postgres-data:
