@@ -337,6 +337,29 @@ covered. The seams — `control.tmux`, `control.forge`, `control.gitops`, `hooks
 and `control.spawn.resume` — are the mock points that stand in for live
 `claude`/`tmux`/`mise`/`forge`/`git`, and the drop-in points for wiring them up for real.
 
+### Frontend
+
+The dashboard (`frontend/`) is a **Next.js** app (React + TypeScript) that builds to a
+**static export** — the `Claude Activity` Control Center: a left-nav hub over Runs,
+Repositories, Agents, Approvals, Git Servers, Activity, and Shared. It is a pure client of
+the API (same contract as `curl`): the browser prompts for the token once, stores it in
+`localStorage`, and attaches it to every call. All API values render as React text
+(never `dangerouslySetInnerHTML`) so agent-authored strings can't inject markup.
+
+The build output is committed to `src/handler/api/static/` so the Python wheel ships it and
+FastAPI serves it same-origin — there is no separate frontend server and no node step in the
+Docker image. Rebuild after changing the UI:
+
+```bash
+cd frontend
+npm install
+npm run build            # static export → frontend/out/
+npm run export           # build, then sync frontend/out/ → src/handler/api/static/
+```
+
+`npm run dev` runs the UI against a live API on another origin — set
+`NEXT_PUBLIC_API_BASE=http://127.0.0.1:8000` and enable `CORS_ORIGINS` on the API.
+
 ## Project layout
 
 ```
@@ -348,6 +371,8 @@ src/handler/
                        # forge/gitops seams, credentials, skills_gen, CI poller
   hooks/               # Stop/SessionEnd, PreToolUse gate (push + approval), Notification
   migrations/          # Alembic env + versions
+  api/static/          # built Next.js export (generated — see frontend/)
+frontend/              # Next.js dashboard source (builds to api/static/)
 tests/                 # DB, API, hook, and control tests (SQLite)
 docs/PLAN.md           # full design + phased roadmap (the original plan of action)
 ```
