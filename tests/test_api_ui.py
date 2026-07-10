@@ -1,13 +1,17 @@
-"""Phase 3 UI serving: the bundled web UI is served same-origin and, critically, is
-*additive* — it must not shadow any existing API route, and both the toggle (UI_ENABLED)
-and the optional CORS behave as documented. The frontend JS itself has no test runner
-(by design) and is verified via the manual e2e walkthrough in docs/PLAN.md.
+"""Phase 3 UI serving: the bundled web UI (a Next.js static export) is served same-origin
+and, critically, is *additive* — it must not shadow any existing API route, and both the
+toggle (UI_ENABLED) and the optional CORS behave as documented. The frontend itself has no
+test runner (by design) and is verified via the manual e2e walkthrough in docs/PLAN.md.
 """
 
 from __future__ import annotations
 
-import pytest
+import re
+from pathlib import Path
+
 from fastapi.testclient import TestClient
+
+_STATIC_DIR = Path(__file__).resolve().parents[1] / "src" / "handler" / "api" / "static"
 
 
 def _reset_caches() -> None:
@@ -41,18 +45,22 @@ def test_index_served_unauthenticated(client):
     assert "Bearer" not in res.text
 
 
-@pytest.mark.parametrize(
-    "path, marker",
-    [
-        ("/static/app.js", "function app("),
-        ("/static/styles.css", ".badge"),
-        ("/static/alpine.min.js", "Alpine.js"),
-    ],
-)
-def test_static_assets_served_unauthenticated(client, path, marker):
-    res = client.get(path)  # no auth
+def test_next_assets_served_unauthenticated(client):
+    # The export references its hashed bundles under /_next/. Discover one from the shell
+    # and confirm it's served same-origin without auth (filenames are content-hashed, so
+    # we can't hardcode a path).
+    index = client.get("/").text
+    asset = re.search(r"/_next/static/[^\"']+\.js", index)
+    assert asset, "index.html should reference a /_next/static JS bundle"
+    res = client.get(asset.group(0))  # no auth
     assert res.status_code == 200
-    assert marker in res.text
+    assert res.headers["content-type"].startswith(("application/javascript", "text/javascript"))
+
+
+def test_static_export_is_bundled():
+    # The built export ships inside the package tree so `pip install .` bundles it.
+    assert (_STATIC_DIR / "index.html").is_file()
+    assert (_STATIC_DIR / "_next").is_dir()
 
 
 # --- the static surface must NOT shadow the API ------------------------------------
@@ -66,7 +74,8 @@ def test_api_routes_not_shadowed(client, auth):
     res = client.get("/projects", headers=auth)
     assert res.status_code == 200
     assert res.json() == []
-    # "/" is an explicit route, not a catch-all: unknown paths still 404
+    # The "/" static mount is a fallback, not a catch-all rewrite: a path with no matching
+    # file still 404s (it does not fall back to index.html), so the API contract is intact.
     assert client.get("/does-not-exist").status_code == 404
 
 
@@ -93,7 +102,7 @@ def test_cors_present_when_configured(env, monkeypatch):
 def test_ui_disabled_serves_no_shell_but_api_works(env, monkeypatch, auth):
     client = _fresh_client(monkeypatch, UI_ENABLED="false")
     assert client.get("/").status_code == 404
-    assert client.get("/static/app.js").status_code == 404
+    assert client.get("/_next/static/anything.js").status_code == 404
     # API is untouched
     assert client.get("/health").status_code == 200
     assert client.get("/projects", headers=auth).status_code == 200

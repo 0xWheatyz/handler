@@ -11,7 +11,6 @@ from __future__ import annotations
 from pathlib import Path
 
 from fastapi import FastAPI
-from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from ..config import get_settings
@@ -53,16 +52,15 @@ def create_app() -> FastAPI:
             allow_headers=["Authorization", "Content-Type"],
         )
 
-    # Serve the bundled UI same-origin. A dedicated "/static" prefix + an explicit "/"
-    # route (never a "/"-mounted catch-all) so the API routes above can't be shadowed.
-    # The shell holds no data and is served unauthenticated; all data comes from the
-    # authed API calls the browser makes after the operator supplies the bearer token.
+    # Serve the bundled Next.js static export same-origin. It is mounted at "/" *after*
+    # every API router, so it is a fallback, not a shadow: Starlette matches the explicit
+    # API routes (registered above) first and only unmatched paths — "/", the exported
+    # HTML, and the "/_next/*" assets — fall through to StaticFiles. A missing file still
+    # 404s (no SPA catch-all rewrite), so unknown API-looking paths behave as before.
+    # The shell holds no data; all data comes from the authed API calls the browser makes
+    # after the operator supplies the token.
     if settings.ui_enabled and _STATIC_DIR.is_dir():
-        app.mount("/static", StaticFiles(directory=_STATIC_DIR), name="static")
-
-        @app.get("/", include_in_schema=False)
-        def index() -> FileResponse:
-            return FileResponse(_STATIC_DIR / "index.html")
+        app.mount("/", StaticFiles(directory=_STATIC_DIR, html=True), name="ui")
 
     return app
 
