@@ -233,10 +233,16 @@ Reviewed by a separate `code-reviewer` pass; findings on gate bypass (local-merg
 **Definition of done:** an operator registers a project with a `credential_ref`, runs `handler forge-init`, and spawns junior/senior/deploy agents; the junior opens a PR, the senior approves via `handler approve`, and only then can the deploy agent merge — enforced by the gate, not convention — with the push→CI verdict recorded back automatically, all against any forge `forge` supports and with no raw credential ever stored.
 
 ### Phase 3 — Production UI
-- [ ] Web frontend, API-backed only (same contract as `curl`)
-- [ ] Project switcher, agent list per project, live checkmark view, log history, "answer this question" form, plus a view for the shared/global feed
+- [x] Web frontend, API-backed only (same contract as `curl`) — a no-build, same-origin static UI (vanilla `fetch` + plain CSS + one vendored `alpine.min.js`, no npm/bundler) served by FastAPI itself from `/` and `/static`. Zero new Python runtime deps (`StaticFiles`/`CORSMiddleware` ship with Starlette). Serving is additive and gated on `UI_ENABLED` (default on); an optional `CORS_ORIGINS` (default empty → no middleware) supports hosting the UI on a separate origin.
+- [x] Project switcher, agent list per project (live status badges), live checkmark view, paginated log history, "Answer" / "Answer & Resume" form for paused agents, and a shared/global feed + shared-context view. Polling is scoped to the selected agent (~3 requests/tick) to avoid an N+1 over the fleet.
 
-**Definition of done:** open a URL, see every agent's state, answer a paused question, no terminal required.
+**Definition of done:** open a URL, see every agent's state, answer a paused question, no terminal required. **Met.**
+
+The static shell is served **unauthenticated** (it holds no data); the browser prompts for the `AUTH_TOKEN` once, stores it in `localStorage`, and attaches it to every API call. All API values render via Alpine `x-text` (never `x-html`) so agent-authored strings can't inject markup. New tests in `tests/test_api_ui.py` lock the serving, the unauthenticated shell, a **non-shadowing** regression (`/projects` still 401s without auth with the UI mounted), the CORS toggle, and `UI_ENABLED=false`. 114 tests, ruff clean.
+
+**Acceptance script (manual e2e):** seed a project + an agent driven to `paused_for_input` with an `open_question`; run `uvicorn handler.api.app:app --port 8000` with `AUTH_TOKEN` set. (1) Open `http://localhost:8000/` → shell loads with no token, shows the modal. (2) Paste the token → the project switcher lists the project. (3) Select the project → the agent shows an amber `paused_for_input` badge. (4) Select the agent → checkmark panel (where_it_stopped, next_steps, open_question, tests/build gate badges, timestamps) and newest-first log with Prev/Next. (5) Type a reply → **Answer & Resume** → the log gains the answer and the badge flips to blue `working` within one poll tick. (6) Enter a bad token → the next call 401s → the app clears the token and re-prompts. (7) Open the **Shared** tab → the global feed and shared-context render. The backend half of this flow (every endpoint the UI calls, including the unauthenticated shell, the 401 gate, and the `/answer` backfill) is verified end-to-end against a live uvicorn.
+
+**Out of scope (additive follow-ups):** an aggregate `GET /projects/{project}/overview` (agents + latest checkmark in one call) to show every agent's checkmark at once; spawning agents / registering projects from the UI (still CLI-driven); shared-context **writes** from the UI (would need the shared-write token — MVP is read-only).
 
 ### Phase 4 — Observability (moved back, now optional)
 - [ ] Prometheus metrics endpoint on the API (agent counts, pending questions, checkpoint rate)
