@@ -18,6 +18,7 @@ dependencies = [
     "pydantic>=2.10,<3.0",
     "pydantic-settings>=2.7,<3.0",
     "httpx>=0.28,<0.29",
+    "cryptography>=41,<46",
 ]
 
 [project.optional-dependencies]

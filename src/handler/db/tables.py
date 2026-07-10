@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from sqlalchemy import (
     BigInteger,
+    Boolean,
     CheckConstraint,
     Column,
     ForeignKey,
@@ -32,7 +33,9 @@ CI_STATUSES = ("not_applicable", "pending", "pass", "fail")
 VISIBILITIES = ("project", "global")
 APPROVAL_STATUSES = ("approved", "rejected")
 # The control actions the API enqueues and the control-container worker executes.
-COMMAND_TYPES = ("spawn", "kill", "resume", "approve", "reject", "forge_init", "poll_ci")
+# ``sync`` clones a project's repo into its root_dir (or fast-forward pulls an existing
+# clone) using the git server's stored credentials — the API can't run git itself.
+COMMAND_TYPES = ("spawn", "kill", "resume", "approve", "reject", "forge_init", "poll_ci", "sync")
 COMMAND_STATUSES = ("queued", "running", "done", "failed")
 # Forge families a host can belong to (drives per-host token env conventions).
 FORGE_TYPES = ("github", "gitlab", "gitea", "forgejo", "bitbucket")
@@ -177,10 +180,18 @@ commands = Table(
     Index("ix_commands_status_id", "status", "id"),
 )
 
-# Web-managed forge hosts (README §"web management"). Makes the host->token-env mapping
+# Web-managed git servers (README §"web management"). Makes the host->token-env mapping
 # that ``control.credentials`` used to hardcode into an editable registry, and lets
 # operators register self-hosted forges without a code change. The built-in map in
 # ``control.credentials`` remains the fallback when a host has no row here.
+#
+# A server may also carry its own credentials, so projects need nothing per-repo:
+# - ``token_enc``: the forge/git token, Fernet-encrypted (see ``handler.secretstore``) —
+#   resolved for any project on this host with no ``credential_ref`` of its own, and
+#   addressable explicitly as ``db:host:<hostname>``.
+# - ``ssh_public_key`` / ``ssh_private_key_enc``: a per-server ed25519 deploy key. The
+#   public half is shown in the dashboard to paste into the forge; the private half is
+#   encrypted at rest and only ever materialized in the control container.
 forge_hosts = Table(
     "forge_hosts",
     metadata,
@@ -188,6 +199,32 @@ forge_hosts = Table(
     Column("forge_type", String, nullable=False),
     Column("token_env_var", String),  # per-host env name to inject, e.g. "GITHUB_TOKEN"
     Column("base_url", String),  # HTTPS base for the credential-helper scope, when non-default
+    Column("token_enc", String),  # encrypted forge token; never returned by the API
+    Column("ssh_public_key", String),  # OpenSSH public key, shown to the operator
+    Column("ssh_private_key_enc", String),  # encrypted private key; never returned by the API
     Column("created_at", PortableTimestamp, nullable=False, server_default=func.now()),
     CheckConstraint(_in("forge_type", FORGE_TYPES), name="ck_forge_hosts_type"),
+)
+
+# Recurring agent spawns. The worker checks for due rows on every loop pass and enqueues
+# an ordinary ``spawn`` command per firing (so scheduled runs show up in the Activity
+# audit trail like any other control action). Agent names must be unique per project, so
+# each firing appends a UTC timestamp to ``name_prefix``.
+schedules = Table(
+    "schedules",
+    metadata,
+    Column("id", PortableBigInt, primary_key=True, autoincrement=True),
+    Column("project_id", String, ForeignKey("projects.id"), nullable=False),
+    Column("name_prefix", String, nullable=False),  # runs are named <prefix>-<timestamp>
+    Column("task", String, nullable=False),  # the prompt each run starts with
+    Column("role", String),
+    Column("worktree", String),  # optional branch for a per-run git worktree
+    Column("subdir", String),  # optional subdir under the project root
+    Column("interval_seconds", BigInteger, nullable=False),
+    Column("enabled", Boolean, nullable=False),
+    Column("next_run_at", PortableTimestamp, nullable=False),
+    Column("last_run_at", PortableTimestamp),
+    Column("last_command_id", BigInteger, ForeignKey("commands.id")),
+    Column("created_at", PortableTimestamp, nullable=False, server_default=func.now()),
+    Index("ix_schedules_enabled_next", "enabled", "next_run_at"),
 )

@@ -15,7 +15,7 @@ import tomllib
 from ..config import get_settings
 from ..db import repository as repo
 from ..db.engine import connection
-from . import credentials, forge, gitops, settings_gen, tmux, worktree
+from . import credentials, forge, gitops, reposync, settings_gen, tmux, worktree
 
 
 class SpawnError(Exception):
@@ -79,6 +79,7 @@ def spawn(
     role: str | None = None,
 ) -> dict:
     """Create and launch an agent. Returns the agent row."""
+    sync_note = None
     with connection() as conn:
         project = repo.get_project(conn, project_id)
         if project is None:
@@ -86,16 +87,34 @@ def spawn(
         if repo.get_agent_by_name(conn, project_id, name) is not None:
             raise SpawnError(f"agent '{name}' already exists in project '{project_id}'")
 
+        # Stateless workflows: start every run from the remote's latest state. An
+        # existing clone is fast-forwarded (failure degrades to a note — a stale tree is
+        # usable, an offline forge shouldn't brick spawning); a missing/empty root is
+        # cloned, and that failing is fatal (there is nothing to run against). A
+        # non-empty root that isn't a git repo is left alone — it's manually managed.
+        root = project["root_dir"]
+        if project.get("git_remote"):
+            if gitops.is_repo(root):
+                try:
+                    reposync.sync_project(project, conn)
+                except reposync.SyncError as exc:
+                    sync_note = str(exc)
+            elif not os.path.isdir(root) or not os.listdir(root):
+                try:
+                    reposync.sync_project(project, conn)
+                except reposync.SyncError as exc:
+                    raise SpawnError(str(exc)) from exc
+
         working_dir = worktree.resolve_working_dir(
             project["root_dir"], name, subdir=subdir, worktree_branch=worktree_branch
         )
 
         # Hard gates before any state is written or process launched: the test task must
-        # exist, and a configured credential_ref must actually resolve — a broken
-        # pointer should fail fast, not leave an orphaned agent row behind.
+        # exist, and configured credentials must actually resolve — a broken pointer
+        # should fail fast, not leave an orphaned agent row behind.
         require_test_task(working_dir)
         try:
-            token = credentials.resolve(project.get("credential_ref"))
+            token = credentials.resolve_for_project(project, conn)
         except credentials.CredentialError as exc:
             raise SpawnError(str(exc)) from exc
 
@@ -124,6 +143,11 @@ def spawn(
         env.update(credentials.credential_env(token, project.get("git_remote"), conn))
         if token:
             _install_git_credentials(working_dir, project.get("git_remote"), conn)
+        # SSH remotes: pin the agent's git to the server's deploy key, when one is stored.
+        try:
+            env.update(reposync.ssh_env(project.get("git_remote"), conn))
+        except reposync.SyncError as exc:
+            raise SpawnError(str(exc)) from exc
 
     # Verify the pinned forge version, if one is configured. Non-fatal: a version drift
     # is recorded as a warning rather than blocking the spawn, since not every agent
@@ -133,7 +157,7 @@ def spawn(
     session = tmux.session_name(project_id, name)
     command = _claude_command(task, settings_path)
     tmux.new_session(session, cwd=working_dir, command=command, env=env)
-    agent = {**agent, "forge_note": forge_note}
+    agent = {**agent, "forge_note": forge_note, "sync_note": sync_note}
     return agent
 
 

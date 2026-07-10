@@ -35,6 +35,12 @@ class Settings(BaseSettings):
     # Optional generic webhook target for the Notification hook. No-op when unset.
     webhook_url: str | None = None
 
+    # Symmetric key (Fernet, urlsafe-base64) for the DB-backed secret store: git-server
+    # tokens and SSH private keys are encrypted with it at rest. Generate one with
+    # ``python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"``.
+    # Unset => storing/decrypting secrets in the database is refused with a clear error.
+    handler_secret_key: str = ""
+
     # Base directory under which per-project roots / agent worktrees live.
     projects_root: str = "./projects"
 

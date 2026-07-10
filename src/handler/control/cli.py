@@ -15,7 +15,7 @@ import sys
 
 from ..db import repository as repo
 from ..db.engine import connection
-from . import poller, skills_gen, spawn, tmux, worker
+from . import poller, reposync, skills_gen, spawn, tmux, worker
 
 
 def _cmd_spawn(args: argparse.Namespace) -> int:
@@ -191,6 +191,21 @@ def _cmd_forge_init(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_sync(args: argparse.Namespace) -> int:
+    with connection() as conn:
+        project = repo.get_project(conn, args.project)
+    if project is None:
+        print(f"error: project '{args.project}' not registered", file=sys.stderr)
+        return 1
+    try:
+        result = reposync.sync_project(project)
+    except reposync.SyncError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print(f"{result['action']} '{args.project}' at {result['root_dir']}")
+    return 0
+
+
 def _cmd_worker(args: argparse.Namespace) -> int:
     print(
         f"worker starting (poll={args.interval}s, ci-sweep={args.ci_interval}s); "
@@ -253,6 +268,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_forge.add_argument("--project", required=True)
     p_forge.add_argument("--no-commit", action="store_true", help="write but don't git-commit")
     p_forge.set_defaults(func=_cmd_forge_init)
+
+    p_sync = sub.add_parser("sync", help="clone or fast-forward a project's repo")
+    p_sync.add_argument("--project", required=True)
+    p_sync.set_defaults(func=_cmd_sync)
 
     p_worker = sub.add_parser(
         "worker", help="run the control worker: drain enqueued commands + sweep CI"

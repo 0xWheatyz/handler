@@ -15,6 +15,11 @@ services:
       WEBHOOK_URL: ${WEBHOOK_URL:-}
       UI_ENABLED: ${UI_ENABLED:-true}
       CORS_ORIGINS: ${CORS_ORIGINS:-}
+      # The API computes new projects' root_dir under this path (shared volume with the
+      # control container, which does the actual cloning).
+      PROJECTS_ROOT: /var/lib/handler/projects
+      # Encrypts git-server tokens/SSH keys at rest; must match the control container.
+      HANDLER_SECRET_KEY: ${HANDLER_SECRET_KEY:-}
     volumes:
       - handler-data:/var/lib/handler
     depends_on:
@@ -23,7 +28,8 @@ services:
     restart: unless-stopped
 
   # Control layer: the `handler` worker. Drains the control-command queue the API enqueues
-  # (spawn/kill/resume/approve/reject/forge-init/poll-ci) and sweeps CI on an interval.
+  # (spawn/kill/resume/approve/reject/forge-init/poll-ci/sync), fires due schedules, and
+  # sweeps CI on an interval.
   # Shares the database and the handler-data volume with the API. It waits for the API
   # (which owns migrations), so RUN_MIGRATIONS is off here to avoid a startup race. Run
   # one-shot control commands against the same image with, e.g.,
@@ -42,6 +48,8 @@ services:
       # Per-project forge credentials are resolved from credential_ref pointers at spawn;
       # export the referenced vars here when spawning agents from this container.
       FORGE_VERSION: ${FORGE_VERSION:-}
+      # Decrypts git-server tokens/SSH keys stored by the API; must match the API's key.
+      HANDLER_SECRET_KEY: ${HANDLER_SECRET_KEY:-}
     volumes:
       - handler-data:/var/lib/handler
     depends_on:

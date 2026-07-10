@@ -48,8 +48,8 @@ class CredentialError(Exception):
 
 # Schemes an operator may set from the web. ``cmd:`` is deliberately excluded there — it
 # executes an arbitrary command in the control container at spawn — so the API rejects it
-# while the CLI/DB path still allows it (see api/schemas.py). ``db:`` is reserved for the
-# future encrypted secret store (not yet resolvable).
+# while the CLI/DB path still allows it (see api/schemas.py). ``db:host:<hostname>`` reads
+# a git server's encrypted stored token (see ``handler.secretstore``).
 WEB_SETTABLE_SCHEMES = ("env", "file", "db")
 
 
@@ -87,12 +87,38 @@ def _resolve_cmd(rest: str) -> str:
 
 
 def _resolve_db(rest: str) -> str:
-    # Reserved for the encrypted secret store (a later phase); the ``db:`` scheme and this
-    # dispatch seam land now so that store is a drop-in without touching every caller.
-    raise CredentialError(
-        f"credential_ref 'db:{rest}' scheme is reserved for the encrypted secret store, "
-        "which is not enabled yet"
-    )
+    # The encrypted secret store: ``db:host:<hostname>`` reads the git server's stored
+    # token (``forge_hosts.token_enc``) and decrypts it with HANDLER_SECRET_KEY.
+    kind, _, ident = rest.partition(":")
+    ident = ident.strip().lower()
+    if kind != "host" or not ident:
+        raise CredentialError(
+            f"credential_ref 'db:{rest}' is malformed; db: refs take the form "
+            "db:host:<hostname>"
+        )
+    from ..db import repository as repo
+    from ..db.engine import connection
+
+    with connection() as conn:
+        row = repo.get_host(conn, ident)
+    if row is None:
+        raise CredentialError(f"credential_ref 'db:{rest}': git server '{ident}' not registered")
+    if not row.get("token_enc"):
+        raise CredentialError(
+            f"credential_ref 'db:{rest}': git server '{ident}' has no stored token"
+        )
+    return _decrypt_host_token(row)
+
+
+def _decrypt_host_token(host_row: dict) -> str:
+    from .. import secretstore
+
+    try:
+        return secretstore.decrypt(host_row["token_enc"])
+    except secretstore.SecretStoreError as exc:
+        raise CredentialError(
+            f"stored token for git server '{host_row['hostname']}': {exc}"
+        ) from exc
 
 
 # Scheme -> resolver. Adding the encrypted store later means wiring _resolve_db to it,
@@ -127,6 +153,32 @@ def resolve(credential_ref: str | None) -> str | None:
             "(expected env:, file:, cmd:, or db:)"
         )
     return resolver(rest)
+
+
+def resolve_for_project(project: dict, conn: Connection | None = None) -> str | None:
+    """The token a project's agents/git should use.
+
+    The project's own ``credential_ref`` wins when set; otherwise fall back to the
+    stored (encrypted) token of the git server matching the project's remote — so a
+    project registered against a configured git server needs no per-repo credentials.
+    Returns ``None`` when neither exists.
+    """
+    if project.get("credential_ref"):
+        return resolve(project["credential_ref"])
+    host = remote_host(project.get("git_remote"))
+    if not host:
+        return None
+    row = _host_row(conn, host) if conn is not None else _host_row_fresh(host)
+    if row and row.get("token_enc"):
+        return _decrypt_host_token(row)
+    return None
+
+
+def _host_row_fresh(host: str) -> dict | None:
+    from ..db.engine import connection
+
+    with connection() as conn:
+        return _host_row(conn, host)
 
 
 def remote_host(git_remote: str | None) -> str | None:
