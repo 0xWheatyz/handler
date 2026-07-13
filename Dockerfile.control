@@ -45,9 +45,8 @@ FROM python:3.11-slim
 # repo; forge from the build stage above. Installed under /usr/{bin,local/bin} — outside the
 # /var/lib/handler VOLUME — so the volume mount never masks them at runtime. The image is
 # built for amd64 and arm64: NodeSource + forge detect the arch, and the mise apt source is
-# pinned to $TARGETARCH (buildx sets it; the Debian arch names match) so the arm64 build
-# doesn't pull an amd64-only list.
-ARG TARGETARCH=amd64
+# pinned to `dpkg --print-architecture` (the image's own arch) so the arm64 build pulls the
+# arm64 package, not an amd64 one.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         git tmux openssh-client curl ca-certificates gnupg \
@@ -58,7 +57,7 @@ RUN apt-get update \
     && npm cache clean --force \
     && curl -fsSL https://mise.jdx.dev/gpg-key.pub \
         | gpg --dearmor -o /etc/apt/keyrings/mise-archive-keyring.gpg \
-    && echo "deb [signed-by=/etc/apt/keyrings/mise-archive-keyring.gpg arch=${TARGETARCH}] https://mise.jdx.dev/deb stable main" \
+    && echo "deb [signed-by=/etc/apt/keyrings/mise-archive-keyring.gpg arch=$(dpkg --print-architecture)] https://mise.jdx.dev/deb stable main" \
         > /etc/apt/sources.list.d/mise.list \
     && apt-get update \
     && apt-get install -y --no-install-recommends mise \
