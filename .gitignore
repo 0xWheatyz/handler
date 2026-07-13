@@ -15,6 +15,9 @@ downloads/
 eggs/
 .eggs/
 lib/
+# ...but the frontend's own source lib/ (api client + formatters) must be tracked, or the
+# UI can't be rebuilt from a fresh clone. This Python-packaging `lib/` rule swallowed it.
+!frontend/lib/
 lib64/
 parts/
 sdist/

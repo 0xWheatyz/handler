@@ -5,6 +5,13 @@
 # database, and the /var/lib/handler data volume with the API image (see Dockerfile),
 # but runs the control process instead of uvicorn.
 
+# ---- forge build stage: compile the git-forge CLI (git-pkgs/forge, Go) ----
+# Built here and copied into the runtime image as a single static binary, so the runtime
+# stage needs no Go toolchain. `forge` gives the CI poller its cross-forge `ci list`.
+FROM golang:1.22-bookworm AS forge-builder
+ENV CGO_ENABLED=0
+RUN go install github.com/git-pkgs/forge/cmd/forge@latest
+
 # ---- build stage: install the package + deps into an isolated venv ----
 FROM python:3.11-slim AS builder
 
@@ -22,13 +29,40 @@ RUN pip install .
 # ---- runtime stage ----
 FROM python:3.11-slim
 
-# git + tmux are the live-spawning dependencies the control layer shells out to
-# (README "Requirements"); openssh-client covers git-over-ssh remotes. The `claude`
-# and `forge` binaries are bring-your-own — layer or mount them in for live agent
-# spawning and CI resolution; the poller degrades gracefully when forge is absent.
+# Every executable the control layer shells out to is now bundled — no bring-your-own
+# binaries — so the container can spawn live agents, run the verification gate, resolve CI,
+# and drive the claude web-login flow out of the box:
+#   git / openssh-client — clone/push over https + ssh remotes
+#   tmux                  — one detached session per agent (and per login attempt)
+#   node + claude         — the Claude Code CLI the agents *are*, and the /login flow the
+#                           dashboard drives (see control/login.py)
+#   mise                  — the per-project task runner the test/build gates invoke
+#   forge                 — the cross-forge CLI the CI poller reads run status from
+# Node comes from NodeSource (>=18 is required by Claude Code); mise from its official apt
+# repo; forge from the build stage above. Installed under /usr/{bin,local/bin} — outside the
+# /var/lib/handler VOLUME — so the volume mount never masks them at runtime. The image is
+# built for amd64 and arm64: NodeSource + forge detect the arch, and the mise apt source is
+# pinned to $TARGETARCH (buildx sets it; the Debian arch names match) so the arm64 build
+# doesn't pull an amd64-only list.
+ARG TARGETARCH=amd64
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends git tmux openssh-client \
+    && apt-get install -y --no-install-recommends \
+        git tmux openssh-client curl ca-certificates gnupg \
+    && install -dm 755 /etc/apt/keyrings \
+    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && npm install -g @anthropic-ai/claude-code \
+    && npm cache clean --force \
+    && curl -fsSL https://mise.jdx.dev/gpg-key.pub \
+        | gpg --dearmor -o /etc/apt/keyrings/mise-archive-keyring.gpg \
+    && echo "deb [signed-by=/etc/apt/keyrings/mise-archive-keyring.gpg arch=${TARGETARCH}] https://mise.jdx.dev/deb stable main" \
+        > /etc/apt/sources.list.d/mise.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends mise \
     && rm -rf /var/lib/apt/lists/*
+
+# The cross-forge CLI compiled in the build stage above (github.com/git-pkgs/forge).
+COPY --from=forge-builder /go/bin/forge /usr/local/bin/forge
 
 ENV PATH="/opt/venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \

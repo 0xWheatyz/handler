@@ -36,7 +36,24 @@ export type Section =
   | "approvals"
   | "servers"
   | "activity"
-  | "shared";
+  | "shared"
+  | "login";
+
+/* The claude web-login flow, driven through the login_start / login_submit commands.
+ *  idle → starting → awaiting (have URL) → submitting → done | error */
+export type ClaudeLoginStatus =
+  | "idle"
+  | "starting"
+  | "awaiting"
+  | "submitting"
+  | "done"
+  | "error";
+
+export interface ClaudeLoginState {
+  status: ClaudeLoginStatus;
+  url: string;
+  message: string;
+}
 
 export interface RunAgent extends Agent {}
 
@@ -97,6 +114,12 @@ interface StoreValue {
   deleteSchedule: (id: number) => Promise<void>;
   pollCi: () => Promise<void>;
   setSharedKey: (key: string, value: string) => Promise<boolean>;
+
+  // Claude web-login
+  claudeLogin: ClaudeLoginState;
+  startClaudeLogin: () => Promise<void>;
+  submitClaudeCode: (code: string) => Promise<boolean>;
+  resetClaudeLogin: () => void;
 }
 
 export interface SpawnBody {
@@ -189,6 +212,11 @@ export function DashboardProvider({
   const [cmd, setCmd] = useState<CmdState>({ text: "", error: false, busy: false });
   const [lastError, setLastError] = useState("");
   const [loading, setLoading] = useState(true);
+  const [claudeLogin, setClaudeLogin] = useState<ClaudeLoginState>({
+    status: "idle",
+    url: "",
+    message: "",
+  });
 
   // Keep polling loop reading fresh values without re-subscribing every render.
   const sectionRef = useRef(section);
@@ -747,6 +775,89 @@ export function DashboardProvider({
     await loadCommands();
   }, [enqueueAndTrack, loadCommands]);
 
+  // ---- claude web-login (login_start / login_submit through the command queue) ----
+  const startClaudeLogin = useCallback(async () => {
+    setClaudeLogin({
+      status: "starting",
+      url: "",
+      message: "Opening `claude /login` in the control container and selecting the subscription account…",
+    });
+    try {
+      const command = await clientRef.current.api<Command>("/login/start", { method: "POST" });
+      // login_start boots claude, drives the menu, and scrapes the URL — allow ~90s
+      // (worker claim latency + boot waits + URL timeout).
+      const final = await clientRef.current.trackCommand(command.id, { attempts: 180 });
+      if (!final) {
+        setClaudeLogin({
+          status: "error",
+          url: "",
+          message: "Still starting (see Activity). Is the control worker running?",
+        });
+        return;
+      }
+      if (final.status !== "done") {
+        setClaudeLogin({ status: "error", url: "", message: final.error || "Failed to start login." });
+        return;
+      }
+      const url = final.result && typeof final.result.url === "string" ? final.result.url : "";
+      if (!url) {
+        setClaudeLogin({ status: "error", url: "", message: "No login URL was returned by claude." });
+        return;
+      }
+      setClaudeLogin({
+        status: "awaiting",
+        url,
+        message: "Authorize in the window below (or open it in a new tab), then paste the code claude gives you.",
+      });
+    } catch (e) {
+      if (e instanceof AuthError) return;
+      setClaudeLogin({ status: "error", url: "", message: (e as Error).message });
+    }
+  }, []);
+
+  const submitClaudeCode = useCallback(async (code: string) => {
+    const trimmed = code.trim();
+    if (!trimmed) return false;
+    setClaudeLogin((c) => ({ ...c, status: "submitting", message: "Submitting the authorization code…" }));
+    try {
+      const command = await clientRef.current.api<Command>("/login/submit", {
+        method: "POST",
+        body: { code: trimmed },
+      });
+      const final = await clientRef.current.trackCommand(command.id, { attempts: 60 });
+      if (!final) {
+        setClaudeLogin((c) => ({
+          ...c,
+          status: "awaiting",
+          message: "Submit still running (see Activity). Is the control worker running?",
+        }));
+        return false;
+      }
+      if (final.status === "done") {
+        setClaudeLogin({
+          status: "done",
+          url: "",
+          message: "Claude Code is now logged in on the host — new agents will use this account.",
+        });
+        return true;
+      }
+      setClaudeLogin((c) => ({
+        ...c,
+        status: "awaiting",
+        message: final.error || "Login was not confirmed. Re-check the code, or restart the flow.",
+      }));
+      return false;
+    } catch (e) {
+      if (e instanceof AuthError) return false;
+      setClaudeLogin((c) => ({ ...c, status: "awaiting", message: (e as Error).message }));
+      return false;
+    }
+  }, []);
+
+  const resetClaudeLogin = useCallback(() => {
+    setClaudeLogin({ status: "idle", url: "", message: "" });
+  }, []);
+
   const setSharedKey = useCallback(
     async (key: string, value: string) => {
       try {
@@ -806,6 +917,10 @@ export function DashboardProvider({
     deleteSchedule,
     pollCi,
     setSharedKey,
+    claudeLogin,
+    startClaudeLogin,
+    submitClaudeCode,
+    resetClaudeLogin,
   };
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

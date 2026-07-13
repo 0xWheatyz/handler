@@ -20,7 +20,7 @@ from datetime import UTC, datetime, timedelta
 
 from ..db import repository as repo
 from ..db.engine import connection
-from . import gitops, poller, reposync, skills_gen, spawn
+from . import gitops, login, poller, reposync, skills_gen, spawn
 
 
 class CommandError(Exception):
@@ -154,6 +154,30 @@ def _cmd_poll_ci(command: dict) -> dict:
     return poller.sweep(project_id=command.get("project_id"))
 
 
+def _cmd_login_start(command: dict) -> dict:
+    """Open the claude ``/login`` flow and return the claude.com authorization URL."""
+    try:
+        return login.start()
+    except login.LoginError as exc:
+        raise CommandError(str(exc)) from exc
+
+
+def _cmd_login_submit(command: dict) -> dict:
+    """Feed the pasted authorization code back into the live login session."""
+    code = _payload(command).get("code")
+    if not code:
+        raise CommandError("login_submit requires a 'code' in the payload")
+    try:
+        result = login.submit_code(code)
+    except login.LoginError as exc:
+        raise CommandError(str(exc)) from exc
+    if not result.get("success"):
+        # Surface the pane tail so the operator can see why claude rejected the code.
+        detail = result.get("output") or "claude did not confirm a successful login"
+        raise CommandError(f"login not confirmed — {detail}")
+    return result
+
+
 def _cmd_sync(command: dict) -> dict:
     project_id = command.get("project_id")
     if not project_id:
@@ -177,6 +201,8 @@ _DISPATCH = {
     "forge_init": _cmd_forge_init,
     "poll_ci": _cmd_poll_ci,
     "sync": _cmd_sync,
+    "login_start": _cmd_login_start,
+    "login_submit": _cmd_login_submit,
 }
 
 

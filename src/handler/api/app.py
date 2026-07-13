@@ -20,6 +20,7 @@ from .routes import (
     commands,
     hosts,
     interaction,
+    login,
     projects,
     schedules,
     shared,
@@ -46,6 +47,7 @@ def create_app() -> FastAPI:
     app.include_router(interaction.router)
     app.include_router(approvals.router)
     app.include_router(commands.router)
+    app.include_router(login.router)
     app.include_router(hosts.router)
     app.include_router(schedules.router)
     app.include_router(shared.router)

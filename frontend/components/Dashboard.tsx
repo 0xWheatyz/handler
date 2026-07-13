@@ -12,6 +12,7 @@ import { ApprovalsSection } from "@/components/sections/ApprovalsSection";
 import { GitServersSection } from "@/components/sections/GitServersSection";
 import { ActivitySection } from "@/components/sections/ActivitySection";
 import { SharedSection } from "@/components/sections/SharedSection";
+import { LoginSection } from "@/components/sections/LoginSection";
 
 interface NavDef {
   key: Section;
@@ -34,6 +35,13 @@ const NAV: NavDef[] = [
   { key: "servers", label: "Git Servers", count: (s) => s.hosts.length },
   { key: "activity", label: "Activity", count: (s) => s.commands.length },
   { key: "shared", label: "Shared", count: (s) => s.shared.context.length },
+  {
+    key: "login",
+    label: "Claude Login",
+    count: () => 0,
+    // Draw the eye to it until Claude is logged in on the host this session.
+    accent: (s) => s.claudeLogin.status !== "done",
+  },
 ];
 
 export function Dashboard({ onSignOut }: { onSignOut: () => void }) {
@@ -97,6 +105,7 @@ export function Dashboard({ onSignOut }: { onSignOut: () => void }) {
             {s.section === "servers" && <GitServersSection />}
             {s.section === "activity" && <ActivitySection />}
             {s.section === "shared" && <SharedSection />}
+            {s.section === "login" && <LoginSection />}
           </div>
         )}
       </main>

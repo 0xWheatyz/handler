@@ -35,7 +35,22 @@ APPROVAL_STATUSES = ("approved", "rejected")
 # The control actions the API enqueues and the control-container worker executes.
 # ``sync`` clones a project's repo into its root_dir (or fast-forward pulls an existing
 # clone) using the git server's stored credentials — the API can't run git itself.
-COMMAND_TYPES = ("spawn", "kill", "resume", "approve", "reject", "forge_init", "poll_ci", "sync")
+# ``login_start``/``login_submit`` drive the bundled ``claude`` binary's ``/login`` OAuth
+# flow from the web UI: the worker opens an interactive claude session in the control
+# container, returns the claude.com authorization URL, and later feeds back the pasted
+# code — the API container has no ``claude`` and can't run it directly.
+COMMAND_TYPES = (
+    "spawn",
+    "kill",
+    "resume",
+    "approve",
+    "reject",
+    "forge_init",
+    "poll_ci",
+    "sync",
+    "login_start",
+    "login_submit",
+)
 COMMAND_STATUSES = ("queued", "running", "done", "failed")
 # Forge families a host can belong to (drives per-host token env conventions).
 FORGE_TYPES = ("github", "gitlab", "gitea", "forgejo", "bitbucket")

@@ -154,6 +154,12 @@ class CommandOut(BaseModel):
     finished_at: datetime | None = None
 
 
+class LoginSubmitIn(BaseModel):
+    """The authorization code the operator pastes back after logging in at claude.com."""
+
+    code: str = Field(min_length=1)
+
+
 class HostIn(BaseModel):
     hostname: str
     forge_type: ForgeType
