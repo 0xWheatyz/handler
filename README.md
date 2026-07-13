@@ -155,9 +155,10 @@ the `/var/lib/handler` data volume:
 | `ghcr.io/0xwheatyz/handler` | [`Dockerfile`](Dockerfile) | the API (`uvicorn`) — also applies migrations on start | [`docker.yml`](.github/workflows/docker.yml) |
 | `ghcr.io/0xwheatyz/handler/control` | [`Dockerfile.control`](Dockerfile.control) | the control worker (`handler worker`) | [`docker-control.yml`](.github/workflows/docker-control.yml) |
 
-The control image bakes in `git` + `tmux`; the `claude` and `forge` binaries are
-bring-your-own (layer or mount them in for live agent spawning — the CI poller degrades
-gracefully without `forge`). The **worker** drains the control-command queue the API
+The control image bakes in **every executable the control layer shells out to** — `git`,
+`tmux`, `openssh-client`, `node` + the `claude` CLI, `mise`, and `forge` — so live agent
+spawning, the verification gate, CI resolution, and the [web login](#claude-login-from-the-web-ui)
+flow all work with zero bring-your-own binaries. The **worker** drains the control-command queue the API
 enqueues (spawn/kill/resume/approve/reject/forge-init/poll-ci) and sweeps CI on an interval
 (subsuming `poll-ci --watch`), so the whole system is drivable from the dashboard — see
 [Web management](#web-management).
@@ -224,12 +225,38 @@ What the dashboard can now do (all state-changing actions require `ADMIN_TOKEN`)
 - **Activity** — every enqueued command with its status (queued → running → done/failed) —
   the audit log of what the dashboard triggered. The UI polls `GET /commands/{id}` for
   live status.
+- **Claude Login** — log Claude Code in on the host from the browser (see below), so agents
+  spawn against a real authenticated `claude` with no shell access to the container.
 
 The command queue is exposed over HTTP as `POST …/agents/spawn`, `POST …/agents/{n}/kill`,
-`POST …/approvals`, `POST …/forge-init`, `POST …/poll-ci`, `POST …/sync`, and
-`GET /commands[/{id}]`; hosts as `/hosts`; schedules as `/schedules` +
-`/projects/{id}/schedules`; project mutation as `PATCH`/`DELETE /projects/{id}`. Run the
-worker with `handler worker` (the control image's default command).
+`POST …/approvals`, `POST …/forge-init`, `POST …/poll-ci`, `POST …/sync`,
+`POST /login/start`, `POST /login/submit`, and `GET /commands[/{id}]`; hosts as `/hosts`;
+schedules as `/schedules` + `/projects/{id}/schedules`; project mutation as
+`PATCH`/`DELETE /projects/{id}`. Run the worker with `handler worker` (the control image's
+default command).
+
+### Claude login from the web UI
+
+Agents *are* `claude` processes, so the control container needs a logged-in Claude Code.
+Because that container has no interactive shell in normal operation, the **Claude Login**
+pane logs it in from the browser — the same command-queue handoff every other control
+action uses:
+
+1. **Log in to Claude** enqueues a `login_start` command. The worker opens `claude` in a
+   dedicated tmux session in the control container, sends `/login`, selects the **Claude
+   account with subscription** option, and scrapes the pane for the `claude.com`
+   authorization URL — returned in the command result.
+2. The UI opens that URL in an embedded frame (with a new-tab link as a fallback, since
+   claude.com may refuse to be framed). You authorize and Claude gives you a code.
+3. **Finish login** enqueues a `login_submit` command carrying the code; the worker feeds
+   it into the still-open session, waits for claude to exchange it, and reports success.
+
+The login session lives in the control container, and Claude's credentials land under the
+`handler` user's home on the `/var/lib/handler` volume — so the login **persists** across
+restarts and is shared by every agent the worker spawns. The flow is admin-gated
+(`ADMIN_TOKEN`) and driven entirely through `POST /login/start` and `POST /login/submit`.
+The interactive claude TUI is timing-sensitive; the waits in `control.login` are generous
+and overridable if a slow host needs more.
 
 ## Control CLI
 

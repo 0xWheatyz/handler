@@ -63,3 +63,21 @@ def send_keys(name: str, keys: str) -> None:
     """Send a line of input to a live session (used by the resume seam)."""
     tmux = get_settings().tmux_bin
     subprocess.run([tmux, "send-keys", "-t", name, keys, "Enter"], check=True)
+
+
+def capture_pane(name: str) -> str:
+    """Return the visible text of a session's pane.
+
+    ``-p`` prints to stdout, ``-J`` joins wrapped lines so a long URL split across the
+    pane width comes back on one logical line (the login flow relies on this to recover
+    the claude.com authorization link). Returns an empty string if the session is gone.
+    """
+    tmux = get_settings().tmux_bin
+    result = subprocess.run(
+        [tmux, "capture-pane", "-t", name, "-p", "-J"],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        return ""
+    return result.stdout

@@ -6,7 +6,7 @@ machinery (already covered by test_control_spawn)."""
 
 from __future__ import annotations
 
-from handler.control import poller, spawn, worker
+from handler.control import login, poller, spawn, worker
 from handler.db import repository as repo
 from handler.db.engine import get_engine
 
@@ -105,6 +105,53 @@ def test_poll_ci_command_returns_summary(env, monkeypatch):
     done = _get(cmd["id"])
     assert done["status"] == "done"
     assert done["result"] == {"checked": 0, "resolved": 0, "pending": 0}
+
+
+def test_login_start_command_returns_url(env, monkeypatch):
+    monkeypatch.setattr(
+        login, "start", lambda: {"session": "handler__login", "url": "https://claude.ai/oauth"}
+    )
+    cmd = _enqueue(type="login_start")
+
+    worker.drain("w")
+    done = _get(cmd["id"])
+    assert done["status"] == "done"
+    assert done["result"]["url"] == "https://claude.ai/oauth"
+
+
+def test_login_submit_command_feeds_code(env, monkeypatch):
+    seen = {}
+
+    def fake_submit(code):
+        seen["code"] = code
+        return {"success": True, "output": "Login successful"}
+
+    monkeypatch.setattr(login, "submit_code", fake_submit)
+    cmd = _enqueue(type="login_submit", payload={"code": "auth-123"})
+
+    worker.drain("w")
+    done = _get(cmd["id"])
+    assert done["status"] == "done"
+    assert done["result"]["success"] is True
+    assert seen["code"] == "auth-123"
+
+
+def test_login_submit_failure_is_recorded_failed(env, monkeypatch):
+    monkeypatch.setattr(
+        login, "submit_code", lambda code: {"success": False, "output": "Invalid code"}
+    )
+    cmd = _enqueue(type="login_submit", payload={"code": "bad"})
+
+    worker.drain("w")
+    failed = _get(cmd["id"])
+    assert failed["status"] == "failed"
+    assert "Invalid code" in failed["error"]
+
+
+def test_login_submit_without_code_is_failed(env):
+    cmd = _enqueue(type="login_submit", payload={})
+    assert worker.drain("w") == 1
+    assert _get(cmd["id"])["status"] == "failed"
 
 
 def test_bad_command_is_recorded_failed_not_raised(env):

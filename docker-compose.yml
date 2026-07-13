@@ -33,9 +33,9 @@ services:
   # Shares the database and the handler-data volume with the API. It waits for the API
   # (which owns migrations), so RUN_MIGRATIONS is off here to avoid a startup race. Run
   # one-shot control commands against the same image with, e.g.,
-  # `docker compose run --rm control handler list`. Live agent spawning also needs
-  # `git`/`tmux` (baked in) plus bring-your-own `claude`/`forge` binaries — layer or mount
-  # those in.
+  # `docker compose run --rm control handler list`. Every executable it shells out to —
+  # `git`, `tmux`, `node`+`claude`, `mise`, `forge` — is bundled in the image, so live
+  # agent spawning and the claude web-login flow work with no bring-your-own binaries.
   control:
     image: ghcr.io/0xwheatyz/handler/control:latest
     build:
