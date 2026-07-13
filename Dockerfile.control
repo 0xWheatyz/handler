@@ -8,8 +8,11 @@
 # ---- forge build stage: compile the git-forge CLI (git-pkgs/forge, Go) ----
 # Built here and copied into the runtime image as a single static binary, so the runtime
 # stage needs no Go toolchain. `forge` gives the CI poller its cross-forge `ci list`.
-FROM golang:1.22-bookworm AS forge-builder
-ENV CGO_ENABLED=0
+# `golang:1` tracks the latest stable Go (forge >= v0.6.0 needs Go 1.26+); GOTOOLCHAIN=auto
+# lets `go install` fetch an even newer toolchain if a future forge release requires one.
+FROM golang:1-bookworm AS forge-builder
+ENV CGO_ENABLED=0 \
+    GOTOOLCHAIN=auto
 RUN go install github.com/git-pkgs/forge/cmd/forge@latest
 
 # ---- build stage: install the package + deps into an isolated venv ----
