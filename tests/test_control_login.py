@@ -43,6 +43,24 @@ def test_extract_url_none_when_no_link():
     assert login._extract_url("no link here") is None
 
 
+def test_extract_url_stops_at_box_border():
+    # claude may draw the URL inside a rounded box; a "│" flush against the link must not
+    # be captured as part of the URL.
+    assert login._extract_url(f"│{AUTH_URL}│") == AUTH_URL
+
+
+def test_extract_url_captures_full_long_url_with_redirect_uri():
+    # The real login URL carries redirect_uri + PKCE; on a wide pane it arrives intact and
+    # extraction must not clip it (the truncation-at-80-cols bug was in capture, not here).
+    long_url = (
+        "https://claude.ai/oauth/authorize?code=true&client_id=9d1c250a-e61b-44d9-88ab-"
+        "0123456789ab&response_type=code&redirect_uri=https%3A%2F%2Fconsole.anthropic.com"
+        "%2Foauth%2Fcode%2Fcallback&scope=org%3Acreate_api_key+user%3Aprofile&"
+        "code_challenge=abcDEF123&code_challenge_method=S256&state=xyz789"
+    )
+    assert login._extract_url(f"Use this URL to sign in:\n{long_url}") == long_url
+
+
 def test_start_launches_claude_selects_subscription_and_returns_url(
     env, fake_tmux, no_sleep, monkeypatch
 ):
@@ -56,6 +74,9 @@ def test_start_launches_claude_selects_subscription_and_returns_url(
     assert len(launched) == 1
     assert launched[0]["name"] == login.LOGIN_SESSION
     assert launched[0]["command"] == "claude"
+    # A wide window so the long authorization URL isn't clipped at 80 columns.
+    assert launched[0]["width"] == login.LOGIN_COLS
+    assert launched[0]["height"] == login.LOGIN_ROWS
     # …then /login was sent, followed by a bare Enter selecting the subscription option.
     sent = [c["keys"] for c in fake_tmux["calls"]["send_keys"]]
     assert sent[:2] == ["/login", ""]

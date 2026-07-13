@@ -19,14 +19,29 @@ def session_name(project_id: str, agent_name: str) -> str:
     return safe
 
 
-def new_session(name: str, cwd: str, command: str, env: dict[str, str]) -> None:
+def new_session(
+    name: str,
+    cwd: str,
+    command: str,
+    env: dict[str, str],
+    *,
+    width: int | None = None,
+    height: int | None = None,
+) -> None:
     """Launch a detached tmux session running ``command`` in ``cwd`` with ``env`` set.
 
     ``tmux -e`` sets session environment, so the ``claude`` process (and therefore its
-    hooks) inherit the agent identity + ``DATABASE_URL``.
+    hooks) inherit the agent identity + ``DATABASE_URL``. ``width``/``height`` size the
+    detached window (``-x``/``-y``); the login flow uses a very wide window so ``claude``
+    prints the full authorization URL on one line instead of clipping it at the default
+    80 columns (which capture-pane would then read back truncated).
     """
     tmux = get_settings().tmux_bin
     argv = [tmux, "new-session", "-d", "-s", name, "-c", cwd]
+    if width is not None:
+        argv += ["-x", str(width)]
+    if height is not None:
+        argv += ["-y", str(height)]
     for key, value in env.items():
         argv += ["-e", f"{key}={value}"]
     argv.append(command)

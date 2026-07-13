@@ -32,8 +32,17 @@ from . import tmux
 # One well-known session name: ``login_start`` (re)creates it, ``login_submit`` reuses it.
 LOGIN_SESSION = "handler__login"
 
-# Any http(s) URL in the pane; we then prefer the OAuth/authorize link among them.
-_URL_RE = re.compile(r"https?://[^\s\"'<>`|]+")
+# A very wide, tall detached window so claude prints the (long) authorization URL on a
+# single unclipped line — at the default 80 columns capture-pane reads it back truncated
+# (missing redirect_uri/state), which is the whole point of failure otherwise.
+LOGIN_COLS = 500
+LOGIN_ROWS = 50
+
+# Any http(s) URL in the pane; we then prefer the OAuth/authorize link among them. The
+# character class stops at whitespace, quotes, and — importantly — box-drawing glyphs
+# (U+2500–U+257F) the TUI may render flush against the link, so a bordered URL isn't
+# captured with a trailing "│".
+_URL_RE = re.compile(r"https?://[^\s\"'<>`|─-╿]+")
 _OAUTH_HINTS = ("oauth", "authorize", "claude.ai", "claude.com", "console.anthropic")
 _SUCCESS_HINTS = (
     "login successful",
@@ -85,7 +94,9 @@ def start(
     if tmux.has_session(LOGIN_SESSION):
         tmux.kill_session(LOGIN_SESSION)
 
-    tmux.new_session(LOGIN_SESSION, cwd=_home(), command=claude, env={})
+    tmux.new_session(
+        LOGIN_SESSION, cwd=_home(), command=claude, env={}, width=LOGIN_COLS, height=LOGIN_ROWS
+    )
     _sleep(boot_wait)  # let claude boot to its prompt
 
     tmux.send_keys(LOGIN_SESSION, "/login")

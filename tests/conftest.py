@@ -79,9 +79,10 @@ def fake_tmux(monkeypatch):
 
     from handler.control import tmux
 
-    def new_session(name, cwd, command, env):
+    def new_session(name, cwd, command, env, *, width=None, height=None):
         calls["new_session"].append(
-            {"name": name, "cwd": cwd, "command": command, "env": env}
+            {"name": name, "cwd": cwd, "command": command, "env": env,
+             "width": width, "height": height}
         )
         live.add(name)
 
