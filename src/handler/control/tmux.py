@@ -80,19 +80,21 @@ def send_keys(name: str, keys: str) -> None:
     subprocess.run([tmux, "send-keys", "-t", name, keys, "Enter"], check=True)
 
 
-def capture_pane(name: str) -> str:
+def capture_pane(name: str, escapes: bool = False) -> str:
     """Return the visible text of a session's pane.
 
     ``-p`` prints to stdout, ``-J`` joins wrapped lines so a long URL split across the
     pane width comes back on one logical line (the login flow relies on this to recover
-    the claude.com authorization link). Returns an empty string if the session is gone.
+    the claude.com authorization link). ``escapes=True`` adds ``-e`` to keep ANSI/OSC
+    escape sequences — the login URL extractor uses this so it can also recover a URL that
+    the TUI renders as an OSC-8 hyperlink (where the visible text differs from the href).
+    Returns an empty string if the session is gone.
     """
     tmux = get_settings().tmux_bin
-    result = subprocess.run(
-        [tmux, "capture-pane", "-t", name, "-p", "-J"],
-        capture_output=True,
-        text=True,
-    )
+    argv = [tmux, "capture-pane", "-t", name, "-p", "-J"]
+    if escapes:
+        argv.append("-e")
+    result = subprocess.run(argv, capture_output=True, text=True)
     if result.returncode != 0:
         return ""
     return result.stdout

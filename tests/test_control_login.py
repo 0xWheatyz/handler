@@ -1,8 +1,9 @@
-"""The claude web-login seam: driving ``claude /login`` through tmux and scraping the URL.
+"""The claude web-login seam: driving ``claude /login`` through tmux, scraping the URL,
+and confirming the login.
 
 Uses the shared ``fake_tmux`` fixture (extended here with a scripted ``capture_pane``) and
-patches out the real sleeps, so no live claude/tmux is touched — the same approach as the
-spawn tests.
+patches out the real sleeps + the on-disk credentials check, so no live claude/tmux/FS is
+touched — the same approach as the spawn tests.
 """
 
 from __future__ import annotations
@@ -17,20 +18,32 @@ def no_sleep(monkeypatch):
     monkeypatch.setattr(login, "_sleep", lambda *_a, **_k: None)
 
 
+@pytest.fixture
+def stable_creds(monkeypatch):
+    """No credentials change on disk — success must come from the pane/session signals."""
+    monkeypatch.setattr(login, "_credentials_fingerprint", lambda: ())
+
+
 def _pane(monkeypatch, *frames):
     """Make ``capture_pane`` return each frame in turn, then repeat the last one."""
     seq = list(frames)
 
-    def capture(_name):
+    def capture(_name, escapes=False):
         return seq[0] if len(seq) == 1 else seq.pop(0)
 
     monkeypatch.setattr(tmux, "capture_pane", capture)
 
 
-AUTH_URL = "https://claude.ai/oauth/authorize?code=true&client_id=abc&state=xyz"
+# A complete Claude OAuth URL (scheme + client_id + redirect_uri + state) — extraction
+# deliberately rejects anything less, so the fixtures must use the real shape.
+AUTH_URL = (
+    "https://claude.ai/oauth/authorize?code=true&client_id=abc123&response_type=code"
+    "&redirect_uri=https%3A%2F%2Fplatform.claude.com%2Foauth%2Fcode%2Fcallback"
+    "&scope=user%3Aprofile&code_challenge=chal&code_challenge_method=S256&state=st42"
+)
 
 
-def test_extract_url_prefers_oauth_link():
+def test_extract_url_prefers_complete_oauth_link():
     pane = f"Visit https://example.com/help or\n{AUTH_URL}\nand paste the code."
     assert login._extract_url(pane) == AUTH_URL
 
@@ -43,22 +56,24 @@ def test_extract_url_none_when_no_link():
     assert login._extract_url("no link here") is None
 
 
+def test_extract_url_rejects_incomplete_url():
+    # A garbled/partial capture (dropped scheme char, or no query string) must be refused
+    # so the iframe never opens a broken page.
+    assert login._extract_url("ttps://claude.com/cai/oauth/authorize?client_id=x") is None
+    assert login._extract_url("https://claude.ai/oauth/authorize") is None
+
+
 def test_extract_url_stops_at_box_border():
     # claude may draw the URL inside a rounded box; a "│" flush against the link must not
     # be captured as part of the URL.
     assert login._extract_url(f"│{AUTH_URL}│") == AUTH_URL
 
 
-def test_extract_url_captures_full_long_url_with_redirect_uri():
-    # The real login URL carries redirect_uri + PKCE; on a wide pane it arrives intact and
-    # extraction must not clip it (the truncation-at-80-cols bug was in capture, not here).
-    long_url = (
-        "https://claude.ai/oauth/authorize?code=true&client_id=9d1c250a-e61b-44d9-88ab-"
-        "0123456789ab&response_type=code&redirect_uri=https%3A%2F%2Fconsole.anthropic.com"
-        "%2Foauth%2Fcode%2Fcallback&scope=org%3Acreate_api_key+user%3Aprofile&"
-        "code_challenge=abcDEF123&code_challenge_method=S256&state=xyz789"
-    )
-    assert login._extract_url(f"Use this URL to sign in:\n{long_url}") == long_url
+def test_extract_url_recovers_href_from_osc8_hyperlink():
+    # claude renders the URL as an OSC-8 hyperlink: the visible text can be styled/garbled
+    # while the real href sits in the escape. Capturing with escapes lets us recover it.
+    pane = f"\x1b]8;;{AUTH_URL}\x1b\\click here\x1b]8;;\x1b\\"
+    assert login._extract_url(pane) == AUTH_URL
 
 
 def test_start_launches_claude_selects_subscription_and_returns_url(
@@ -103,11 +118,11 @@ def test_start_times_out_and_cleans_up_when_no_url(env, fake_tmux, no_sleep, mon
     assert login.LOGIN_SESSION not in fake_tmux["live"]
 
 
-def test_submit_code_sends_code_and_reports_success(env, fake_tmux, no_sleep, monkeypatch):
+def test_submit_code_confirmed_by_success_text(env, fake_tmux, no_sleep, stable_creds, monkeypatch):
     fake_tmux["live"].add(login.LOGIN_SESSION)
     _pane(monkeypatch, "Login successful. Welcome back!")
 
-    result = login.submit_code("my-auth-code")
+    result = login.submit_code("my-auth-code", poll_timeout=1.0)
 
     assert result["success"] is True
     assert "Login successful" in result["output"]
@@ -116,13 +131,32 @@ def test_submit_code_sends_code_and_reports_success(env, fake_tmux, no_sleep, mo
     assert login.LOGIN_SESSION not in fake_tmux["live"]
 
 
+def test_submit_code_confirmed_by_credentials_file(env, fake_tmux, no_sleep, monkeypatch):
+    fake_tmux["live"].add(login.LOGIN_SESSION)
+    # The pane never prints a success string, but claude writes its credentials — the
+    # authoritative signal. First call = baseline, later calls = changed.
+    calls = {"n": 0}
+
+    def fingerprint():
+        calls["n"] += 1
+        return () if calls["n"] == 1 else (("~/.claude/.credentials.json", 123, 45),)
+
+    monkeypatch.setattr(login, "_credentials_fingerprint", fingerprint)
+    _pane(monkeypatch, "still on the paste-code screen, no success text")
+
+    result = login.submit_code("code", poll_timeout=1.0)
+
+    assert result["success"] is True
+    assert login.LOGIN_SESSION not in fake_tmux["live"]
+
+
 def test_submit_code_reports_failure_without_killing_session(
-    env, fake_tmux, no_sleep, monkeypatch
+    env, fake_tmux, no_sleep, stable_creds, monkeypatch
 ):
     fake_tmux["live"].add(login.LOGIN_SESSION)
     _pane(monkeypatch, "Invalid code, please try again")
 
-    result = login.submit_code("wrong")
+    result = login.submit_code("wrong", poll_timeout=0.05)
 
     assert result["success"] is False
     assert login.LOGIN_SESSION in fake_tmux["live"]  # left up for a retry
