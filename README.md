@@ -243,13 +243,17 @@ pane logs it in from the browser — the same command-queue handoff every other 
 action uses:
 
 1. **Log in to Claude** enqueues a `login_start` command. The worker opens `claude` in a
-   dedicated tmux session in the control container, sends `/login`, selects the **Claude
-   account with subscription** option, and scrapes the pane for the `claude.com`
-   authorization URL — returned in the command result.
-2. The UI opens that URL in an embedded frame (with a new-tab link as a fallback, since
-   claude.com may refuse to be framed). You authorize and Claude gives you a code.
-3. **Finish login** enqueues a `login_submit` command carrying the code; the worker feeds
-   it into the still-open session, waits for claude to exchange it, and reports success.
+   dedicated (wide) tmux session in the control container, navigates whatever onboarding a
+   fresh `claude` shows (theme picker, folder-trust) to the **Claude account with
+   subscription** login, and scrapes the pane for the `claude.com` authorization URL —
+   returned in the command result.
+2. The UI opens that URL in a small **OAuth-style popup window** (like "Sign in with …";
+   claude.com refuses to be embedded in an iframe, so a popup is the right surface), with
+   a new-tab link as a fallback. You authorize there and Claude gives you a code.
+3. **Finish login** enqueues a `login_submit` command carrying the code; the worker pastes
+   it into the still-open session and presses Enter separately (a long code plus an
+   immediate Enter races the TUI and never submits), then confirms by watching claude write
+   its credentials.
 
 The login session lives in the control container, and Claude's credentials land under the
 `handler` user's home on the `/var/lib/handler` volume — so the login **persists** across
