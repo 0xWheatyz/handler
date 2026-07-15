@@ -1,23 +1,63 @@
 /* Claude Login — drive the bundled `claude /login` OAuth flow on the host from the web UI.
  *
- * Click "Log in to Claude" → the worker opens `claude /login` in the control container,
- * selects the subscription account, and returns the claude.com authorization URL. That URL
- * is shown in an embedded frame (and as a new-tab link, since claude.com may refuse to be
- * framed); after authorizing, paste the code back to finish. All state lives in the store's
- * `claudeLogin` machine (login_start / login_submit commands). */
+ * Click "Log in to Claude" → a small OAuth-style popup window opens (like "Sign in with
+ * Google") and the worker drives `claude /login` in the control container, selecting the
+ * subscription account and returning the claude.com authorization URL, which we point the
+ * popup at. (claude.com refuses to be embedded in an iframe, so a popup — not an inline
+ * frame — is the right surface.) You authorize there, copy the code, and paste it back to
+ * finish. All state lives in the store's `claudeLogin` machine (login_start / login_submit
+ * commands). */
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useDashboard } from "@/components/store";
 import { Button, Callout, Input } from "@/components/ui";
+
+function openLoginPopup(url: string): Window | null {
+  const w = 520;
+  const h = 760;
+  // Center over the current window; specifying a size makes browsers open a popup window
+  // (the "Sign in with …" surface) rather than a new tab.
+  const left = window.screenX + Math.max(0, (window.outerWidth - w) / 2);
+  const top = window.screenY + Math.max(0, (window.outerHeight - h) / 2);
+  return window.open(
+    url,
+    "claude-login",
+    `popup=yes,width=${w},height=${h},left=${Math.round(left)},top=${Math.round(top)}`,
+  );
+}
 
 export function LoginSection() {
   const s = useDashboard();
   const { status, url, message } = s.claudeLogin;
   const [code, setCode] = useState("");
+  const popupRef = useRef<Window | null>(null);
 
   const busy = status === "starting" || status === "submitting";
   const awaiting = status === "awaiting" || status === "submitting";
+
+  // Open a blank popup *within the click* (below) so browsers don't block it; once
+  // login_start returns the URL, navigate that same popup to it.
+  useEffect(() => {
+    if (status === "awaiting" && url && popupRef.current && !popupRef.current.closed) {
+      try {
+        popupRef.current.location.href = url;
+      } catch {
+        /* cross-origin after navigation — expected, ignore */
+      }
+    }
+    if (status === "done" || status === "error") {
+      popupRef.current?.close();
+      popupRef.current = null;
+    }
+  }, [status, url]);
+
+  const start = () => {
+    // Open the popup now, on the user gesture, to a lightweight loading page; the effect
+    // above redirects it to the real URL when it arrives.
+    popupRef.current = openLoginPopup("about:blank");
+    void s.startClaudeLogin();
+  };
 
   const submit = async () => {
     const ok = await s.submitClaudeCode(code);
@@ -50,46 +90,40 @@ export function LoginSection() {
           </div>
         ) : !awaiting ? (
           <div className="hstack" style={{ gap: 10 }}>
-            <Button variant="primary" disabled={busy} onClick={s.startClaudeLogin}>
+            <Button variant="primary" disabled={busy} onClick={start}>
               {status === "starting" ? "Starting…" : "Log in to Claude"}
             </Button>
             {status === "error" && (
-              <Button variant="ghost" disabled={busy} onClick={s.startClaudeLogin}>
+              <Button variant="ghost" disabled={busy} onClick={start}>
                 Retry
               </Button>
             )}
           </div>
         ) : (
           <>
+            <Callout tone="info">
+              A Claude sign-in window should have opened. Authorize there, copy the code
+              Claude shows you, and paste it below. If the window didn&apos;t open (popups
+              blocked), use the button.
+            </Callout>
             <div className="hstack" style={{ gap: 10, flexWrap: "wrap" }}>
-              <a className="btn btn-secondary" href={url} target="_blank" rel="noopener noreferrer">
-                Open login page in a new tab ↗
-              </a>
-              <Button variant="ghost" disabled={busy} onClick={s.startClaudeLogin}>
+              <Button
+                variant="secondary"
+                disabled={!url}
+                onClick={() => {
+                  if (url) popupRef.current = openLoginPopup(url);
+                }}
+              >
+                Open Claude sign-in window ↗
+              </Button>
+              {url && (
+                <a className="btn btn-ghost" href={url} target="_blank" rel="noopener noreferrer">
+                  Open in a new tab
+                </a>
+              )}
+              <Button variant="ghost" disabled={busy} onClick={start}>
                 Restart
               </Button>
-            </div>
-
-            <div
-              style={{
-                border: "1px solid var(--border-default)",
-                borderRadius: 10,
-                overflow: "hidden",
-                height: 460,
-                background: "var(--surface-1, #111)",
-              }}
-            >
-              <iframe
-                title="Claude login"
-                src={url}
-                style={{ width: "100%", height: "100%", border: "none" }}
-                sandbox="allow-forms allow-scripts allow-same-origin allow-popups"
-              />
-            </div>
-            <div className="faint" style={{ fontSize: "var(--text-xs)" }}>
-              If the frame stays blank, claude.com is refusing to be embedded — use the
-              new-tab link above instead. The login session stays open until you submit the
-              code or restart.
             </div>
 
             <div className="hstack" style={{ gap: 10, alignItems: "flex-end", flexWrap: "wrap" }}>
