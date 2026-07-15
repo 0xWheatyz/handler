@@ -74,7 +74,13 @@ def auth(env):
 @pytest.fixture
 def fake_tmux(monkeypatch):
     """Record tmux calls instead of spawning; report sessions as live by default."""
-    calls: dict[str, list] = {"new_session": [], "kill_session": [], "send_keys": []}
+    calls: dict[str, list] = {
+        "new_session": [],
+        "kill_session": [],
+        "send_keys": [],
+        "send_text": [],
+        "send_enter": [],
+    }
     live: set[str] = set()
 
     from handler.control import tmux
@@ -96,6 +102,12 @@ def fake_tmux(monkeypatch):
     def send_keys(name, keys):
         calls["send_keys"].append({"name": name, "keys": keys})
 
+    def send_text(name, text):
+        calls["send_text"].append({"name": name, "text": text})
+
+    def send_enter(name):
+        calls["send_enter"].append({"name": name})
+
     def list_sessions():
         return list(live)
 
@@ -103,6 +115,8 @@ def fake_tmux(monkeypatch):
     monkeypatch.setattr(tmux, "has_session", has_session)
     monkeypatch.setattr(tmux, "kill_session", kill_session)
     monkeypatch.setattr(tmux, "send_keys", send_keys)
+    monkeypatch.setattr(tmux, "send_text", send_text)
+    monkeypatch.setattr(tmux, "send_enter", send_enter)
     monkeypatch.setattr(tmux, "list_sessions", list_sessions)
 
     return {"calls": calls, "live": live}

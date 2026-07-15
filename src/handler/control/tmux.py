@@ -75,9 +75,30 @@ def kill_session(name: str) -> None:
 
 
 def send_keys(name: str, keys: str) -> None:
-    """Send a line of input to a live session (used by the resume seam)."""
+    """Type ``keys`` into a session followed by Enter (used by resume + menu nav)."""
     tmux = get_settings().tmux_bin
     subprocess.run([tmux, "send-keys", "-t", name, keys, "Enter"], check=True)
+
+
+def send_text(name: str, text: str) -> None:
+    """Deliver ``text`` to a session as a bracketed paste, with **no** trailing Enter.
+
+    Loads the text into a dedicated tmux buffer and pastes it, so arbitrary content is
+    delivered verbatim — characters ``send-keys`` would treat as key names are safe, and a
+    long string can't lose its submit to a race (the classic failure: a code plus an
+    immediate Enter, where the Enter is processed before the paste registers, so nothing is
+    submitted). Submit afterwards with :func:`send_enter`.
+    """
+    tmux = get_settings().tmux_bin
+    buf = "handler-login"
+    subprocess.run([tmux, "set-buffer", "-b", buf, "--", text], check=True)
+    subprocess.run([tmux, "paste-buffer", "-b", buf, "-p", "-d", "-t", name], check=True)
+
+
+def send_enter(name: str) -> None:
+    """Send a bare Enter to a session (e.g. submit a previously pasted line / pick a menu)."""
+    tmux = get_settings().tmux_bin
+    subprocess.run([tmux, "send-keys", "-t", name, "Enter"], check=True)
 
 
 def capture_pane(name: str, escapes: bool = False) -> str:
