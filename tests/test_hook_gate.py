@@ -2,15 +2,16 @@
 
 from __future__ import annotations
 
+from handler.control import gitops
 from handler.db import repository as repo
 from handler.hooks import gate, verify
 from handler.hooks.context import HookInput, Identity
 
 
-def _seed(conn):
+def _seed(conn, mise_init=False):
     repo.create_project(conn, "p", "/tmp/p")
     a = repo.create_agent(conn, "p", "a", "/tmp/p/a")
-    return Identity(a["id"], "p", "a", "/tmp/p/a")
+    return Identity(a["id"], "p", "a", "/tmp/p/a", mise_init=mise_init)
 
 
 def _decision(result):
@@ -71,6 +72,26 @@ def test_git_push_allowed_when_both_pass(conn, monkeypatch):
     hi = HookInput({"tool_name": "Bash", "tool_input": {"command": "git push"}}, "pre_tool_use")
     result = gate.handle_git_push(conn, ident, hi)
     assert _decision(result) == "allow"
+
+
+def test_mise_init_push_bypasses_test_gate(conn, monkeypatch):
+    ident = _seed(conn, mise_init=True)
+    # The mise-init agent pushes the .mise.toml it just wrote; the test/build gate must
+    # not run (there may be no working suite yet), and the push is recorded + allowed.
+    monkeypatch.setattr(
+        verify, "run_test", lambda cwd: (_ for _ in ()).throw(AssertionError("test gate ran"))
+    )
+    monkeypatch.setattr(gitops, "head_sha", lambda cwd: "sha123456789")
+    hi = HookInput(
+        {"tool_name": "Bash", "tool_input": {"command": "git push -u origin main"},
+         "session_id": "s1"},
+        "pre_tool_use",
+    )
+    result = gate.handle_git_push(conn, ident, hi)
+    assert _decision(result) == "allow"
+    # The push is recorded in the log so the run shows it landed.
+    entries = repo.get_log(conn, ident.agent_id, limit=10, offset=0)
+    assert any(e["push_sha"] == "sha123456789" for e in entries)
 
 
 def test_non_push_bash_is_ignored(conn):

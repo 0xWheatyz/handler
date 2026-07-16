@@ -18,6 +18,9 @@ export interface Project {
   created_at: string;
   /* Present on the registration response in git-server mode: the enqueued clone. */
   sync_command_id?: number | null;
+  /* Present on the registration response when "Initialize mise" was ticked: the
+   * enqueued bootstrap agent that writes + commits + pushes a .mise.toml. */
+  mise_init_command_id?: number | null;
 }
 
 export interface Agent {

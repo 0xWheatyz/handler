@@ -100,7 +100,22 @@ def create_project(body: ProjectIn, conn: Connection = Depends(db_conn)) -> dict
             conn, "sync", project_id=project_id, requested_by="operator:web"
         )
         sync_command_id = command["id"]
-    return {**project, "sync_command_id": sync_command_id}
+
+    # "Initialize mise": queue a bootstrap agent *after* the clone (FIFO by id, so the
+    # sync runs first) to author a .mise.toml with a [tasks.test] task for the repo's
+    # stack and commit + push it. It needs a remote to push, so skip when there is none.
+    mise_init_command_id = None
+    if body.init_mise and git_remote:
+        mise_command = repo.enqueue_command(
+            conn, "mise_init", project_id=project_id, requested_by="operator:web"
+        )
+        mise_init_command_id = mise_command["id"]
+
+    return {
+        **project,
+        "sync_command_id": sync_command_id,
+        "mise_init_command_id": mise_init_command_id,
+    }
 
 
 @router.patch("/{project_id}", response_model=ProjectOut, dependencies=[Depends(require_admin)])

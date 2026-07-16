@@ -95,6 +95,53 @@ def test_approve_command_records_operator_verdict_with_head_sha(env, fake_gitops
     assert ap["approved_sha"] == fake_gitops["sha"]  # read from the agent's working dir
 
 
+def test_mise_init_command_spawns_bootstrap_agent(env, monkeypatch):
+    _seed_project()
+    calls = {}
+
+    def fake_spawn(project_id, name, **kw):
+        calls.update(project_id=project_id, name=name, **kw)
+        return {"id": 7, "name": name, "working_dir": "/tmp/p/mise-init"}
+
+    monkeypatch.setattr(spawn, "spawn", fake_spawn)
+    cmd = _enqueue(type="mise_init", project_id="p")
+
+    assert worker.drain("w") == 1
+    done = _get(cmd["id"])
+    assert done["status"] == "done"
+    assert done["result"]["agent_id"] == 7
+    assert done["result"]["name"] == "mise-init"
+    # Launched with the test gate off and the bootstrap marker on, with the default task.
+    assert calls["require_tests"] is False
+    assert calls["mise_init"] is True
+    assert ".mise.toml" in calls["task"]
+
+
+def test_mise_init_command_honors_payload_overrides(env, monkeypatch):
+    _seed_project()
+    calls = {}
+
+    def fake_spawn(project_id, name, **kw):
+        calls.update(name=name, **kw)
+        return {"id": 8, "name": name, "working_dir": "/tmp/p/x"}
+
+    monkeypatch.setattr(spawn, "spawn", fake_spawn)
+    cmd = _enqueue(
+        type="mise_init", project_id="p", payload={"name": "boot", "task": "custom task"}
+    )
+
+    worker.drain("w")
+    assert _get(cmd["id"])["status"] == "done"
+    assert calls["name"] == "boot"
+    assert calls["task"] == "custom task"
+
+
+def test_mise_init_without_project_is_failed(env):
+    cmd = _enqueue(type="mise_init")
+    assert worker.drain("w") == 1
+    assert _get(cmd["id"])["status"] == "failed"
+
+
 def test_poll_ci_command_returns_summary(env, monkeypatch):
     _seed_project()
     summary = {"checked": 0, "resolved": 0, "pending": 0}

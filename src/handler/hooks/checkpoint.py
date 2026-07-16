@@ -13,12 +13,80 @@ from datetime import UTC, datetime
 
 from sqlalchemy import Connection
 
+from ..control import gitops, mise
 from ..db import repository as repo
 from . import verify
 from .context import HookInput, Identity, emit
 
 
+def _mise_init_blocker(working_dir: str) -> str | None:
+    """Why a mise-init agent may not finish yet — ``None`` once the contract is met.
+
+    The bootstrap is complete only when ``.mise.toml`` defines ``[tasks.test]`` and that
+    file is committed (clean tree) and pushed (no commits ahead of, and an, upstream).
+    """
+    if not mise.has_test_task(working_dir):
+        return "`.mise.toml` does not yet define a [tasks.test] task"
+    if not gitops.is_clean(working_dir):
+        return "there are uncommitted changes — commit the .mise.toml"
+    ahead = gitops.ahead_count(working_dir)
+    if ahead is None:
+        return "the branch has no upstream yet — push it with `git push -u`"
+    if ahead > 0:
+        return f"{ahead} commit(s) have not been pushed to the remote"
+    return None
+
+
+def handle_mise_init_stop(conn: Connection, ident: Identity, hook_input: HookInput) -> dict:
+    """Stop gate for the mise-init bootstrap agent: block until the ``.mise.toml`` test
+    task exists and is committed + pushed (not the normal ``mise run test`` gate — there
+    may be no working suite yet, which is exactly what this agent is bootstrapping)."""
+    working_dir = ident.working_dir or hook_input.cwd or "."
+    now = datetime.now(UTC)
+    blocker = _mise_init_blocker(working_dir)
+
+    status = "done" if blocker is None else "blocked"
+    summary = (
+        "checkpoint: .mise.toml committed and pushed"
+        if blocker is None
+        else f"mise-init blocked: {blocker}"
+    )
+    log_id = repo.insert_log_entry(
+        conn,
+        agent_id=ident.agent_id,
+        status=status,
+        session_id=hook_input.session_id,
+        summary=summary,
+    )
+    repo.upsert_checkmark_row(
+        conn,
+        agent_id=ident.agent_id,
+        checkpoint_at=now,
+        status=status,
+        where_it_stopped=summary,
+        log_entry_id=log_id,
+    )
+    repo.set_agent_status(conn, ident.agent_id, status)
+
+    if blocker is not None:
+        # Same infinite-block guard as the test gate: if we already re-invoked once,
+        # record the state but let the turn end rather than looping forever.
+        if hook_input.stop_hook_active:
+            return {}
+        return {
+            "decision": "block",
+            "reason": (
+                f"mise initialization is not complete: {blocker}. Write a `.mise.toml` with "
+                "a [tasks.test] task for this project's stack, commit it, and push it before "
+                "finishing."
+            ),
+        }
+    return {}
+
+
 def handle_stop(conn: Connection, ident: Identity, hook_input: HookInput) -> dict:
+    if ident.mise_init:
+        return handle_mise_init_stop(conn, ident, hook_input)
     working_dir = ident.working_dir or hook_input.cwd or "."
     ok, output = verify.run_test(working_dir)
     now = datetime.now(UTC)

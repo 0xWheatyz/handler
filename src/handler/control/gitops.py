@@ -61,6 +61,27 @@ def config_local(cwd: str, key: str, value: str) -> tuple[bool, str]:
     return _run(["config", "--local", key, value], cwd)
 
 
+def is_clean(cwd: str) -> bool:
+    """True when the working tree has no staged or unstaged changes."""
+    ok, out = _run(["status", "--porcelain"], cwd)
+    return ok and out == ""
+
+
+def ahead_count(cwd: str) -> int | None:
+    """Commits HEAD is ahead of its upstream, or ``None`` when no upstream is set.
+
+    A ``None`` distinguishes "never pushed / no tracking branch" (the mise-init gate
+    treats it as unpushed, prompting ``git push -u``) from "0 commits ahead" (pushed).
+    """
+    ok, out = _run(["rev-list", "--count", "@{upstream}..HEAD"], cwd)
+    if not ok:
+        return None
+    try:
+        return int(out.strip())
+    except ValueError:
+        return None
+
+
 def add(cwd: str, paths: list[str]) -> tuple[bool, str]:
     return _run(["add", *paths], cwd)
 

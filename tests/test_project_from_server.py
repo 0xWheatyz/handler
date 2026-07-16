@@ -50,6 +50,46 @@ def test_create_project_from_server_with_ssh_key(client, auth, env, secret_key):
     assert cmd["project_id"] == "coolproj"
 
 
+def test_create_project_with_init_mise_enqueues_bootstrap(client, auth, env, secret_key):
+    _add_server(client, auth, generate_ssh_key=True)
+    r = client.post(
+        "/projects",
+        json={"git_server": "github.com", "repo": "me/coolproj", "init_mise": True},
+        headers=auth,
+    )
+    assert r.status_code == 201, r.text
+    body = r.json()
+    assert body["sync_command_id"] is not None
+    assert body["mise_init_command_id"] is not None
+    # The clone is queued before the bootstrap so it runs first (FIFO by id).
+    assert body["mise_init_command_id"] > body["sync_command_id"]
+    cmd = client.get(f"/commands/{body['mise_init_command_id']}", headers=auth).json()
+    assert cmd["type"] == "mise_init"
+    assert cmd["project_id"] == "coolproj"
+
+
+def test_create_project_without_init_mise_skips_bootstrap(client, auth, env, secret_key):
+    _add_server(client, auth, generate_ssh_key=True)
+    r = client.post(
+        "/projects", json={"git_server": "github.com", "repo": "me/plain"}, headers=auth
+    )
+    assert r.status_code == 201, r.text
+    assert r.json()["mise_init_command_id"] is None
+
+
+def test_init_mise_without_remote_does_not_enqueue(client, auth, env, tmp_path):
+    # Manual mode with no git_remote: nothing to push to, so no bootstrap is queued.
+    root = tmp_path / "local"
+    root.mkdir()
+    r = client.post(
+        "/projects",
+        json={"id": "local", "root_dir": str(root), "init_mise": True},
+        headers=auth,
+    )
+    assert r.status_code == 201, r.text
+    assert r.json()["mise_init_command_id"] is None
+
+
 def test_create_project_from_server_https_without_key(client, auth, env):
     _add_server(client, auth, hostname="git.corp", forge_type="gitea",
                 base_url="https://git.corp:8443")

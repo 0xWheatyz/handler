@@ -46,6 +46,7 @@ COMMAND_TYPES = (
     "approve",
     "reject",
     "forge_init",
+    "mise_init",
     "poll_ci",
     "sync",
     "login_start",

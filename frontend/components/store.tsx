@@ -146,6 +146,9 @@ export interface NewProjectBody {
   root_dir: string;
   git_remote: string;
   credential_ref: string;
+  /* Bootstrap tooling: after the clone, run an agent that writes + commits + pushes a
+   * .mise.toml with a [tasks.test] task for the repo's stack. Needs a git remote. */
+  init_mise: boolean;
 }
 export interface ScheduleBody {
   name_prefix: string;
@@ -535,12 +538,14 @@ export function DashboardProvider({
                 repo: b.repo.trim(),
                 id: b.id.trim() || null,
                 credential_ref: b.credential_ref.trim() || null,
+                init_mise: b.init_mise,
               }
             : {
                 id: b.id.trim(),
                 root_dir: b.root_dir.trim(),
                 git_remote: b.git_remote.trim() || null,
                 credential_ref: b.credential_ref.trim() || null,
+                init_mise: b.init_mise,
               };
         const created = await clientRef.current.api<Project>("/projects", {
           method: "POST",
@@ -572,6 +577,35 @@ export function DashboardProvider({
           }
         } else {
           setCmd({ text: `repository '${created.id}' registered`, error: false, busy: false });
+        }
+        // "Initialize mise": follow the bootstrap agent's launch so the operator knows a
+        // .mise.toml is being written, committed, and pushed for them.
+        if (created.mise_init_command_id != null) {
+          setCmd({
+            text: `repository '${created.id}': launching a mise-init agent to create .mise.toml…`,
+            error: false,
+            busy: true,
+          });
+          const mise = await clientRef.current.trackCommand(created.mise_init_command_id);
+          if (!mise) {
+            setCmd({
+              text: `repository '${created.id}' registered; mise-init still starting (see Activity). Is the worker up?`,
+              error: false,
+              busy: false,
+            });
+          } else if (mise.status === "done") {
+            setCmd({
+              text: `repository '${created.id}' registered; a mise-init agent is now writing, committing, and pushing .mise.toml (watch it in Runs).`,
+              error: false,
+              busy: false,
+            });
+          } else {
+            setCmd({
+              text: `repository '${created.id}' registered but the mise-init agent failed to launch — ${mise.error ?? ""}`,
+              error: true,
+              busy: false,
+            });
+          }
         }
         return true;
       } catch (e) {

@@ -58,6 +58,10 @@ class ProjectIn(BaseModel):
     credential_ref: str | None = None
     git_server: str | None = None
     repo: str | None = None
+    # Bootstrap tooling: enqueue a mise-init agent after the clone that writes a
+    # ``.mise.toml`` with a ``[tasks.test]`` task for the repo's stack, then commits + pushes
+    # it. Only acts when the project has a git_remote (the agent must push its work).
+    init_mise: bool = False
 
     @field_validator("credential_ref")
     @classmethod
@@ -101,9 +105,11 @@ class ProjectOut(BaseModel):
 
 
 class ProjectCreatedOut(ProjectOut):
-    """Registration response; carries the enqueued clone command in git-server mode."""
+    """Registration response; carries the enqueued clone command in git-server mode, and
+    the mise-init bootstrap command when ``init_mise`` was requested."""
 
     sync_command_id: int | None = None
+    mise_init_command_id: int | None = None
 
 
 class AgentIn(BaseModel):
