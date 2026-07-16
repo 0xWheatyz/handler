@@ -24,6 +24,51 @@ def test_delete_agent_row(conn):
     assert repo.get_agent_by_name(conn, "p", "api") is None
 
 
+def test_delete_project_cascades_all_dependents(conn):
+    """A real project always has FK-referencing rows (the sync command, agent history,
+    approvals, schedules). Deleting it must clear them, not raise a ForeignKeyViolation."""
+    from datetime import UTC, datetime
+
+    repo.create_project(conn, "p", "/tmp/p", git_remote="https://github.com/me/p.git")
+    # The sync command queued at registration — the exact row that blocked the delete.
+    repo.enqueue_command(conn, "sync", project_id="p", requested_by="operator:web")
+    agent = repo.create_agent(conn, "p", "api", "/tmp/p/api")
+    repo.insert_log_entry(conn, agent_id=agent["id"], status="working", summary="did work")
+    repo.upsert_checkmark_row(conn, agent_id=agent["id"], status="working")
+    repo.set_shared_context(conn, "db", "postgres", agent["id"])
+    repo.record_approval(conn, "p", "feat/x", "approved", approved_by_agent_id=agent["id"])
+    repo.create_schedule(
+        conn, "p", "nightly", "run the thing", 3600, datetime.now(UTC)
+    )
+
+    assert repo.delete_project(conn, "p") is True
+
+    # Project and everything scoped to it are gone.
+    assert repo.get_project(conn, "p") is None
+    assert repo.get_agent_by_name(conn, "p", "api") is None
+    assert repo.list_commands(conn, project_id="p") == []
+    assert repo.list_approvals(conn, "p") == []
+    assert repo.list_schedules(conn) == []
+    # The global shared-context row survives, with its agent attribution cleared.
+    ctx = repo.get_shared_context_key(conn, "db")
+    assert ctx is not None and ctx["value"] == "postgres"
+    assert ctx["set_by_agent_id"] is None
+
+
+def test_delete_agent_cascades_log_and_checkmark(conn):
+    """Every spawned agent accrues a checkmark + log entries via the hooks; removing the
+    agent must clear them rather than trip the log_entries/checkmarks foreign keys."""
+    repo.create_project(conn, "p", "/tmp/p")
+    agent = repo.create_agent(conn, "p", "api", "/tmp/p/api")
+    repo.insert_log_entry(conn, agent_id=agent["id"], status="working", summary="x")
+    repo.upsert_checkmark_row(conn, agent_id=agent["id"], status="working")
+
+    assert repo.delete_agent(conn, "p", "api") is True
+    assert repo.get_agent_by_name(conn, "p", "api") is None
+    assert repo.get_checkmark(conn, agent["id"]) is None
+    assert repo.get_log(conn, agent["id"]) == []
+
+
 def test_enqueue_get_and_list_command(conn):
     repo.create_project(conn, "p", "/tmp/p")
     cmd = repo.enqueue_command(

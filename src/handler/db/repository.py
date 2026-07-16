@@ -337,12 +337,59 @@ def update_project(conn: Connection, project_id: str, **fields: Any) -> dict | N
     return get_project(conn, project_id)
 
 
+def _purge_agent_dependents(conn: Connection, agent_ids: list[int]) -> None:
+    """Delete (or detach) everything that references the given agents, so the agent rows
+    themselves can be removed without tripping a foreign key.
+
+    ``shared_context`` is a *global* table keyed by ``key`` — its rows outlive any one
+    agent, so we only null the ``set_by_agent_id`` attribution rather than delete them.
+    ``checkmarks`` must go before ``log_entries`` (it carries an FK to ``log_entries`` via
+    the ``use_alter`` cycle). Approvals authored by these agents go with them.
+    """
+    if not agent_ids:
+        return
+    conn.execute(
+        shared_context.update()
+        .where(shared_context.c.set_by_agent_id.in_(agent_ids))
+        .values(set_by_agent_id=None)
+    )
+    conn.execute(approvals.delete().where(approvals.c.approved_by_agent_id.in_(agent_ids)))
+    conn.execute(checkmarks.delete().where(checkmarks.c.agent_id.in_(agent_ids)))
+    conn.execute(log_entries.delete().where(log_entries.c.agent_id.in_(agent_ids)))
+
+
 def delete_project(conn: Connection, project_id: str) -> bool:
+    """Remove a project and everything scoped to it.
+
+    Every project accumulates FK-referencing rows (at minimum the ``sync`` command queued
+    at registration, plus each agent's log/checkmark history), so the bare project delete
+    would violate ``commands``/``agents``/``approvals``/``schedules`` foreign keys. Clear
+    the dependents in FK-safe order first: agent-owned rows, then ``schedules`` (which
+    reference ``commands`` via ``last_command_id``), then the remaining project-scoped
+    rows, then the agents, then the project itself.
+    """
+    agent_ids = [
+        row[0]
+        for row in conn.execute(
+            select(agents.c.id).where(agents.c.project_id == project_id)
+        ).all()
+    ]
+    _purge_agent_dependents(conn, agent_ids)
+    conn.execute(schedules.delete().where(schedules.c.project_id == project_id))
+    conn.execute(approvals.delete().where(approvals.c.project_id == project_id))
+    conn.execute(commands.delete().where(commands.c.project_id == project_id))
+    conn.execute(agents.delete().where(agents.c.project_id == project_id))
     result = conn.execute(projects.delete().where(projects.c.id == project_id))
     return result.rowcount > 0
 
 
 def delete_agent(conn: Connection, project_id: str, name: str) -> bool:
+    """Remove a single agent row, first clearing its log/checkmark/approval history so the
+    ``log_entries``/``checkmarks``/``approvals`` foreign keys don't block the delete."""
+    agent = get_agent_by_name(conn, project_id, name)
+    if agent is None:
+        return False
+    _purge_agent_dependents(conn, [agent["id"]])
     result = conn.execute(
         agents.delete().where(agents.c.project_id == project_id, agents.c.name == name)
     )
