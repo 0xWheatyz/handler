@@ -96,6 +96,23 @@ def handle_git_push(conn: Connection, ident: Identity, hook_input: HookInput) ->
     working_dir = ident.working_dir or hook_input.cwd or "."
     now = datetime.now(UTC)
 
+    # The mise-init bootstrap agent is pushing the .mise.toml it just wrote; there is no
+    # working test task to gate on yet (creating it is the point), and it must reach the
+    # remote so the [tasks.test] gate is satisfied for the agents that follow. Record the
+    # push and let it through, skipping the test/build/approval gates.
+    if ident.mise_init:
+        sha = gitops.head_sha(working_dir)
+        if sha:
+            repo.insert_log_entry(
+                conn,
+                agent_id=ident.agent_id,
+                status="working",
+                session_id=hook_input.session_id,
+                summary=f"mise-init push: {sha[:12]}",
+                push_sha=sha,
+            )
+        return _allow("mise initialization push (test gate bypassed)")
+
     # Cheap check first: tests. Only on success do we pay for the image build.
     tests_ok, tests_out = verify.run_test(working_dir)
     if not tests_ok:

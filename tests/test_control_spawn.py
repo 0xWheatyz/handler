@@ -37,8 +37,20 @@ def test_spawn_refuses_without_mise_file(env, fake_tmux):
     root = env["tmp"] / "proj"
     root.mkdir(parents=True, exist_ok=True)
     _register_project(root)
-    with pytest.raises(spawn.SpawnError, match="no .mise.toml"):
+    with pytest.raises(spawn.SpawnError, match="no mise config"):
         spawn.spawn("proj", "api")
+
+
+def test_spawn_accepts_dotless_mise_toml(env, fake_tmux):
+    # mise also reads `mise.toml` (no leading dot); the gate must honor it too.
+    root = env["tmp"] / "proj"
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "mise.toml").write_text("[tasks.test]\nrun = 'pytest'\n")
+    _register_project(root)
+
+    agent = spawn.spawn("proj", "api")
+    with get_engine().begin() as conn:
+        assert repo.get_agent_by_name(conn, "proj", "api")["id"] == agent["id"]
 
 
 def test_spawn_creates_agent_settings_and_session(env, fake_tmux):
@@ -66,6 +78,32 @@ def test_spawn_creates_agent_settings_and_session(env, fake_tmux):
     assert call["env"]["HANDLER_AGENT_NAME"] == "api"
     assert call["env"]["HANDLER_AGENT_ID"] == str(agent["id"])
     assert call["env"]["DATABASE_URL"] == env["url"]
+
+
+def test_spawn_mise_init_skips_test_gate_and_marks_env(env, fake_tmux):
+    # A repo with no .mise.toml at all: the normal gate would refuse, but the mise-init
+    # bootstrap agent must launch anyway (creating that file is its whole job).
+    root = env["tmp"] / "proj"
+    root.mkdir(parents=True, exist_ok=True)
+    _register_project(root)
+
+    agent = spawn.spawn("proj", "mise-init", require_tests=False, mise_init=True)
+
+    with get_engine().begin() as conn:
+        assert repo.get_agent_by_name(conn, "proj", "mise-init")["id"] == agent["id"]
+    # The launched session carries HANDLER_MISE_INIT so its hooks enforce commit + push.
+    call = fake_tmux["calls"]["new_session"][0]
+    assert call["env"]["HANDLER_MISE_INIT"] == "1"
+
+
+def test_spawn_still_gates_without_mise_init_flag(env, fake_tmux):
+    root = env["tmp"] / "proj"
+    root.mkdir(parents=True, exist_ok=True)
+    _register_project(root)
+    # require_tests defaults on, so a normal spawn against a mise-less repo still refuses.
+    with pytest.raises(spawn.SpawnError, match="no mise config"):
+        spawn.spawn("proj", "api")
+    assert fake_tmux["calls"]["new_session"] == []
 
 
 def test_kill_sets_done_and_kills_session(env, fake_tmux):

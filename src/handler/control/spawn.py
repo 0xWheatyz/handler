@@ -10,12 +10,21 @@ process launched, so a project without a canonical test task never gets an agent
 from __future__ import annotations
 
 import os
-import tomllib
 
 from ..config import get_settings
 from ..db import repository as repo
 from ..db.engine import connection
-from . import credentials, forge, gitops, reposync, settings_gen, tmux, worktree
+from . import (
+    claude_config,
+    credentials,
+    forge,
+    gitops,
+    mise,
+    reposync,
+    settings_gen,
+    tmux,
+    worktree,
+)
 
 
 class SpawnError(Exception):
@@ -23,19 +32,15 @@ class SpawnError(Exception):
 
 
 def require_test_task(working_dir: str) -> None:
-    """Hard gate: refuse to spawn unless ``.mise.toml`` defines ``[tasks.test]``."""
-    mise_path = os.path.join(working_dir, ".mise.toml")
-    if not os.path.exists(mise_path):
+    """Hard gate: refuse to spawn unless a mise config defines ``[tasks.test]``."""
+    if not mise.has_config(working_dir):
         raise SpawnError(
-            f"no .mise.toml in {working_dir}: a project must define a [tasks.test] task "
-            "before an agent can run against it"
+            f"no mise config (mise.toml / .mise.toml) in {working_dir}: a project must "
+            "define a [tasks.test] task before an agent can run against it"
         )
-    with open(mise_path, "rb") as fh:
-        data = tomllib.load(fh)
-    tasks = data.get("tasks", {})
-    if "test" not in tasks:
+    if not mise.has_test_task(working_dir):
         raise SpawnError(
-            f".mise.toml in {working_dir} has no [tasks.test]: the verification gate "
+            f"mise config in {working_dir} has no [tasks.test]: the verification gate "
             "requires a canonical test task"
         )
 
@@ -77,8 +82,17 @@ def spawn(
     worktree_branch: str | None = None,
     task: str | None = None,
     role: str | None = None,
+    require_tests: bool = True,
+    mise_init: bool = False,
 ) -> dict:
-    """Create and launch an agent. Returns the agent row."""
+    """Create and launch an agent. Returns the agent row.
+
+    ``require_tests`` is the ``[tasks.test]`` gate; the mise-init bootstrap agent runs with
+    it off, because a project with no ``.mise.toml`` yet is exactly what it exists to fix.
+    ``mise_init`` marks the launched agent (via ``HANDLER_MISE_INIT``) so its hooks enforce
+    the bootstrap contract — create the test task, commit, and push — instead of the normal
+    test gate.
+    """
     sync_note = None
     with connection() as conn:
         project = repo.get_project(conn, project_id)
@@ -111,8 +125,10 @@ def spawn(
 
         # Hard gates before any state is written or process launched: the test task must
         # exist, and configured credentials must actually resolve — a broken pointer
-        # should fail fast, not leave an orphaned agent row behind.
-        require_test_task(working_dir)
+        # should fail fast, not leave an orphaned agent row behind. The mise-init agent
+        # skips the test-task gate (it's here to create that very task).
+        if require_tests:
+            require_test_task(working_dir)
         try:
             token = credentials.resolve_for_project(project, conn)
         except credentials.CredentialError as exc:
@@ -137,6 +153,9 @@ def spawn(
     }
     if role:
         env["HANDLER_AGENT_ROLE"] = role
+    if mise_init:
+        # Read by the Stop / git-push hooks to enforce the bootstrap contract.
+        env["HANDLER_MISE_INIT"] = "1"
     # A short read connection lets credential/host resolution consult the forge_hosts
     # registry (falling back to the built-in host map when a host has no row).
     with connection() as conn:
@@ -153,6 +172,11 @@ def spawn(
     # is recorded as a warning rather than blocking the spawn, since not every agent
     # touches forge and the base image is the real pin (README 3.6, Phase 2).
     forge_note = _check_forge_version(working_dir)
+
+    # Mark Claude Code onboarding complete + trust the working dir before launching, so the
+    # detached agent boots straight to the REPL instead of wedging on the first-run theme
+    # picker / trust prompt with no human at the tmux TTY to answer it.
+    claude_config.ensure_onboarded(working_dir)
 
     session = tmux.session_name(project_id, name)
     command = _claude_command(task, settings_path)

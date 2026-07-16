@@ -18,6 +18,9 @@ export interface Project {
   created_at: string;
   /* Present on the registration response in git-server mode: the enqueued clone. */
   sync_command_id?: number | null;
+  /* Present on the registration response when "Initialize mise" was ticked: the
+   * enqueued bootstrap agent that writes + commits + pushes a .mise.toml. */
+  mise_init_command_id?: number | null;
 }
 
 export interface Agent {
@@ -27,6 +30,10 @@ export interface Agent {
   working_dir: string;
   status: string;
   role?: string | null;
+  /* Latest tmux pane-tail snapshot from the worker, so the UI can show what a running
+   * agent is actually doing (and expose one wedged on an interactive prompt). */
+  last_output?: string | null;
+  output_at?: string | null;
   created_at: string;
 }
 

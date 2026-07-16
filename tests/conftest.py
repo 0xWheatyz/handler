@@ -33,6 +33,9 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setenv("SHARED_CONTEXT_WRITE_TOKEN", "shared-token")
     monkeypatch.setenv("PROJECTS_ROOT", str(tmp_path / "projects"))
     monkeypatch.delenv("WEBHOOK_URL", raising=False)
+    # Isolate any home-dir writes (e.g. control.claude_config seeding ~/.claude.json at
+    # spawn) to the per-test tmp dir, so tests never touch the real user's config.
+    monkeypatch.setenv("HOME", str(tmp_path))
     _reset_caches()
 
     cfg = Config(str(REPO_ROOT / "alembic.ini"))

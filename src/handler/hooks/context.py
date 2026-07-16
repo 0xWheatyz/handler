@@ -59,6 +59,10 @@ class Identity:
     project_id: str
     agent_name: str
     working_dir: str | None = None
+    # True for the mise-init bootstrap agent (env ``HANDLER_MISE_INIT``): its Stop and
+    # git-push hooks enforce the "write .mise.toml, commit, push" contract rather than the
+    # normal test gate.
+    mise_init: bool = False
     extra: dict = field(default_factory=dict)
 
 
@@ -74,10 +78,11 @@ def resolve_identity(conn: Connection, hook_input: HookInput) -> Identity | None
     project_id = os.environ.get("HANDLER_PROJECT_ID")
     agent_name = os.environ.get("HANDLER_AGENT_NAME")
 
+    mise_init = bool(os.environ.get("HANDLER_MISE_INIT"))
     if agent_id and project_id and agent_name:
         row = conn.execute(select(agents).where(agents.c.id == int(agent_id))).first()
         working_dir = row._mapping["working_dir"] if row else None
-        return Identity(int(agent_id), project_id, agent_name, working_dir)
+        return Identity(int(agent_id), project_id, agent_name, working_dir, mise_init=mise_init)
 
     # Fallback: match by working_dir == cwd.
     if hook_input.cwd:

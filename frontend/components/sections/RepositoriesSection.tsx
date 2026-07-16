@@ -22,6 +22,7 @@ const empty: NewProjectBody = {
   root_dir: "",
   git_remote: "",
   credential_ref: "",
+  init_mise: false,
 };
 
 export function RepositoriesSection() {
@@ -161,6 +162,28 @@ export function RepositoriesSection() {
                 {CRED_HELP}
               </p>
             </>
+          )}
+
+          {!editing && (
+            <label className="hstack" style={{ gap: 8, cursor: "pointer", marginTop: 14 }}>
+              <input
+                type="checkbox"
+                checked={form.init_mise}
+                onChange={(e) => setForm({ ...form, init_mise: e.target.checked })}
+              />
+              <span style={{ fontSize: "var(--text-sm)" }}>
+                Initialize mise — after the clone, run an agent that writes a{" "}
+                <span className="mono">.mise.toml</span> with a{" "}
+                <span className="mono">[tasks.test]</span> task for this repo&rsquo;s stack, then
+                commits and pushes it. Needed for repos that don&rsquo;t define one yet.
+              </span>
+            </label>
+          )}
+          {!editing && form.init_mise && form.mode === "manual" && !form.git_remote.trim() && (
+            <p className="faint" style={{ fontSize: "var(--text-xs)", margin: "6px 0 0" }}>
+              A git remote is required to push the new <span className="mono">.mise.toml</span> —
+              add one above, or mise won&rsquo;t be initialized.
+            </p>
           )}
 
           <div className="hstack mt14">
