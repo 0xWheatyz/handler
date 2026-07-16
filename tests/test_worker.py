@@ -211,6 +211,45 @@ def test_bad_command_is_recorded_failed_not_raised(env):
     assert "agent name" in failed["error"]
 
 
+def test_capture_agent_output_snapshots_working_agents(env, monkeypatch):
+    with get_engine().begin() as conn:
+        repo.create_project(conn, "p", "/tmp/p")
+        agent = repo.create_agent(conn, "p", "api", "/tmp/p/api", status="working")
+
+    monkeypatch.setattr(worker.tmux, "has_session", lambda name: True)
+    monkeypatch.setattr(
+        worker.tmux, "capture_pane", lambda name, escapes=False: "boot\nTheme picker\n\n\n"
+    )
+
+    assert worker.capture_agent_output() == 1
+    with get_engine().begin() as conn:
+        row = repo.get_agent_by_id(conn, agent["id"])
+    # The tail is stored with trailing blank lines trimmed.
+    assert row["last_output"] == "boot\nTheme picker"
+    assert row["output_at"] is not None
+
+
+def test_capture_agent_output_skips_dead_sessions_and_nonworking(env, monkeypatch):
+    with get_engine().begin() as conn:
+        repo.create_project(conn, "p", "/tmp/p")
+        repo.create_agent(conn, "p", "gone", "/tmp/p/gone", status="working")
+        done = repo.create_agent(conn, "p", "done", "/tmp/p/done", status="done")
+
+    captured = []
+    monkeypatch.setattr(worker.tmux, "has_session", lambda name: False)
+    monkeypatch.setattr(
+        worker.tmux,
+        "capture_pane",
+        lambda name, escapes=False: captured.append(name) or "x",
+    )
+
+    # The working agent's session is dead (skipped); the done agent isn't queried at all.
+    assert worker.capture_agent_output() == 0
+    assert captured == []
+    with get_engine().begin() as conn:
+        assert repo.get_agent_by_id(conn, done["id"])["last_output"] is None
+
+
 def test_drain_processes_multiple_then_stops(env, monkeypatch):
     _seed_project()
     monkeypatch.setattr(poller, "sweep", lambda project_id=None: {"checked": 0})

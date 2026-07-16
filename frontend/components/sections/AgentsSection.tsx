@@ -2,10 +2,10 @@
  * Spawning enqueues a control command that the worker turns into a tmux + claude process. */
 "use client";
 
-import { useMemo, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
 import { useDashboard } from "@/components/store";
 import { Badge, Button, Card, Input, Select, StatusBadge, Textarea } from "@/components/ui";
-import { fmtFull } from "@/lib/format";
+import { fmtFull, timeAgo } from "@/lib/format";
 
 const ROLE_OPTS = [
   { value: "", label: "Role — none" },
@@ -121,28 +121,55 @@ export function AgentsSection() {
                   </thead>
                   <tbody>
                     {agents.map((a) => (
-                      <tr key={a.id}>
-                        <td className="mono">{a.name}</td>
-                        <td>{a.role ? <Badge tone="info">{a.role}</Badge> : "—"}</td>
-                        <td>
-                          <StatusBadge status={a.status} />
-                        </td>
-                        <td className="mono faint">{a.working_dir}</td>
-                        <td className="faint nowrap">{fmtFull(a.created_at)}</td>
-                        <td className="nowrap">
-                          <div className="hstack">
-                            <Button size="sm" variant="ghost" onClick={() => s.selectRun(a.project_id, a.name)}>
-                              Open
-                            </Button>
-                            <Button size="sm" variant="secondary" onClick={() => s.killAgent(a.project_id, a.name)}>
-                              Kill
-                            </Button>
-                            <Button size="sm" variant="danger" onClick={() => s.deleteAgent(a.project_id, a.name)}>
-                              Delete
-                            </Button>
-                          </div>
-                        </td>
-                      </tr>
+                      <Fragment key={a.id}>
+                        <tr>
+                          <td className="mono">{a.name}</td>
+                          <td>{a.role ? <Badge tone="info">{a.role}</Badge> : "—"}</td>
+                          <td>
+                            <StatusBadge status={a.status} />
+                          </td>
+                          <td className="mono faint">{a.working_dir}</td>
+                          <td className="faint nowrap">{fmtFull(a.created_at)}</td>
+                          <td className="nowrap">
+                            <div className="hstack">
+                              <Button size="sm" variant="ghost" onClick={() => s.selectRun(a.project_id, a.name)}>
+                                Open
+                              </Button>
+                              <Button size="sm" variant="secondary" onClick={() => s.killAgent(a.project_id, a.name)}>
+                                Kill
+                              </Button>
+                              <Button size="sm" variant="danger" onClick={() => s.deleteAgent(a.project_id, a.name)}>
+                                Delete
+                              </Button>
+                            </div>
+                          </td>
+                        </tr>
+                        {a.status === "working" && a.last_output?.trim() && (
+                          <tr>
+                            <td colSpan={6} style={{ paddingTop: 0 }}>
+                              <div className="faint" style={{ fontSize: "var(--text-xs)", marginBottom: 4 }}>
+                                live output{a.output_at ? ` · ${timeAgo(a.output_at)}` : ""}
+                              </div>
+                              <pre
+                                className="mono"
+                                style={{
+                                  margin: 0,
+                                  padding: "8px 10px",
+                                  background: "var(--surface-2, rgba(0,0,0,0.25))",
+                                  borderRadius: 6,
+                                  fontSize: "var(--text-xs)",
+                                  lineHeight: 1.4,
+                                  maxHeight: 220,
+                                  overflow: "auto",
+                                  whiteSpace: "pre",
+                                }}
+                              >
+                                {a.last_output}
+                              </pre>
+                            </td>
+                          </tr>
+                        )}
+                      </Fragment>
                     ))}
                   </tbody>
                 </table>

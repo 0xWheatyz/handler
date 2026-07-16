@@ -84,6 +84,11 @@ agents = Table(
     # Optional workflow role (junior | senior | deploy) — informational, drives which
     # forge skill an agent follows; the approval gate keys on identity, not role.
     Column("role", String),
+    # A periodic snapshot of the agent's live tmux pane tail (last ~40 lines), refreshed by
+    # the control worker's poll loop. The tmux socket lives only in the control container,
+    # so this DB column is how the API/UI see what a running — or wedged — agent is doing.
+    Column("last_output", String),
+    Column("output_at", PortableTimestamp),
     Column("created_at", PortableTimestamp, nullable=False, server_default=func.now()),
     UniqueConstraint("project_id", "name", name="uq_agents_project_name"),
     CheckConstraint(_in("status", AGENT_STATUSES), name="ck_agents_status"),

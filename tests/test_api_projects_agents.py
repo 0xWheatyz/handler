@@ -32,6 +32,24 @@ def test_create_and_list_agent(client, auth):
     assert [a["name"] for a in agents] == ["api"]
 
 
+def test_agent_serializes_live_output_snapshot(client, auth, engine):
+    from handler.db import repository as repo
+
+    _mk_project(client, auth)
+    client.post(
+        "/projects/proj/agents",
+        json={"name": "api", "working_dir": "/tmp/proj/api", "status": "working"},
+        headers=auth,
+    )
+    with engine.begin() as conn:
+        agent = repo.get_agent_by_name(conn, "proj", "api")
+        repo.update_agent_output(conn, agent["id"], "boot\nTheme picker")
+
+    listed = client.get("/projects/proj/agents", headers=auth).json()[0]
+    assert listed["last_output"] == "boot\nTheme picker"
+    assert listed["output_at"] is not None
+
+
 def test_agent_under_missing_project_is_404(client, auth):
     r = client.get("/projects/ghost/agents", headers=auth)
     assert r.status_code == 404

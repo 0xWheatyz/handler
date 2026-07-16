@@ -14,7 +14,17 @@ import os
 from ..config import get_settings
 from ..db import repository as repo
 from ..db.engine import connection
-from . import credentials, forge, gitops, mise, reposync, settings_gen, tmux, worktree
+from . import (
+    claude_config,
+    credentials,
+    forge,
+    gitops,
+    mise,
+    reposync,
+    settings_gen,
+    tmux,
+    worktree,
+)
 
 
 class SpawnError(Exception):
@@ -22,15 +32,15 @@ class SpawnError(Exception):
 
 
 def require_test_task(working_dir: str) -> None:
-    """Hard gate: refuse to spawn unless ``.mise.toml`` defines ``[tasks.test]``."""
-    if not os.path.exists(mise.mise_path(working_dir)):
+    """Hard gate: refuse to spawn unless a mise config defines ``[tasks.test]``."""
+    if not mise.has_config(working_dir):
         raise SpawnError(
-            f"no .mise.toml in {working_dir}: a project must define a [tasks.test] task "
-            "before an agent can run against it"
+            f"no mise config (mise.toml / .mise.toml) in {working_dir}: a project must "
+            "define a [tasks.test] task before an agent can run against it"
         )
     if not mise.has_test_task(working_dir):
         raise SpawnError(
-            f".mise.toml in {working_dir} has no [tasks.test]: the verification gate "
+            f"mise config in {working_dir} has no [tasks.test]: the verification gate "
             "requires a canonical test task"
         )
 
@@ -162,6 +172,11 @@ def spawn(
     # is recorded as a warning rather than blocking the spawn, since not every agent
     # touches forge and the base image is the real pin (README 3.6, Phase 2).
     forge_note = _check_forge_version(working_dir)
+
+    # Mark Claude Code onboarding complete + trust the working dir before launching, so the
+    # detached agent boots straight to the REPL instead of wedging on the first-run theme
+    # picker / trust prompt with no human at the tmux TTY to answer it.
+    claude_config.ensure_onboarded(working_dir)
 
     session = tmux.session_name(project_id, name)
     command = _claude_command(task, settings_path)

@@ -128,6 +128,10 @@ class AgentOut(BaseModel):
     working_dir: str
     status: str
     role: Role | None = None
+    # Latest tmux pane-tail snapshot (worker poll loop) so the UI can show what a running
+    # agent is doing — including one wedged on an interactive prompt no one can answer.
+    last_output: str | None = None
+    output_at: datetime | None = None
     created_at: datetime
 
 

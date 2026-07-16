@@ -30,6 +30,10 @@ export interface Agent {
   working_dir: string;
   status: string;
   role?: string | null;
+  /* Latest tmux pane-tail snapshot from the worker, so the UI can show what a running
+   * agent is actually doing (and expose one wedged on an interactive prompt). */
+  last_output?: string | null;
+  output_at?: string | null;
   created_at: string;
 }
 

@@ -20,7 +20,7 @@ from datetime import UTC, datetime, timedelta
 
 from ..db import repository as repo
 from ..db.engine import connection
-from . import gitops, login, poller, reposync, skills_gen, spawn
+from . import gitops, login, poller, reposync, skills_gen, spawn, tmux
 
 
 class CommandError(Exception):
@@ -313,6 +313,43 @@ def fire_due_schedules(now: datetime | None = None) -> int:
     return fired
 
 
+# How many trailing pane lines to snapshot — enough to show the current screen (a menu, a
+# prompt, the tail of the last command) without bloating the row.
+_PANE_TAIL_LINES = 40
+
+
+def _pane_tail(pane: str, lines: int = _PANE_TAIL_LINES) -> str:
+    """The last ``lines`` of a captured pane, trailing blank lines trimmed so an idle
+    screen doesn't store as a wall of whitespace."""
+    rows = (pane or "").splitlines()
+    while rows and not rows[-1].strip():
+        rows.pop()
+    return "\n".join(rows[-lines:])
+
+
+def capture_agent_output() -> int:
+    """Snapshot each working agent's live tmux pane tail into the DB.
+
+    The tmux socket lives only in the control container, so this is the one channel the
+    API/UI have onto what a running — or wedged — agent is actually doing: an agent stuck
+    on claude's first-run theme picker surfaces as that screen instead of a misleading
+    green 'working'. A missing session is skipped (its process is gone). Returns the count
+    updated.
+    """
+    with connection() as conn:
+        working = repo.list_agents_by_status(conn, "working")
+    updated = 0
+    for agent in working:
+        session = tmux.session_name(agent["project_id"], agent["name"])
+        if not tmux.has_session(session):
+            continue
+        tail = _pane_tail(tmux.capture_pane(session))
+        with connection() as conn:
+            repo.update_agent_output(conn, agent["id"], tail)
+        updated += 1
+    return updated
+
+
 def drain(worker_id: str, limit: int | None = None) -> int:
     """Claim and run queued commands until the queue is empty (or ``limit`` reached).
 
@@ -335,15 +372,18 @@ def run(
     worker_id: str | None = None,
     poll_interval: float = 2.0,
     ci_interval: float = 30.0,
+    capture_interval: float = 2.0,
     iterations: int | None = None,
 ) -> None:
-    """The control-container main loop: drain the command queue + sweep CI periodically.
+    """The control-container main loop: drain the command queue, snapshot live agent
+    output, and sweep CI periodically.
 
     ``iterations`` bounds the loop for tests; production runs unbounded. Sleeps
     ``poll_interval`` only when a pass found no commands, so bursts drain promptly.
     """
     worker_id = worker_id or f"worker-{os.getpid()}"
     last_ci = 0.0
+    last_capture = 0.0
     count = 0
     while iterations is None or count < iterations:
         try:
@@ -352,6 +392,12 @@ def run(
             pass
         did_work = drain(worker_id) > 0
         now = time.monotonic()
+        if capture_interval > 0 and now - last_capture >= capture_interval:
+            try:
+                capture_agent_output()
+            except Exception:  # noqa: BLE001 - a capture hiccup must not kill the worker
+                pass
+            last_capture = now
         if ci_interval > 0 and now - last_ci >= ci_interval:
             try:
                 poller.sweep()

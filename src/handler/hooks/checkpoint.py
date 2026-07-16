@@ -26,7 +26,7 @@ def _mise_init_blocker(working_dir: str) -> str | None:
     file is committed (clean tree) and pushed (no commits ahead of, and an, upstream).
     """
     if not mise.has_test_task(working_dir):
-        return "`.mise.toml` does not yet define a [tasks.test] task"
+        return "no mise config (mise.toml / .mise.toml) defines a [tasks.test] task yet"
     if not gitops.is_clean(working_dir):
         return "there are uncommitted changes — commit the .mise.toml"
     ahead = gitops.ahead_count(working_dir)

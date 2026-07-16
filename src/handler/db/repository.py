@@ -219,6 +219,23 @@ def set_agent_status(conn: Connection, agent_id: int, status: str) -> None:
     conn.execute(agents.update().where(agents.c.id == agent_id).values(status=status))
 
 
+def list_agents_by_status(conn: Connection, status: str) -> list[dict]:
+    """Every agent in a given status, across all projects (the worker's capture input)."""
+    rows = conn.execute(
+        select(agents).where(agents.c.status == status).order_by(agents.c.id)
+    ).all()
+    return [dict(r._mapping) for r in rows]
+
+
+def update_agent_output(conn: Connection, agent_id: int, output: str) -> None:
+    """Store the latest tmux pane-tail snapshot for an agent (worker poll loop)."""
+    conn.execute(
+        agents.update()
+        .where(agents.c.id == agent_id)
+        .values(last_output=output, output_at=_now())
+    )
+
+
 def insert_log_entry(conn: Connection, agent_id: int, status: str, **fields: Any) -> int:
     values = {"agent_id": agent_id, "status": status, "created_at": _now(), **fields}
     result = conn.execute(log_entries.insert().values(**values))
