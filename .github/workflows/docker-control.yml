@@ -41,6 +41,23 @@ jobs:
       # Tags: branch name on branch pushes, semver on v* tags, short SHA always,
       # `latest` only on the default branch. metadata-action lowercases the repo
       # name (GHCR requires lowercase).
+      #
+      # The <timestamp>-<sha> tag is what Flux's ImagePolicy sorts on to pick the
+      # newest build (see Talos: apps/handler/image-automation/imagepolicy.yaml).
+      # It must be monotonic and sortable — `sha-<short>` has no ordering and
+      # `latest` is mutable, so neither can drive image automation. UTC keeps it
+      # monotonic across DST. Same scheme as apps/devbox.
+      #
+      # This image is built by a workflow SEPARATE from docker.yml and resolved by
+      # a separate ImagePolicy. If this build fails while docker.yml succeeds, the
+      # api container rolls and control stays behind, with both policies green —
+      # the handler README's health check compares the two resolved tags for this
+      # reason.
+      #
+      # Caveat: this is BUILD time, not commit time. Re-running an old commit's
+      # build publishes <now>-<oldsha>, which sorts newest and would deploy older
+      # code. Accepted (the sha in the tag makes it obvious after the fact) — but
+      # prefer pushing a revert over re-running a stale build.
       - name: Docker metadata
         id: meta
         uses: docker/metadata-action@v5
@@ -52,6 +69,7 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=sha
+            type=raw,value={{date 'YYYYMMDDHHmmss'}}-{{sha}},enable={{is_default_branch}}
             type=raw,value=latest,enable={{is_default_branch}}
 
       - name: Build and push
