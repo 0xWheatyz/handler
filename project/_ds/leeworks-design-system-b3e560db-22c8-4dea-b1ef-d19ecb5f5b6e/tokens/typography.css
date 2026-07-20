@@ -1,0 +1,27 @@
+/* Leeworks typography — Outfit (display), Figtree (body), Spline Sans Mono (data/code). */
+:root{
+  --font-display:"Outfit",system-ui,sans-serif;
+  --font-body:"Figtree",system-ui,sans-serif;
+  --font-mono:"Spline Sans Mono",ui-monospace,monospace;
+
+  --text-xs:12px; --text-sm:13px; --text-base:15px; --text-md:17px;
+  --text-lg:20px; --text-xl:24px; --text-2xl:32px; --text-3xl:44px; --text-4xl:60px;
+
+  --leading-tight:1.1; --leading-snug:1.3; --leading-normal:1.55;
+  --tracking-tight:-0.02em; --tracking-normal:0; --tracking-wide:0.08em;
+
+  --weight-regular:400; --weight-medium:500; --weight-semibold:600; --weight-bold:700; --weight-heavy:800;
+
+  /* Composite styles */
+  --type-display:var(--weight-bold) var(--text-4xl)/var(--leading-tight) var(--font-display);
+  --type-h1:var(--weight-bold) var(--text-3xl)/var(--leading-tight) var(--font-display);
+  --type-h2:var(--weight-semibold) var(--text-2xl)/1.2 var(--font-display);
+  --type-h3:var(--weight-semibold) var(--text-xl)/var(--leading-snug) var(--font-display);
+  --type-h4:var(--weight-semibold) var(--text-md)/var(--leading-snug) var(--font-display);
+  --type-body:var(--weight-regular) var(--text-base)/var(--leading-normal) var(--font-body);
+  --type-body-sm:var(--weight-regular) var(--text-sm)/var(--leading-normal) var(--font-body);
+  --type-label:var(--weight-semibold) var(--text-sm)/1.2 var(--font-body);
+  --type-caption:var(--weight-medium) var(--text-xs)/1.4 var(--font-body);
+  --type-overline:var(--weight-semibold) var(--text-xs)/1.2 var(--font-display);
+  --type-mono:var(--weight-regular) var(--text-sm)/1.5 var(--font-mono);
+}
