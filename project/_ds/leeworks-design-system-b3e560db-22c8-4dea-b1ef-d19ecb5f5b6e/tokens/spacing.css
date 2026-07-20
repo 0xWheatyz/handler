@@ -1,0 +1,11 @@
+/* Leeworks spacing — 4px base, comfortable (not dense) rhythm. */
+:root{
+  --space-1:4px; --space-2:8px; --space-3:12px; --space-4:16px;
+  --space-5:20px; --space-6:24px; --space-7:32px; --space-8:40px;
+  --space-9:56px; --space-10:80px; --space-11:120px;
+
+  --control-h-sm:32px; --control-h-md:40px; --control-h-lg:48px;
+  --control-pad-x-sm:12px; --control-pad-x-md:16px; --control-pad-x-lg:20px;
+
+  --page-max:1200px; --content-max:720px; --gutter:24px;
+}

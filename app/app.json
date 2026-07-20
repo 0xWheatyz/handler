@@ -1,0 +1,18 @@
+{
+  "expo": {
+    "name": "Handler",
+    "slug": "handler-mobile",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "scheme": "handler",
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "dev.wheaty.handler"
+    },
+    "android": {
+      "package": "dev.wheaty.handler"
+    },
+    "newArchEnabled": true
+  }
+}

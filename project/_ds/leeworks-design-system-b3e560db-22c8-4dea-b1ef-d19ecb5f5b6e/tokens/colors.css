@@ -1,0 +1,74 @@
+/* Leeworks color system — bright white base, ink-led near-monochrome. */
+:root{
+  /* Base scale (warm-neutral ink ramp) */
+  --white:#ffffff;
+  --ink-0:#fcfcfb;
+  --ink-1:#f6f6f4;
+  --ink-2:#ececea;
+  --ink-3:#dcdcd8;
+  --ink-4:#b8b8b3;
+  --ink-5:#8b8b86;
+  --ink-6:#62625e;
+  --ink-7:#3d3d3a;
+  --ink-8:#232321;
+  --ink-9:#141413;
+
+  /* Signal (the one non-neutral: a deep leaf green used sparingly) */
+  --signal:#1d6b45;
+  --signal-strong:#155236;
+  --signal-tint:#e8f2ec;
+
+  /* Semantic status (muted, low-saturation) */
+  --positive:#1d6b45;
+  --positive-tint:#e8f2ec;
+  --warning:#8a6116;
+  --warning-tint:#f7efdd;
+  --danger:#a33a2f;
+  --danger-tint:#f9e9e6;
+
+  /* Semantic aliases — light */
+  --surface-page:var(--white);
+  --surface-raised:var(--white);
+  --surface-sunken:var(--ink-1);
+  --surface-card:var(--white);
+  --surface-inverse:var(--ink-9);
+  --text-heading:var(--ink-9);
+  --text-body:var(--ink-7);
+  --text-muted:var(--ink-5);
+  --text-inverse:var(--ink-0);
+  --text-link:var(--ink-9);
+  --border-subtle:var(--ink-2);
+  --border-default:var(--ink-3);
+  --border-strong:var(--ink-9);
+  --interactive:var(--ink-9);
+  --interactive-hover:var(--ink-7);
+  --interactive-press:#000000;
+  --focus-ring:rgba(20,20,19,.28);
+}
+[data-theme="dark"]{
+  --surface-page:#161615;
+  --surface-raised:#1e1e1d;
+  --surface-sunken:#111110;
+  --surface-card:#1e1e1d;
+  --surface-inverse:var(--ink-0);
+  --text-heading:#f4f4f2;
+  --text-body:#c9c9c4;
+  --text-muted:#8b8b86;
+  --text-inverse:var(--ink-9);
+  --text-link:#f4f4f2;
+  --border-subtle:#2b2b29;
+  --border-default:#3a3a37;
+  --border-strong:#f4f4f2;
+  --interactive:#f4f4f2;
+  --interactive-hover:#d8d8d4;
+  --interactive-press:#ffffff;
+  --focus-ring:rgba(244,244,242,.35);
+  --signal:#4fa377;
+  --signal-tint:#1d2f26;
+  --positive:#4fa377;
+  --positive-tint:#1d2f26;
+  --warning:#c99a3f;
+  --warning-tint:#2f2818;
+  --danger:#d0685c;
+  --danger-tint:#331e1b;
+}
