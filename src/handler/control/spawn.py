@@ -119,9 +119,12 @@ def spawn(
                 except reposync.SyncError as exc:
                     raise SpawnError(str(exc)) from exc
 
-        working_dir = worktree.resolve_working_dir(
-            project["root_dir"], name, subdir=subdir, worktree_branch=worktree_branch
-        )
+        try:
+            working_dir = worktree.resolve_working_dir(
+                project["root_dir"], name, subdir=subdir, worktree_branch=worktree_branch
+            )
+        except (worktree.WorktreeError, worktree.IsolationError) as exc:
+            raise SpawnError(str(exc)) from exc
 
         # Hard gates before any state is written or process launched: the test task must
         # exist, and configured credentials must actually resolve — a broken pointer
