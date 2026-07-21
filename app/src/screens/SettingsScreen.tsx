@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { ScrollView, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { text } from "../theme/tokens";
@@ -13,12 +13,58 @@ import {
   StatusDot,
 } from "../components/primitives";
 import { TabBar } from "../components/TabBar";
-import { useAppState } from "../state/AppState";
+import { useServerConfig } from "../state/ServerConfig";
+import { createClient } from "../api/client";
+
+type Ping =
+  | { state: "checking" }
+  | { state: "ok"; latencyMs: number }
+  | { state: "error" };
 
 export function SettingsScreen() {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
-  const { swPushWait, setSwPushWait, swPushFail, setSwPushFail } = useAppState();
+  const { config, clear } = useServerConfig();
+
+  // Notification toggles stay local (no server-side counterpart yet).
+  const [pushWait, setPushWait] = useState(true);
+  const [pushFail, setPushFail] = useState(true);
+
+  const [ping, setPing] = useState<Ping>({ state: "checking" });
+
+  const client = useMemo(
+    () => (config ? createClient(config.endpoint, config.token, () => {}) : null),
+    [config],
+  );
+
+  useEffect(() => {
+    if (!client) return;
+    let active = true;
+    setPing({ state: "checking" });
+    const started = Date.now();
+    client
+      .api<{ status: string }>("/health")
+      .then(() => {
+        if (active) setPing({ state: "ok", latencyMs: Date.now() - started });
+      })
+      .catch(() => {
+        if (active) setPing({ state: "error" });
+      });
+    return () => {
+      active = false;
+    };
+  }, [client]);
+
+  const maskedToken = config
+    ? `••••••••${config.token.slice(-4)}`
+    : "—";
+
+  const status =
+    ping.state === "ok"
+      ? { color: colors.positive, label: `connected · ${ping.latencyMs}ms` }
+      : ping.state === "error"
+        ? { color: colors.danger, label: "unreachable" }
+        : { color: colors.textMuted, label: "checking…" };
 
   return (
     <View style={[styles.page, { backgroundColor: colors.surfacePage }]}>
@@ -33,16 +79,16 @@ export function SettingsScreen() {
 
         <SectionLabel style={{ marginBottom: 10 }}>Server</SectionLabel>
         <Card style={{ marginBottom: 20 }}>
-          <InfoRow label="Endpoint" value="https://handler.wheaty.dev" />
+          <InfoRow label="Endpoint" value={config?.endpoint ?? "—"} />
           <Divider />
-          <InfoRow label="API key" value="hnd_••••••••4f2a" />
+          <InfoRow label="API token" value={maskedToken} />
           <Divider />
           <View style={styles.infoRow}>
             <Text style={[text.label, { color: colors.textHeading }]}>Status</Text>
             <View style={styles.statusValue}>
-              <StatusDot color={colors.positive} size={7} />
-              <Mono style={[styles.valueMono, { color: colors.positive }]}>
-                connected · 38ms
+              <StatusDot color={status.color} size={7} />
+              <Mono style={[styles.valueMono, { color: status.color }]}>
+                {status.label}
               </Mono>
             </View>
           </View>
@@ -53,19 +99,24 @@ export function SettingsScreen() {
           <ToggleRow
             title="Waiting on input"
             subtitle="Push when an agent pauses"
-            value={swPushWait}
-            onValueChange={setSwPushWait}
+            value={pushWait}
+            onValueChange={setPushWait}
           />
           <Divider />
           <ToggleRow
             title="Failures"
             subtitle="Push when a checkmark fails"
-            value={swPushFail}
-            onValueChange={setSwPushFail}
+            value={pushFail}
+            onValueChange={setPushFail}
           />
         </Card>
 
-        <Button variant="secondary" size="lg" style={{ width: "100%" }}>
+        <Button
+          variant="secondary"
+          size="lg"
+          style={{ width: "100%" }}
+          onPress={() => void clear()}
+        >
           Sign out
         </Button>
       </ScrollView>
@@ -79,7 +130,12 @@ function InfoRow({ label, value }: { label: string; value: string }) {
   return (
     <View style={styles.infoRow}>
       <Text style={[text.label, { color: colors.textHeading }]}>{label}</Text>
-      <Mono style={[styles.valueMono, { color: colors.textMuted }]}>{value}</Mono>
+      <Mono
+        numberOfLines={1}
+        style={[styles.valueMono, styles.valueFlex, { color: colors.textMuted }]}
+      >
+        {value}
+      </Mono>
     </View>
   );
 }
@@ -98,4 +154,5 @@ const styles = StyleSheet.create({
   },
   statusValue: { flexDirection: "row", alignItems: "center", gap: 6 },
   valueMono: { fontSize: 12.5 },
+  valueFlex: { flex: 1, textAlign: "right" },
 });

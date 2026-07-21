@@ -1,5 +1,12 @@
 import React from "react";
-import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import {
+  ActivityIndicator,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { fonts, text } from "../theme/tokens";
 import { useTheme } from "../theme/useTheme";
@@ -13,25 +20,24 @@ import {
   StatusDot,
 } from "../components/primitives";
 import { TabBar } from "../components/TabBar";
-import { useAppState } from "../state/AppState";
 import {
-  recentCheckmarks,
-  waitingAgents,
-  type Checkmark,
-  type WaitingAgent,
-} from "../data/mock";
+  useAppState,
+  type RecentItem,
+  type WaitingItem,
+} from "../state/AppState";
 
 export function FleetScreen() {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
-  const { go, notAnswered } = useAppState();
+  const { go, openAnswer, openDetail, waiting, recent, counts, loading, error, refresh } =
+    useAppState();
 
-  const waiting = waitingAgents.filter((a) => !(a.clearsOnAnswer && !notAnswered));
+  const empty = waiting.length === 0 && recent.length === 0;
 
   const stats = [
-    { label: "Running", value: "6", tint: colors.textHeading },
-    { label: "Waiting", value: "3", tint: colors.warning },
-    { label: "Done", value: "42", tint: colors.textHeading },
+    { label: "Running", value: counts.running, tint: colors.textHeading },
+    { label: "Waiting", value: counts.waiting, tint: colors.warning },
+    { label: "Done", value: counts.done, tint: colors.textHeading },
   ];
 
   return (
@@ -45,7 +51,7 @@ export function FleetScreen() {
           <View style={{ flex: 1 }}>
             <Text style={[text.h3, { color: colors.textHeading }]}>Fleet</Text>
             <Text style={[text.bodySm, { color: colors.textMuted, marginTop: 2 }]}>
-              12 agents · 3 waiting on you
+              {counts.running} running · {counts.waiting} waiting on you
             </Text>
           </View>
           <Button size="sm" onPress={() => go("spawn")}>
@@ -66,25 +72,65 @@ export function FleetScreen() {
           ))}
         </View>
 
-        <SectionLabel style={styles.overline}>Waiting on you</SectionLabel>
-        <Card style={styles.section}>
-          {waiting.map((a, i) => (
-            <View key={a.id}>
-              {i > 0 && <Divider />}
-              <WaitingRow agent={a} onAnswer={() => go("answer")} />
-            </View>
-          ))}
-        </Card>
+        {loading && empty && !error ? (
+          <View style={styles.centered}>
+            <ActivityIndicator color={colors.textMuted} />
+          </View>
+        ) : error && empty ? (
+          <Card style={styles.errorCard}>
+            <SectionLabel style={{ marginBottom: 6 }}>Couldn’t load fleet</SectionLabel>
+            <Text style={[text.bodySm, { color: colors.textBody, marginBottom: 14 }]}>
+              {error}
+            </Text>
+            <Button size="md" variant="secondary" onPress={() => refresh()}>
+              Retry
+            </Button>
+          </Card>
+        ) : (
+          <>
+            <SectionLabel style={styles.overline}>Waiting on you</SectionLabel>
+            <Card style={styles.section}>
+              {waiting.length === 0 ? (
+                <View style={styles.rowPad}>
+                  <Text style={[text.bodySm, { color: colors.textMuted }]}>
+                    Nothing waiting on you.
+                  </Text>
+                </View>
+              ) : (
+                waiting.map((a, i) => (
+                  <View key={`${a.project}/${a.name}`}>
+                    {i > 0 && <Divider />}
+                    <WaitingRow
+                      agent={a}
+                      onAnswer={() => openAnswer(a.project, a.name)}
+                    />
+                  </View>
+                ))
+              )}
+            </Card>
 
-        <SectionLabel style={styles.overline}>Recent checkmarks</SectionLabel>
-        <Card>
-          {recentCheckmarks.map((c, i) => (
-            <View key={c.title}>
-              {i > 0 && <Divider />}
-              <CheckmarkRow checkmark={c} onPress={() => go("detail")} />
-            </View>
-          ))}
-        </Card>
+            <SectionLabel style={styles.overline}>Recent checkmarks</SectionLabel>
+            <Card>
+              {recent.length === 0 ? (
+                <View style={styles.rowPad}>
+                  <Text style={[text.bodySm, { color: colors.textMuted }]}>
+                    No checkmarks yet.
+                  </Text>
+                </View>
+              ) : (
+                recent.map((c, i) => (
+                  <View key={c.key}>
+                    {i > 0 && <Divider />}
+                    <CheckmarkRow
+                      checkmark={c}
+                      onPress={() => openDetail(c.project, c.name)}
+                    />
+                  </View>
+                ))
+              )}
+            </Card>
+          </>
+        )}
       </ScrollView>
       <TabBar active="fleet" />
     </View>
@@ -95,23 +141,24 @@ function WaitingRow({
   agent,
   onAnswer,
 }: {
-  agent: WaitingAgent;
+  agent: WaitingItem;
   onAnswer: () => void;
 }) {
   const { colors } = useTheme();
   return (
     <View style={styles.rowPad}>
       <View style={styles.waitingTop}>
-        <Mono style={{ fontSize: 12, color: colors.textMuted }}>{agent.id}</Mono>
+        <Mono style={{ fontSize: 12, color: colors.textMuted }}>{agent.name}</Mono>
         <Text
           numberOfLines={1}
           style={[styles.rowTitle, { color: colors.textHeading, flex: 1 }]}
         >
-          {agent.title}
+          {agent.project}
         </Text>
       </View>
       <View style={styles.waitingBottom}>
         <Text
+          numberOfLines={2}
           style={[
             text.bodySm,
             { color: colors.textBody, flex: 1, fontFamily: fonts.bodyItalic },
@@ -131,11 +178,11 @@ function CheckmarkRow({
   checkmark,
   onPress,
 }: {
-  checkmark: Checkmark;
+  checkmark: RecentItem;
   onPress: () => void;
 }) {
   const { colors } = useTheme();
-  const dot = checkmark.status === "positive" ? colors.positive : colors.danger;
+  const dot = checkmark.tone === "positive" ? colors.positive : colors.danger;
   return (
     <Pressable
       onPress={onPress}
@@ -179,6 +226,8 @@ const styles = StyleSheet.create({
     lineHeight: 28,
     marginTop: 4,
   },
+  centered: { paddingVertical: 48, alignItems: "center", justifyContent: "center" },
+  errorCard: { padding: 16, alignItems: "flex-start" },
   overline: { marginBottom: 10 },
   section: { marginBottom: 20 },
   rowPad: { paddingVertical: 14, paddingHorizontal: 16 },

@@ -77,11 +77,17 @@ export function StatusDot({ color, size = 8 }: { color: string; size?: number })
 export function Mono({
   children,
   style,
+  numberOfLines,
 }: {
   children: React.ReactNode;
   style?: StyleProp<TextStyle>;
+  numberOfLines?: number;
 }) {
-  return <Text style={[monoStyles.mono, style]}>{children}</Text>;
+  return (
+    <Text numberOfLines={numberOfLines} style={[monoStyles.mono, style]}>
+      {children}
+    </Text>
+  );
 }
 
 const monoStyles = StyleSheet.create({

@@ -6,22 +6,22 @@ import { useTheme } from "../theme/useTheme";
 import { Chip } from "../components/Chip";
 import { Mono, SectionLabel } from "../components/primitives";
 import { TabBar } from "../components/TabBar";
-import { useAppState, type LogFilter } from "../state/AppState";
-import { allLog } from "../data/mock";
-
-const FILTERS: { key: LogFilter; label: string }[] = [
-  { key: "all", label: "All" },
-  { key: "handler", label: "handler" },
-  { key: "errors", label: "Errors" },
-];
+import { useAppState } from "../state/AppState";
+import { clockTime, statusColor } from "../api/format";
 
 export function LogScreen() {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
-  const { logFilter, setLogFilter } = useAppState();
+  const { logFilter, setLogFilter, globalLog, projects } = useAppState();
 
-  const entries = allLog.filter((e) =>
-    logFilter === "all" ? true : logFilter === "errors" ? e.err : e.p === "handler"
+  const filters: { key: string; label: string }[] = [
+    { key: "all", label: "All" },
+    ...projects.map((p) => ({ key: p.id, label: p.id })),
+    { key: "errors", label: "Errors" },
+  ];
+
+  const entries = globalLog.filter((e) =>
+    logFilter === "all" ? true : logFilter === "errors" ? e.err : e.project === logFilter,
   );
 
   return (
@@ -30,8 +30,12 @@ export function LogScreen() {
 
       <View style={styles.header}>
         <Text style={[text.h3, { color: colors.textHeading }]}>Log</Text>
-        <View style={styles.filters}>
-          {FILTERS.map((f) => (
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.filters}
+        >
+          {filters.map((f) => (
             <Chip
               key={f.key}
               label={f.label}
@@ -39,11 +43,11 @@ export function LogScreen() {
               onPress={() => setLogFilter(f.key)}
             />
           ))}
-        </View>
+        </ScrollView>
       </View>
 
       <View style={styles.todayLabel}>
-        <SectionLabel>Today</SectionLabel>
+        <SectionLabel>Activity</SectionLabel>
       </View>
 
       <ScrollView
@@ -54,17 +58,26 @@ export function LogScreen() {
         ]}
         showsVerticalScrollIndicator={false}
       >
-        {entries.map((e, i) => (
-          <View key={`${e.t}-${i}`} style={styles.logRow}>
-            <Mono style={[styles.mono, { color: colors.ink4 }]}>{e.t}</Mono>
-            <Mono style={[styles.mono, styles.idCol, { color: colors.ink6 }]}>
-              {e.id}
-            </Mono>
-            <Mono style={[styles.mono, { color: colors[e.color], flex: 1 }]}>
-              {e.msg}
-            </Mono>
-          </View>
-        ))}
+        {entries.length === 0 ? (
+          <Text style={[text.bodySm, { color: colors.textMuted }]}>No activity yet.</Text>
+        ) : (
+          entries.map((e) => (
+            <View key={e.key} style={styles.logRow}>
+              <Mono style={[styles.mono, { color: colors.ink4 }]}>
+                {clockTime(e.createdAt)}
+              </Mono>
+              <Mono
+                numberOfLines={1}
+                style={[styles.mono, styles.idCol, { color: colors.ink6 }]}
+              >
+                {e.name}
+              </Mono>
+              <Mono style={[styles.mono, { color: colors[statusColor(e.status)], flex: 1 }]}>
+                {e.msg}
+              </Mono>
+            </View>
+          ))
+        )}
       </ScrollView>
 
       <TabBar active="log" />
@@ -75,7 +88,7 @@ export function LogScreen() {
 const styles = StyleSheet.create({
   page: { flex: 1 },
   header: { paddingHorizontal: 20, paddingTop: 20, paddingBottom: 16 },
-  filters: { flexDirection: "row", gap: 8, marginTop: 14 },
+  filters: { flexDirection: "row", gap: 8, marginTop: 14, paddingRight: 20 },
   todayLabel: { paddingHorizontal: 20, paddingBottom: 8 },
   feed: {
     borderTopWidth: 1,
@@ -85,5 +98,5 @@ const styles = StyleSheet.create({
   },
   logRow: { flexDirection: "row", gap: 10 },
   mono: { fontSize: 12.5, lineHeight: 26 },
-  idCol: { width: 66 },
+  idCol: { width: 86 },
 });

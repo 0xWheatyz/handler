@@ -3,7 +3,9 @@ import {
   StyleSheet,
   TextInput,
   View,
+  type KeyboardTypeOptions,
   type StyleProp,
+  type TextInputProps,
   type ViewStyle,
 } from "react-native";
 import { fonts, radius } from "../theme/tokens";
@@ -21,6 +23,10 @@ export function TextField({
   multiline = false,
   height = 48,
   style,
+  secureTextEntry = false,
+  autoCapitalize,
+  autoCorrect,
+  keyboardType,
 }: {
   value: string;
   onChangeText: (t: string) => void;
@@ -29,6 +35,10 @@ export function TextField({
   /** For single-line this is the control height; for multiline, the box height. */
   height?: number;
   style?: StyleProp<ViewStyle>;
+  secureTextEntry?: boolean;
+  autoCapitalize?: TextInputProps["autoCapitalize"];
+  autoCorrect?: boolean;
+  keyboardType?: KeyboardTypeOptions;
 }) {
   const { colors } = useTheme();
   const [focus, setFocus] = useState(false);
@@ -52,6 +62,10 @@ export function TextField({
         placeholder={placeholder}
         placeholderTextColor={colors.textMuted}
         multiline={multiline}
+        secureTextEntry={secureTextEntry}
+        autoCapitalize={autoCapitalize}
+        autoCorrect={autoCorrect}
+        keyboardType={keyboardType}
         onFocus={() => setFocus(true)}
         onBlur={() => setFocus(false)}
         style={[

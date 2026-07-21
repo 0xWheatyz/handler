@@ -28,6 +28,8 @@ import {
 
 import { useTheme } from "./src/theme/useTheme";
 import { AppStateProvider, useAppState } from "./src/state/AppState";
+import { ServerConfigProvider, useServerConfig } from "./src/state/ServerConfig";
+import { ConnectScreen } from "./src/screens/ConnectScreen";
 import { FleetScreen } from "./src/screens/FleetScreen";
 import { AgentDetailScreen } from "./src/screens/AgentDetailScreen";
 import { AnswerScreen } from "./src/screens/AnswerScreen";
@@ -37,9 +39,9 @@ import { SettingsScreen } from "./src/screens/SettingsScreen";
 
 function Router() {
   const { screen } = useAppState();
-  const { scheme, colors } = useTheme();
 
   const Screen = {
+    connect: ConnectScreen,
     fleet: FleetScreen,
     detail: AgentDetailScreen,
     answer: AnswerScreen,
@@ -48,10 +50,26 @@ function Router() {
     settings: SettingsScreen,
   }[screen];
 
+  return <Screen />;
+}
+
+/** Gate: splash while config loads, ConnectScreen when unconfigured, else the fleet app. */
+function Gate() {
+  const { config, loading } = useServerConfig();
+  const { scheme, colors } = useTheme();
+
   return (
     <View style={{ flex: 1, backgroundColor: colors.surfacePage }}>
       <StatusBar style={scheme === "dark" ? "light" : "dark"} />
-      <Screen />
+      {loading ? (
+        <SplashPlaceholder />
+      ) : config ? (
+        <AppStateProvider>
+          <Router />
+        </AppStateProvider>
+      ) : (
+        <ConnectScreen />
+      )}
     </View>
   );
 }
@@ -76,9 +94,9 @@ export default function App() {
   return (
     <SafeAreaProvider>
       {fontsLoaded ? (
-        <AppStateProvider>
-          <Router />
-        </AppStateProvider>
+        <ServerConfigProvider>
+          <Gate />
+        </ServerConfigProvider>
       ) : (
         <SplashPlaceholder />
       )}
