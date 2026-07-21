@@ -1,0 +1,572 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<meta name="design_doc_mode" content="canvas">
+<link rel="stylesheet" href="_ds/leeworks-design-system-b3e560db-22c8-4dea-b1ef-d19ecb5f5b6e/tokens/fonts.css">
+<link rel="stylesheet" href="_ds/leeworks-design-system-b3e560db-22c8-4dea-b1ef-d19ecb5f5b6e/tokens/colors.css">
+<link rel="stylesheet" href="_ds/leeworks-design-system-b3e560db-22c8-4dea-b1ef-d19ecb5f5b6e/tokens/typography.css">
+<link rel="stylesheet" href="_ds/leeworks-design-system-b3e560db-22c8-4dea-b1ef-d19ecb5f5b6e/tokens/spacing.css">
+<link rel="stylesheet" href="_ds/leeworks-design-system-b3e560db-22c8-4dea-b1ef-d19ecb5f5b6e/tokens/effects.css">
+<link rel="stylesheet" href="_ds/leeworks-design-system-b3e560db-22c8-4dea-b1ef-d19ecb5f5b6e/styles.css">
+<script src="_ds/leeworks-design-system-b3e560db-22c8-4dea-b1ef-d19ecb5f5b6e/_ds_bundle.js"></script>
+<style>
+body{margin:0;background:#f0eee9;font-family:system-ui,sans-serif}
+a{color:#141413}a:hover{color:#555}
+@keyframes lwPulse{0%,100%{opacity:1}50%{opacity:.35}}
+.dv-turn{padding:40px 44px 32px;border-bottom:1px solid rgba(0,0,0,.08);scroll-margin-top:16px}
+.dv-thd{display:flex;align-items:baseline;gap:10px;margin:0 0 8px}
+.dv-tid{font:600 10px ui-monospace,Menlo,monospace;padding:3px 7px;background:#1a1a1a;color:#fff;border-radius:4px;text-decoration:none}
+.dv-tname{font:600 13px/1.2 system-ui,sans-serif;color:#1a1a1a}
+.dv-note{max-width:760px;font:12px/1.55 system-ui,sans-serif;color:rgba(0,0,0,.55);margin:0 0 24px}
+.dv-row-label{font:600 11px/1 ui-monospace,Menlo,monospace;letter-spacing:.06em;text-transform:uppercase;color:rgba(0,0,0,.45);margin:28px 0 14px}
+.dv-opts{display:flex;flex-wrap:wrap;gap:28px;align-items:flex-start}
+.dv-opt{flex:none;display:flex;flex-direction:column;gap:9px;scroll-margin-top:16px}
+.dv-oid{font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:rgba(0,0,0,.08);color:#1a1a1a;border-radius:5px;text-decoration:none}
+.dv-olabel{display:flex;align-items:baseline;gap:8px;font:400 11px/1.3 system-ui,sans-serif;color:rgba(0,0,0,.55)}
+.dv-opt:target .dv-oid{background:#2a78d6;color:#fff}
+.dv-next{margin:26px 0 0;font:12px/1.5 system-ui,sans-serif;color:rgba(0,0,0,.5)}
+</style>
+</helmet>
+<section class="dv-turn" id="t2">
+<div class="dv-thd"><a class="dv-tid" href="#t2">2</a><span class="dv-tname">Committed: 1a wired into one tappable prototype</span></div>
+<p class="dv-note">One phone, all screens live. Tap: Answer buttons → answer flow (quick replies + send &amp; resume flips the agent to Running), checkmark rows → agent detail, New → spawn, tab bar → Log / Settings. Back arrows work.</p>
+<div class="dv-opts">
+<div class="dv-opt" id="2a"><div class="dv-olabel"><a class="dv-oid" href="#2a">2a</a>Handler — interactive prototype</div>
+<div data-theme="{{ theme }}" data-screen-label="2a Interactive prototype" style="width:390px;height:844px;background:var(--surface-page);border-radius:48px;border:1px solid var(--border-default);box-shadow:var(--shadow-overlay);overflow:hidden;display:flex;flex-direction:column;font:var(--type-body);color:var(--text-body);position:relative;flex-shrink:0">
+  <div style="height:54px;flex-shrink:0;display:flex;align-items:flex-end;justify-content:space-between;padding:0 28px 6px;font:600 14px/1 var(--font-body);color:var(--text-heading)"><span>9:41</span><span style="display:inline-flex;gap:5px;align-items:center"><svg width="16" height="12" viewBox="0 0 16 12" fill="currentColor"><rect x="0" y="7" width="3" height="5" rx="1"></rect><rect x="4.5" y="5" width="3" height="7" rx="1"></rect><rect x="9" y="2.5" width="3" height="9.5" rx="1"></rect><rect x="13" y="0" width="3" height="12" rx="1" opacity=".35"></rect></svg><svg width="24" height="12" viewBox="0 0 24 12" fill="none"><rect x="0.5" y="0.5" width="20" height="11" rx="3" stroke="currentColor" opacity=".4"></rect><rect x="2" y="2" width="14" height="8" rx="1.5" fill="currentColor"></rect><path d="M22.5 4v4a2 2 0 0 0 0-4z" fill="currentColor" opacity=".4"></path></svg></span></div>
+
+  <!-- FLEET -->
+  <sc-if value="{{ isFleet }}" hint-placeholder-val="{{ true }}">
+  <div style="flex:1;overflow:auto;min-height:0;padding:8px 20px 20px">
+    <div style="display:flex;align-items:center;gap:12px;margin:12px 0 20px">
+      <div style="flex:1">
+        <div style="font:var(--type-h3);font-family:var(--font-display);letter-spacing:var(--tracking-tight);color:var(--text-heading)">Fleet</div>
+        <div style="font:var(--type-body-sm);color:var(--text-muted);margin-top:2px">12 agents · 3 waiting on you</div>
+      </div>
+      <x-import component-from-global-scope="LeeworksDesignSystem_b3e560.Button" size="sm" onClick="{{ goSpawn }}" hint-size="64px,32px">New</x-import>
+    </div>
+    <div style="display:flex;gap:12px;margin-bottom:20px">
+      <div style="flex:1;background:var(--surface-page);border:1px solid var(--border-subtle);border-radius:10px;box-shadow:var(--shadow-card);padding:14px 16px"><div style="font:var(--type-caption);color:var(--text-muted)">Running</div><div style="font-family:var(--font-mono);font-size:24px;font-weight:600;color:var(--text-heading);margin-top:4px">6</div></div>
+      <div style="flex:1;background:var(--surface-page);border:1px solid var(--border-subtle);border-radius:10px;box-shadow:var(--shadow-card);padding:14px 16px"><div style="font:var(--type-caption);color:var(--text-muted)">Waiting</div><div style="font-family:var(--font-mono);font-size:24px;font-weight:600;color:var(--warning);margin-top:4px">3</div></div>
+      <div style="flex:1;background:var(--surface-page);border:1px solid var(--border-subtle);border-radius:10px;box-shadow:var(--shadow-card);padding:14px 16px"><div style="font:var(--type-caption);color:var(--text-muted)">Done</div><div style="font-family:var(--font-mono);font-size:24px;font-weight:600;color:var(--text-heading);margin-top:4px">42</div></div>
+    </div>
+    <div style="font:var(--type-overline);letter-spacing:var(--tracking-wide);text-transform:uppercase;color:var(--text-muted);font-size:11px;margin-bottom:10px">Waiting on you</div>
+    <div style="background:var(--surface-page);border:1px solid var(--border-subtle);border-radius:10px;box-shadow:var(--shadow-card);margin-bottom:20px">
+      <sc-if value="{{ notAnswered }}" hint-placeholder-val="{{ true }}">
+      <div style="padding:14px 16px;border-bottom:1px solid var(--border-subtle)">
+        <div style="display:flex;align-items:center;gap:8px"><span style="font-family:var(--font-mono);font-size:12px;color:var(--text-muted)">agt-7a1d</span><span style="font:var(--type-label);color:var(--text-heading);flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">handler · migrate state to sqlite</span></div>
+        <div style="display:flex;align-items:center;gap:10px;margin-top:8px"><span style="flex:1;font:var(--type-body-sm);color:var(--text-body);font-style:italic">"Drop the legacy JSON store, or keep it as a read fallback?"</span><x-import component-from-global-scope="LeeworksDesignSystem_b3e560.Button" size="sm" variant="secondary" onClick="{{ goAnswer }}" hint-size="76px,32px">Answer</x-import></div>
+      </div>
+      </sc-if>
+      <div style="padding:14px 16px;border-bottom:1px solid var(--border-subtle)">
+        <div style="display:flex;align-items:center;gap:8px"><span style="font-family:var(--font-mono);font-size:12px;color:var(--text-muted)">agt-3e90</span><span style="font:var(--type-label);color:var(--text-heading);flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">wheatsite · fix build on node 22</span></div>
+        <div style="display:flex;align-items:center;gap:10px;margin-top:8px"><span style="flex:1;font:var(--type-body-sm);color:var(--text-body);font-style:italic">"Pin node 20 in CI, or patch esbuild?"</span><x-import component-from-global-scope="LeeworksDesignSystem_b3e560.Button" size="sm" variant="secondary" onClick="{{ goAnswer }}" hint-size="76px,32px">Answer</x-import></div>
+      </div>
+      <div style="padding:14px 16px">
+        <div style="display:flex;align-items:center;gap:8px"><span style="font-family:var(--font-mono);font-size:12px;color:var(--text-muted)">agt-b241</span><span style="font:var(--type-label);color:var(--text-heading);flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">api-gateway · add rate limiting</span></div>
+        <div style="display:flex;align-items:center;gap:10px;margin-top:8px"><span style="flex:1;font:var(--type-body-sm);color:var(--text-body);font-style:italic">"429 body: JSON or plain text?"</span><x-import component-from-global-scope="LeeworksDesignSystem_b3e560.Button" size="sm" variant="secondary" onClick="{{ goAnswer }}" hint-size="76px,32px">Answer</x-import></div>
+      </div>
+    </div>
+    <div style="font:var(--type-overline);letter-spacing:var(--tracking-wide);text-transform:uppercase;color:var(--text-muted);font-size:11px;margin-bottom:10px">Recent checkmarks</div>
+    <div style="background:var(--surface-page);border:1px solid var(--border-subtle);border-radius:10px;box-shadow:var(--shadow-card)">
+      <div onClick="{{ goDetail }}" style="display:flex;align-items:center;gap:12px;padding:14px 16px;min-height:44px;border-bottom:1px solid var(--border-subtle);cursor:pointer" style-hover="background:var(--surface-sunken)"><span style="width:8px;height:8px;border-radius:4px;background:var(--positive);flex-shrink:0"></span><div style="flex:1;min-width:0"><div style="font:var(--type-label);color:var(--text-heading);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">handler · add /agents endpoint</div><div style="font:var(--type-caption);color:var(--text-muted);margin-top:2px">done — tests pass · 14m ago</div></div><x-import component-from-global-scope="LeeworksDesignSystem_b3e560.Icon" name="chevronRight" size="16" style="color:var(--ink-4)" hint-size="16px,16px"></x-import></div>
+      <div onClick="{{ goDetail }}" style="display:flex;align-items:center;gap:12px;padding:14px 16px;min-height:44px;border-bottom:1px solid var(--border-subtle);cursor:pointer" style-hover="background:var(--surface-sunken)"><span style="width:8px;height:8px;border-radius:4px;background:var(--danger);flex-shrink:0"></span><div style="flex:1;min-width:0"><div style="font:var(--type-label);color:var(--text-heading);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">wheatsite · refactor router</div><div style="font:var(--type-caption);color:var(--text-muted);margin-top:2px">failed — 2 tests · 1h ago</div></div><x-import component-from-global-scope="LeeworksDesignSystem_b3e560.Icon" name="chevronRight" size="16" style="color:var(--ink-4)" hint-size="16px,16px"></x-import></div>
+      <div onClick="{{ goDetail }}" style="display:flex;align-items:center;gap:12px;padding:14px 16px;min-height:44px;cursor:pointer" style-hover="background:var(--surface-sunken)"><span style="width:8px;height:8px;border-radius:4px;background:var(--positive);flex-shrink:0"></span><div style="flex:1;min-width:0"><div style="font:var(--type-label);color:var(--text-heading);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">dotfiles · port zsh config</div><div style="font:var(--type-caption);color:var(--text-muted);margin-top:2px">done — 12 turns · 3h ago</div></div><x-import component-from-global-scope="LeeworksDesignSystem_b3e560.Icon" name="chevronRight" size="16" style="color:var(--ink-4)" hint-size="16px,16px"></x-import></div>
+    </div>
+  </div>
+  <div style="height:84px;flex-shrink:0;border-top:1px solid var(--border-subtle);background:var(--surface-page);display:flex;padding:8px 12px 24px">
+    <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;padding:6px 0;color:var(--text-heading);cursor:pointer"><x-import component-from-global-scope="LeeworksDesignSystem_b3e560.Icon" name="home" size="22" strokeWidth="2" hint-size="22px,22px"></x-import><span style="font:var(--type-caption);font-weight:600">Fleet</span></div>
+    <div onClick="{{ goLog }}" style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;padding:6px 0;color:var(--ink-4);cursor:pointer"><x-import component-from-global-scope="LeeworksDesignSystem_b3e560.Icon" name="file" size="22" hint-size="22px,22px"></x-import><span style="font:var(--type-caption);font-weight:500">Log</span></div>
+    <div onClick="{{ goSettings }}" style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;padding:6px 0;color:var(--ink-4);cursor:pointer"><x-import component-from-global-scope="LeeworksDesignSystem_b3e560.Icon" name="settings" size="22" hint-size="22px,22px"></x-import><span style="font:var(--type-caption);font-weight:500">Settings</span></div>
+  </div>
+  </sc-if>
+
+  <!-- AGENT DETAIL -->
+  <sc-if value="{{ isDetail }}" hint-placeholder-val="{{ false }}">
+  <div style="flex:1;overflow:auto;min-height:0;padding:8px 20px 20px">
+    <div style="display:flex;align-items:center;gap:8px;margin:8px 0 16px">
+      <span onClick="{{ goFleet }}" style="display:inline-flex;width:32px;height:32px;align-items:center;justify-content:center;margin-left:-8px;color:var(--text-heading);cursor:pointer"><x-import component-from-global-scope="LeeworksDesignSystem_b3e560.Icon" name="chevronRight" size="20" style="transform:rotate(180deg)" hint-size="20px,20px"></x-import></span>
+      <span style="font-family:var(--font-mono);font-size:13px;color:var(--text-muted);flex:1">agt-7a1d</span>
+      <x-import component-from-global-scope="LeeworksDesignSystem_b3e560.Badge" tone="{{ agentTone }}" hint-size="auto,22px">{{ agentStatus }}</x-import>
+    </div>
+    <div style="font:var(--type-h3);font-family:var(--font-display);letter-spacing:var(--tracking-tight);color:var(--text-heading)">Migrate agent state to sqlite</div>
+    <div style="font:var(--type-body-sm);color:var(--text-muted);margin:4px 0 16px">handler · branch <span style="font-family:var(--font-mono)">agt/7a1d</span></div>
+    <div style="display:flex;background:var(--surface-sunken);border-radius:8px;padding:3px;margin-bottom:16px">
+      <button onClick="{{ showState }}" style="{{ segStateStyle }}">Checkmark</button>
+      <button onClick="{{ showLog }}" style="{{ segLogStyle }}">Log</button>
+    </div>
+    <sc-if value="{{ isState }}" hint-placeholder-val="{{ true }}">
+      <div style="background:var(--surface-sunken);border:1px solid var(--border-subtle);border-radius:10px;padding:16px">
+        <div style="font:var(--type-overline);letter-spacing:var(--tracking-wide);text-transform:uppercase;color:var(--text-muted);font-size:11px;margin-bottom:8px">Current state</div>
+        <div style="font-family:var(--font-mono);font-size:13px;line-height:1.7;color:var(--text-body)">{{ agentStateText }}</div>
+        <div style="font:var(--type-caption);color:var(--text-muted);margin-top:10px">updated 2m ago</div>
+      </div>
+      <div style="margin-top:16px;background:var(--surface-page);border:1px solid var(--border-subtle);border-radius:10px;box-shadow:var(--shadow-card)">
+        <div style="display:flex;justify-content:space-between;padding:12px 16px;border-bottom:1px solid var(--border-subtle)"><span style="font:var(--type-body-sm);color:var(--text-muted)">Started</span><span style="font-family:var(--font-mono);font-size:13px;color:var(--text-heading)">41m ago</span></div>
+        <div style="display:flex;justify-content:space-between;padding:12px 16px;border-bottom:1px solid var(--border-subtle)"><span style="font:var(--type-body-sm);color:var(--text-muted)">Model</span><span style="font-family:var(--font-mono);font-size:13px;color:var(--text-heading)">claude-sonnet-4</span></div>
+        <div style="display:flex;justify-content:space-between;padding:12px 16px;border-bottom:1px solid var(--border-subtle)"><span style="font:var(--type-body-sm);color:var(--text-muted)">Turns</span><span style="font-family:var(--font-mono);font-size:13px;color:var(--text-heading)">21</span></div>
+        <div style="display:flex;justify-content:space-between;padding:12px 16px"><span style="font:var(--type-body-sm);color:var(--text-muted)">Tokens</span><span style="font-family:var(--font-mono);font-size:13px;color:var(--text-heading)">348k</span></div>
+      </div>
+    </sc-if>
+    <sc-if value="{{ isLog }}" hint-placeholder-val="{{ false }}">
+      <div style="background:var(--surface-sunken);border:1px solid var(--border-subtle);border-radius:10px;padding:16px;font-family:var(--font-mono);font-size:12.5px;line-height:2.1">
+        <div style="display:flex;gap:10px"><span style="color:var(--ink-4)">14:02</span><span style="color:var(--warning)">paused — waiting for input</span></div>
+        <div style="display:flex;gap:10px"><span style="color:var(--ink-4)">13:57</span><span style="color:var(--text-body)">checkmark updated</span></div>
+        <div style="display:flex;gap:10px"><span style="color:var(--ink-4)">13:52</span><span style="color:var(--text-muted)">tool: bash — sqlite3 .schema</span></div>
+        <div style="display:flex;gap:10px"><span style="color:var(--ink-4)">13:48</span><span style="color:var(--text-muted)">tool: edit — store/sqlite.rs</span></div>
+        <div style="display:flex;gap:10px"><span style="color:var(--ink-4)">13:40</span><span style="color:var(--text-muted)">tool: bash — cargo test store</span></div>
+        <div style="display:flex;gap:10px"><span style="color:var(--ink-4)">13:29</span><span style="color:var(--text-body)">checkmark updated</span></div>
+        <div style="display:flex;gap:10px"><span style="color:var(--ink-4)">13:21</span><span style="color:var(--text-muted)">tool: read — store/json.rs</span></div>
+      </div>
+    </sc-if>
+    <div style="display:flex;gap:10px;margin-top:20px">
+      <sc-if value="{{ notAnswered }}" hint-placeholder-val="{{ true }}"><x-import component-from-global-scope="LeeworksDesignSystem_b3e560.Button" size="lg" style="flex:1" onClick="{{ goAnswer }}" hint-size="100%,48px">Answer</x-import></sc-if>
+      <x-import component-from-global-scope="LeeworksDesignSystem_b3e560.Button" size="lg" variant="secondary" style="flex:1" hint-size="80px,48px">Pause</x-import>
+      <x-import component-from-global-scope="LeeworksDesignSystem_b3e560.Button" size="lg" variant="danger" hint-size="70px,48px">Kill</x-import>
+    </div>
+  </div>
+  <div style="height:34px;flex-shrink:0"></div>
+  </sc-if>
+
+  <!-- ANSWER -->
+  <sc-if value="{{ isAnswer }}" hint-placeholder-val="{{ false }}">
+  <div style="flex:1;overflow:auto;min-height:0;padding:8px 20px 20px;display:flex;flex-direction:column">
+    <div style="display:flex;align-items:center;gap:8px;margin:8px 0 16px">
+      <span onClick="{{ goDetail }}" style="display:inline-flex;width:32px;height:32px;align-items:center;justify-content:center;margin-left:-8px;color:var(--text-heading);cursor:pointer"><x-import component-from-global-scope="LeeworksDesignSystem_b3e560.Icon" name="chevronRight" size="20" style="transform:rotate(180deg)" hint-size="20px,20px"></x-import></span>
+      <span style="font-family:var(--font-mono);font-size:13px;color:var(--text-muted);flex:1">agt-7a1d</span>
+      <x-import component-from-global-scope="LeeworksDesignSystem_b3e560.Badge" tone="warning" hint-size="auto,22px">Waiting</x-import>
+    </div>
+    <div style="font:var(--type-h3);font-family:var(--font-display);letter-spacing:var(--tracking-tight);color:var(--text-heading);margin-bottom:16px">Agent needs input</div>
+    <div style="background:var(--surface-sunken);border:1px solid var(--border-subtle);border-radius:10px;padding:16px;margin-bottom:20px">
+      <div style="font:var(--type-overline);letter-spacing:var(--tracking-wide);text-transform:uppercase;color:var(--text-muted);font-size:11px;margin-bottom:8px">Question · 2m ago</div>
+      <div style="font-family:var(--font-mono);font-size:13px;line-height:1.7;color:var(--text-body)">Migrations pass on the new sqlite store. Should I drop the legacy JSON store entirely, or keep it as a read-only fallback for one release?</div>
+    </div>
+    <div style="font:var(--type-overline);letter-spacing:var(--tracking-wide);text-transform:uppercase;color:var(--text-muted);font-size:11px;margin-bottom:10px">Quick replies</div>
+    <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:20px">
+      <sc-for list="{{ quickReplies }}" as="qr" hint-placeholder-count="3">
+        <button onClick="{{ qr.pick }}" style="{{ qr.style }}">{{ qr.label }}</button>
+      </sc-for>
+    </div>
+    <div style="margin-top:auto;display:flex;flex-direction:column;gap:12px">
+      <x-import component-from-global-scope="LeeworksDesignSystem_b3e560.Input" placeholder="Or type a reply…" size="lg" hint-size="100%,48px"></x-import>
+      <x-import component-from-global-scope="LeeworksDesignSystem_b3e560.Button" size="lg" style="width:100%" onClick="{{ sendResume }}" hint-size="100%,48px">Send &amp; resume</x-import>
+    </div>
+  </div>
+  <div style="height:34px;flex-shrink:0"></div>
+  </sc-if>
+
+  <!-- SPAWN -->
+  <sc-if value="{{ isSpawn }}" hint-placeholder-val="{{ false }}">
+  <div style="flex:1;overflow:auto;min-height:0;padding:8px 20px 20px;display:flex;flex-direction:column">
+    <div style="display:flex;align-items:center;gap:8px;margin:8px 0 16px">
+      <span onClick="{{ goFleet }}" style="display:inline-flex;width:32px;height:32px;align-items:center;justify-content:center;margin-left:-8px;color:var(--text-heading);cursor:pointer"><x-import component-from-global-scope="LeeworksDesignSystem_b3e560.Icon" name="x" size="20" hint-size="20px,20px"></x-import></span>
+      <span style="font:var(--type-label);font-weight:600;color:var(--text-heading);flex:1">New agent</span>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:16px">
+      <x-import component-from-global-scope="LeeworksDesignSystem_b3e560.Select" label="Project" options="{{ projectOpts }}" value="handler" size="lg" hint-size="100%,72px"></x-import>
+      <div>
+        <div style="font:var(--type-label);color:var(--text-heading);margin-bottom:6px">Task</div>
+        <textarea placeholder="What should this agent do?" style="width:100%;box-sizing:border-box;height:120px;resize:none;padding:12px 14px;border:1px solid var(--border-default);border-radius:8px;background:var(--surface-page);font:var(--type-body);font-family:var(--font-body);color:var(--text-body);outline:none"></textarea>
+        <div style="font:var(--type-caption);color:var(--text-muted);margin-top:6px">Runs isolated on a fresh branch.</div>
+      </div>
+      <div style="background:var(--surface-page);border:1px solid var(--border-subtle);border-radius:10px;box-shadow:var(--shadow-card)">
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 16px;min-height:44px;border-bottom:1px solid var(--border-subtle)"><div><div style="font:var(--type-label);color:var(--text-heading)">Auto-approve edits</div><div style="font:var(--type-caption);color:var(--text-muted);margin-top:2px">Skip file-edit confirmations</div></div><x-import component-from-global-scope="LeeworksDesignSystem_b3e560.Switch" checked="{{ swEdits }}" onChange="{{ toggleEdits }}" hint-size="44px,24px"></x-import></div>
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 16px;min-height:44px"><div><div style="font:var(--type-label);color:var(--text-heading)">Run tests on done</div><div style="font:var(--type-caption);color:var(--text-muted);margin-top:2px">Checkmark fails if tests fail</div></div><x-import component-from-global-scope="LeeworksDesignSystem_b3e560.Switch" checked="{{ swTests }}" onChange="{{ toggleTests }}" hint-size="44px,24px"></x-import></div>
+      </div>
+    </div>
+    <div style="margin-top:auto">
+      <x-import component-from-global-scope="LeeworksDesignSystem_b3e560.Button" size="lg" style="width:100%" onClick="{{ spawnGo }}" hint-size="100%,48px">Spawn agent</x-import>
+    </div>
+  </div>
+  <div style="height:34px;flex-shrink:0"></div>
+  </sc-if>
+
+  <!-- LOG -->
+  <sc-if value="{{ isLogScreen }}" hint-placeholder-val="{{ false }}">
+  <div style="flex:1;overflow:auto;min-height:0;display:flex;flex-direction:column">
+    <div style="padding:20px 20px 16px">
+      <div style="font:var(--type-h3);font-family:var(--font-display);letter-spacing:var(--tracking-tight);color:var(--text-heading)">Log</div>
+      <div style="display:flex;gap:8px;margin-top:14px">
+        <button onClick="{{ setFilterAll }}" style="{{ fAllStyle }}">All</button>
+        <button onClick="{{ setFilterHandler }}" style="{{ fHandlerStyle }}">handler</button>
+        <button onClick="{{ setFilterErrors }}" style="{{ fErrStyle }}">Errors</button>
+      </div>
+    </div>
+    <div style="padding:0 20px 8px;font:var(--type-overline);letter-spacing:var(--tracking-wide);text-transform:uppercase;color:var(--text-muted);font-size:11px">Today</div>
+    <div style="flex:1;background:var(--surface-sunken);border-top:1px solid var(--border-subtle);padding:16px 20px;font-family:var(--font-mono);font-size:12.5px;line-height:2.1">
+      <sc-for list="{{ logEntries }}" as="e" hint-placeholder-count="8">
+        <div style="display:flex;gap:10px"><span style="color:var(--ink-4)">{{ e.t }}</span><span style="color:var(--ink-6);width:66px;flex-shrink:0">{{ e.id }}</span><span style="color: {{ e.color }}; flex:1">{{ e.msg }}</span></div>
+      </sc-for>
+    </div>
+  </div>
+  <div style="height:84px;flex-shrink:0;border-top:1px solid var(--border-subtle);background:var(--surface-page);display:flex;padding:8px 12px 24px">
+    <div onClick="{{ goFleet }}" style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;padding:6px 0;color:var(--ink-4);cursor:pointer"><x-import component-from-global-scope="LeeworksDesignSystem_b3e560.Icon" name="home" size="22" hint-size="22px,22px"></x-import><span style="font:var(--type-caption);font-weight:500">Fleet</span></div>
+    <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;padding:6px 0;color:var(--text-heading);cursor:pointer"><x-import component-from-global-scope="LeeworksDesignSystem_b3e560.Icon" name="file" size="22" strokeWidth="2" hint-size="22px,22px"></x-import><span style="font:var(--type-caption);font-weight:600">Log</span></div>
+    <div onClick="{{ goSettings }}" style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;padding:6px 0;color:var(--ink-4);cursor:pointer"><x-import component-from-global-scope="LeeworksDesignSystem_b3e560.Icon" name="settings" size="22" hint-size="22px,22px"></x-import><span style="font:var(--type-caption);font-weight:500">Settings</span></div>
+  </div>
+  </sc-if>
+
+  <!-- SETTINGS -->
+  <sc-if value="{{ isSettings }}" hint-placeholder-val="{{ false }}">
+  <div style="flex:1;overflow:auto;min-height:0;padding:8px 20px 20px">
+    <div style="font:var(--type-h3);font-family:var(--font-display);letter-spacing:var(--tracking-tight);color:var(--text-heading);margin:12px 0 20px">Settings</div>
+    <div style="font:var(--type-overline);letter-spacing:var(--tracking-wide);text-transform:uppercase;color:var(--text-muted);font-size:11px;margin-bottom:10px">Server</div>
+    <div style="background:var(--surface-page);border:1px solid var(--border-subtle);border-radius:10px;box-shadow:var(--shadow-card);margin-bottom:20px">
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:14px 16px;min-height:44px;border-bottom:1px solid var(--border-subtle)"><span style="font:var(--type-label);color:var(--text-heading)">Endpoint</span><span style="font-family:var(--font-mono);font-size:12.5px;color:var(--text-muted)">https://handler.wheaty.dev</span></div>
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:14px 16px;min-height:44px;border-bottom:1px solid var(--border-subtle)"><span style="font:var(--type-label);color:var(--text-heading)">API key</span><span style="font-family:var(--font-mono);font-size:12.5px;color:var(--text-muted)">hnd_••••••••4f2a</span></div>
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:14px 16px;min-height:44px"><span style="font:var(--type-label);color:var(--text-heading)">Status</span><span style="display:inline-flex;align-items:center;gap:6px;font-family:var(--font-mono);font-size:12.5px;color:var(--positive)"><span style="width:7px;height:7px;border-radius:4px;background:var(--positive)"></span>connected · 38ms</span></div>
+    </div>
+    <div style="font:var(--type-overline);letter-spacing:var(--tracking-wide);text-transform:uppercase;color:var(--text-muted);font-size:11px;margin-bottom:10px">Notifications</div>
+    <div style="background:var(--surface-page);border:1px solid var(--border-subtle);border-radius:10px;box-shadow:var(--shadow-card);margin-bottom:20px">
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 16px;min-height:44px;border-bottom:1px solid var(--border-subtle)"><div><div style="font:var(--type-label);color:var(--text-heading)">Waiting on input</div><div style="font:var(--type-caption);color:var(--text-muted);margin-top:2px">Push when an agent pauses</div></div><x-import component-from-global-scope="LeeworksDesignSystem_b3e560.Switch" checked="{{ swPushWait }}" onChange="{{ togglePushWait }}" hint-size="44px,24px"></x-import></div>
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 16px;min-height:44px"><div><div style="font:var(--type-label);color:var(--text-heading)">Failures</div><div style="font:var(--type-caption);color:var(--text-muted);margin-top:2px">Push when a checkmark fails</div></div><x-import component-from-global-scope="LeeworksDesignSystem_b3e560.Switch" checked="{{ swPushFail }}" onChange="{{ togglePushFail }}" hint-size="44px,24px"></x-import></div>
+    </div>
+    <x-import component-from-global-scope="LeeworksDesignSystem_b3e560.Button" variant="secondary" size="lg" style="width:100%" hint-size="100%,48px">Sign out</x-import>
+  </div>
+  <div style="height:84px;flex-shrink:0;border-top:1px solid var(--border-subtle);background:var(--surface-page);display:flex;padding:8px 12px 24px">
+    <div onClick="{{ goFleet }}" style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;padding:6px 0;color:var(--ink-4);cursor:pointer"><x-import component-from-global-scope="LeeworksDesignSystem_b3e560.Icon" name="home" size="22" hint-size="22px,22px"></x-import><span style="font:var(--type-caption);font-weight:500">Fleet</span></div>
+    <div onClick="{{ goLog }}" style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;padding:6px 0;color:var(--ink-4);cursor:pointer"><x-import component-from-global-scope="LeeworksDesignSystem_b3e560.Icon" name="file" size="22" hint-size="22px,22px"></x-import><span style="font:var(--type-caption);font-weight:500">Log</span></div>
+    <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;padding:6px 0;color:var(--text-heading);cursor:pointer"><x-import component-from-global-scope="LeeworksDesignSystem_b3e560.Icon" name="settings" size="22" strokeWidth="2" hint-size="22px,22px"></x-import><span style="font:var(--type-caption);font-weight:600">Settings</span></div>
+  </div>
+  </sc-if>
+
+  <div style="position:absolute;bottom:8px;left:50%;transform:translateX(-50%);width:134px;height:5px;border-radius:3px;background:var(--ink-9);opacity:.9"></div>
+</div></div>
+</div>
+<p class="dv-next">Answering agt-7a1d flips it to Running and clears it from the waiting list. Turn <a class="dv-tid" href="#t1">1</a> explorations kept below.</p>
+</section>
+<section class="dv-turn" id="t1">
+<div class="dv-thd"><a class="dv-tid" href="#t1">1</a><span class="dv-tname">Handler — iOS app, first pass</span></div>
+<p class="dv-note">Assumptions from the repo: entities are <b>projects → agents</b>; each agent carries a <b>checkmark</b> (current state) and writes to a <b>global log</b>; agents can be running, waiting on input, done, or failed. Tabs: Fleet / Log / Settings. Copy is terse, mono for ids &amp; data per Leeworks. Three directions for the main screen below, then one shared flow.</p>
+
+<div class="dv-row-label">Main screen — 3 directions</div>
+<div class="dv-opts">
+
+<!-- ============ 1a Attention-first ============ -->
+<div class="dv-opt" id="1a"><div class="dv-olabel"><a class="dv-oid" href="#1a">1a</a>Attention-first — what needs you, then everything else</div>
+<div data-theme="{{ theme }}" data-screen-label="1a Fleet attention-first" style="width:390px;height:844px;background:var(--surface-page);border-radius:48px;border:1px solid var(--border-default);box-shadow:var(--shadow-overlay);overflow:hidden;display:flex;flex-direction:column;font:var(--type-body);color:var(--text-body);position:relative;flex-shrink:0">
+  <div style="height:54px;flex-shrink:0;display:flex;align-items:flex-end;justify-content:space-between;padding:0 28px 6px;font:600 14px/1 var(--font-body);color:var(--text-heading)"><span>9:41</span><span style="display:inline-flex;gap:5px;align-items:center"><svg width="16" height="12" viewBox="0 0 16 12" fill="currentColor"><rect x="0" y="7" width="3" height="5" rx="1"></rect><rect x="4.5" y="5" width="3" height="7" rx="1"></rect><rect x="9" y="2.5" width="3" height="9.5" rx="1"></rect><rect x="13" y="0" width="3" height="12" rx="1" opacity=".35"></rect></svg><svg width="24" height="12" viewBox="0 0 24 12" fill="none"><rect x="0.5" y="0.5" width="20" height="11" rx="3" stroke="currentColor" opacity=".4"></rect><rect x="2" y="2" width="14" height="8" rx="1.5" fill="currentColor"></rect><path d="M22.5 4v4a2 2 0 0 0 0-4z" fill="currentColor" opacity=".4"></path></svg></span></div>
+  <div style="flex:1;overflow:auto;min-height:0;padding:8px 20px 20px">
+    <div style="display:flex;align-items:center;gap:12px;margin:12px 0 20px">
+      <div style="flex:1">
+        <div style="font:var(--type-h3);font-family:var(--font-display);letter-spacing:var(--tracking-tight);color:var(--text-heading)">Fleet</div>
+        <div style="font:var(--type-body-sm);color:var(--text-muted);margin-top:2px">12 agents · 3 waiting on you</div>
+      </div>
+      <x-import component-from-global-scope="LeeworksDesignSystem_b3e560.Button" size="sm" hint-size="64px,32px">New</x-import>
+    </div>
+    <div style="display:flex;gap:12px;margin-bottom:20px">
+      <div style="flex:1;background:var(--surface-page);border:1px solid var(--border-subtle);border-radius:10px;box-shadow:var(--shadow-card);padding:14px 16px"><div style="font:var(--type-caption);color:var(--text-muted)">Running</div><div style="font-family:var(--font-mono);font-size:24px;font-weight:600;color:var(--text-heading);margin-top:4px">6</div></div>
+      <div style="flex:1;background:var(--surface-page);border:1px solid var(--border-subtle);border-radius:10px;box-shadow:var(--shadow-card);padding:14px 16px"><div style="font:var(--type-caption);color:var(--text-muted)">Waiting</div><div style="font-family:var(--font-mono);font-size:24px;font-weight:600;color:var(--warning);margin-top:4px">3</div></div>
+      <div style="flex:1;background:var(--surface-page);border:1px solid var(--border-subtle);border-radius:10px;box-shadow:var(--shadow-card);padding:14px 16px"><div style="font:var(--type-caption);color:var(--text-muted)">Done</div><div style="font-family:var(--font-mono);font-size:24px;font-weight:600;color:var(--text-heading);margin-top:4px">42</div></div>
+    </div>
+    <div style="font:var(--type-overline);letter-spacing:var(--tracking-wide);text-transform:uppercase;color:var(--text-muted);font-size:11px;margin-bottom:10px">Waiting on you</div>
+    <div style="background:var(--surface-page);border:1px solid var(--border-subtle);border-radius:10px;box-shadow:var(--shadow-card);margin-bottom:20px">
+      <div style="padding:14px 16px;border-bottom:1px solid var(--border-subtle)">
+        <div style="display:flex;align-items:center;gap:8px"><sc-if value="{{ showIds }}" hint-placeholder-val="{{ true }}"><span style="font-family:var(--font-mono);font-size:12px;color:var(--text-muted)">agt-7a1d</span></sc-if><span style="font:var(--type-label);color:var(--text-heading);flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">handler · migrate state to sqlite</span></div>
+        <div style="display:flex;align-items:center;gap:10px;margin-top:8px"><span style="flex:1;font:var(--type-body-sm);color:var(--text-body);font-style:italic">"Drop the legacy JSON store, or keep it as a read fallback?"</span><x-import component-from-global-scope="LeeworksDesignSystem_b3e560.Button" size="sm" variant="secondary" hint-size="76px,32px">Answer</x-import></div>
+      </div>
+      <div style="padding:14px 16px;border-bottom:1px solid var(--border-subtle)">
+        <div style="display:flex;align-items:center;gap:8px"><sc-if value="{{ showIds }}" hint-placeholder-val="{{ true }}"><span style="font-family:var(--font-mono);font-size:12px;color:var(--text-muted)">agt-3e90</span></sc-if><span style="font:var(--type-label);color:var(--text-heading);flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">wheatsite · fix build on node 22</span></div>
+        <div style="display:flex;align-items:center;gap:10px;margin-top:8px"><span style="flex:1;font:var(--type-body-sm);color:var(--text-body);font-style:italic">"Pin node 20 in CI, or patch esbuild?"</span><x-import component-from-global-scope="LeeworksDesignSystem_b3e560.Button" size="sm" variant="secondary" hint-size="76px,32px">Answer</x-import></div>
+      </div>
+      <div style="padding:14px 16px">
+        <div style="display:flex;align-items:center;gap:8px"><sc-if value="{{ showIds }}" hint-placeholder-val="{{ true }}"><span style="font-family:var(--font-mono);font-size:12px;color:var(--text-muted)">agt-b241</span></sc-if><span style="font:var(--type-label);color:var(--text-heading);flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">api-gateway · add rate limiting</span></div>
+        <div style="display:flex;align-items:center;gap:10px;margin-top:8px"><span style="flex:1;font:var(--type-body-sm);color:var(--text-body);font-style:italic">"429 body: JSON or plain text?"</span><x-import component-from-global-scope="LeeworksDesignSystem_b3e560.Button" size="sm" variant="secondary" hint-size="76px,32px">Answer</x-import></div>
+      </div>
+    </div>
+    <div style="font:var(--type-overline);letter-spacing:var(--tracking-wide);text-transform:uppercase;color:var(--text-muted);font-size:11px;margin-bottom:10px">Recent checkmarks</div>
+    <div style="background:var(--surface-page);border:1px solid var(--border-subtle);border-radius:10px;box-shadow:var(--shadow-card)">
+      <div style="display:flex;align-items:center;gap:12px;padding:14px 16px;min-height:44px;border-bottom:1px solid var(--border-subtle)"><span style="width:8px;height:8px;border-radius:4px;background:var(--positive);flex-shrink:0"></span><div style="flex:1;min-width:0"><div style="font:var(--type-label);color:var(--text-heading);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">handler · add /agents endpoint</div><div style="font:var(--type-caption);color:var(--text-muted);margin-top:2px">done — tests pass · 14m ago</div></div><x-import component-from-global-scope="LeeworksDesignSystem_b3e560.Icon" name="chevronRight" size="16" style="color:var(--ink-4)" hint-size="16px,16px"></x-import></div>
+      <div style="display:flex;align-items:center;gap:12px;padding:14px 16px;min-height:44px;border-bottom:1px solid var(--border-subtle)"><span style="width:8px;height:8px;border-radius:4px;background:var(--danger);flex-shrink:0"></span><div style="flex:1;min-width:0"><div style="font:var(--type-label);color:var(--text-heading);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">wheatsite · refactor router</div><div style="font:var(--type-caption);color:var(--text-muted);margin-top:2px">failed — 2 tests · 1h ago</div></div><x-import component-from-global-scope="LeeworksDesignSystem_b3e560.Icon" name="chevronRight" size="16" style="color:var(--ink-4)" hint-size="16px,16px"></x-import></div>
+      <div style="display:flex;align-items:center;gap:12px;padding:14px 16px;min-height:44px"><span style="width:8px;height:8px;border-radius:4px;background:var(--positive);flex-shrink:0"></span><div style="flex:1;min-width:0"><div style="font:var(--type-label);color:var(--text-heading);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">dotfiles · port zsh config</div><div style="font:var(--type-caption);color:var(--text-muted);margin-top:2px">done — 12 turns · 3h ago</div></div><x-import component-from-global-scope="LeeworksDesignSystem_b3e560.Icon" name="chevronRight" size="16" style="color:var(--ink-4)" hint-size="16px,16px"></x-import></div>
+    </div>
+  </div>
+  <div style="height:84px;flex-shrink:0;border-top:1px solid var(--border-subtle);background:var(--surface-page);display:flex;padding:8px 12px 24px">
+    <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;padding:6px 0;color:var(--text-heading)"><x-import component-from-global-scope="LeeworksDesignSystem_b3e560.Icon" name="home" size="22" strokeWidth="2" hint-size="22px,22px"></x-import><span style="font:var(--type-caption);font-weight:600">Fleet</span></div>
+    <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;padding:6px 0;color:var(--ink-4)"><x-import component-from-global-scope="LeeworksDesignSystem_b3e560.Icon" name="file" size="22" hint-size="22px,22px"></x-import><span style="font:var(--type-caption);font-weight:500">Log</span></div>
+    <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;padding:6px 0;color:var(--ink-4)"><x-import component-from-global-scope="LeeworksDesignSystem_b3e560.Icon" name="settings" size="22" hint-size="22px,22px"></x-import><span style="font:var(--type-caption);font-weight:500">Settings</span></div>
+  </div>
+  <div style="position:absolute;bottom:8px;left:50%;transform:translateX(-50%);width:134px;height:5px;border-radius:3px;background:var(--ink-9);opacity:.9"></div>
+</div></div>
+
+<!-- ============ 1b Projects-grouped ============ -->
+<div class="dv-opt" id="1b"><div class="dv-olabel"><a class="dv-oid" href="#1b">1b</a>Project-grouped — fleet organized by repo</div>
+<div data-theme="{{ theme }}" data-screen-label="1b Fleet by project" style="width:390px;height:844px;background:var(--surface-page);border-radius:48px;border:1px solid var(--border-default);box-shadow:var(--shadow-overlay);overflow:hidden;display:flex;flex-direction:column;font:var(--type-body);color:var(--text-body);position:relative;flex-shrink:0">
+  <div style="height:54px;flex-shrink:0;display:flex;align-items:flex-end;justify-content:space-between;padding:0 28px 6px;font:600 14px/1 var(--font-body);color:var(--text-heading)"><span>9:41</span><span style="display:inline-flex;gap:5px;align-items:center"><svg width="16" height="12" viewBox="0 0 16 12" fill="currentColor"><rect x="0" y="7" width="3" height="5" rx="1"></rect><rect x="4.5" y="5" width="3" height="7" rx="1"></rect><rect x="9" y="2.5" width="3" height="9.5" rx="1"></rect><rect x="13" y="0" width="3" height="12" rx="1" opacity=".35"></rect></svg><svg width="24" height="12" viewBox="0 0 24 12" fill="none"><rect x="0.5" y="0.5" width="20" height="11" rx="3" stroke="currentColor" opacity=".4"></rect><rect x="2" y="2" width="14" height="8" rx="1.5" fill="currentColor"></rect><path d="M22.5 4v4a2 2 0 0 0 0-4z" fill="currentColor" opacity=".4"></path></svg></span></div>
+  <div style="flex:1;overflow:auto;min-height:0;padding:8px 20px 20px">
+    <div style="display:flex;align-items:center;gap:12px;margin:12px 0 16px">
+      <div style="flex:1">
+        <div style="font:var(--type-h3);font-family:var(--font-display);letter-spacing:var(--tracking-tight);color:var(--text-heading)">Projects</div>
+        <div style="font:var(--type-body-sm);color:var(--text-muted);margin-top:2px">4 projects · 12 agents</div>
+      </div>
+      <x-import component-from-global-scope="LeeworksDesignSystem_b3e560.Button" size="sm" hint-size="64px,32px">New</x-import>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:12px">
+      <div style="background:var(--surface-page);border:1px solid var(--border-subtle);border-radius:10px;box-shadow:var(--shadow-card)">
+        <div style="display:flex;align-items:center;gap:10px;padding:14px 16px;border-bottom:1px solid var(--border-subtle)"><x-import component-from-global-scope="LeeworksDesignSystem_b3e560.Icon" name="folder" size="16" style="color:var(--ink-5)" hint-size="16px,16px"></x-import><span style="font:var(--type-label);font-weight:600;color:var(--text-heading);flex:1">handler</span><span style="font-family:var(--font-mono);font-size:12px;color:var(--text-muted)">3 agents</span><x-import component-from-global-scope="LeeworksDesignSystem_b3e560.Icon" name="chevronRight" size="16" style="color:var(--ink-4)" hint-size="16px,16px"></x-import></div>
+        <div style="display:flex;align-items:center;gap:10px;padding:12px 16px;min-height:44px;border-bottom:1px solid var(--border-subtle)"><span style="width:8px;height:8px;border-radius:4px;background:var(--warning);flex-shrink:0"></span><div style="flex:1;min-width:0"><div style="font:var(--type-label);color:var(--text-heading);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">migrate state to sqlite</div><div style="font:var(--type-caption);color:var(--text-muted);margin-top:2px">waiting on input · 2m</div></div><x-import component-from-global-scope="LeeworksDesignSystem_b3e560.Badge" tone="warning" hint-size="auto,22px">Waiting</x-import></div>
+        <div style="display:flex;align-items:center;gap:10px;padding:12px 16px;min-height:44px;border-bottom:1px solid var(--border-subtle)"><span style="width:8px;height:8px;border-radius:4px;background:var(--positive);flex-shrink:0;animation:lwPulse 2s infinite"></span><div style="flex:1;min-width:0"><div style="font:var(--type-label);color:var(--text-heading);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">write API docs</div><div style="font:var(--type-caption);color:var(--text-muted);margin-top:2px">running · turn 21</div></div><x-import component-from-global-scope="LeeworksDesignSystem_b3e560.Badge" tone="positive" hint-size="auto,22px">Running</x-import></div>
+        <div style="display:flex;align-items:center;gap:10px;padding:12px 16px;min-height:44px"><span style="width:8px;height:8px;border-radius:4px;background:var(--ink-4);flex-shrink:0"></span><div style="flex:1;min-width:0"><div style="font:var(--type-label);color:var(--text-heading);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">add /agents endpoint</div><div style="font:var(--type-caption);color:var(--text-muted);margin-top:2px">done · 14m ago</div></div><x-import component-from-global-scope="LeeworksDesignSystem_b3e560.Badge" tone="neutral" hint-size="auto,22px">Done</x-import></div>
+      </div>
+      <div style="background:var(--surface-page);border:1px solid var(--border-subtle);border-radius:10px;box-shadow:var(--shadow-card)">
+        <div style="display:flex;align-items:center;gap:10px;padding:14px 16px;border-bottom:1px solid var(--border-subtle)"><x-import component-from-global-scope="LeeworksDesignSystem_b3e560.Icon" name="folder" size="16" style="color:var(--ink-5)" hint-size="16px,16px"></x-import><span style="font:var(--type-label);font-weight:600;color:var(--text-heading);flex:1">wheatsite</span><span style="font-family:var(--font-mono);font-size:12px;color:var(--text-muted)">2 agents</span><x-import component-from-global-scope="LeeworksDesignSystem_b3e560.Icon" name="chevronRight" size="16" style="color:var(--ink-4)" hint-size="16px,16px"></x-import></div>
+        <div style="display:flex;align-items:center;gap:10px;padding:12px 16px;min-height:44px;border-bottom:1px solid var(--border-subtle)"><span style="width:8px;height:8px;border-radius:4px;background:var(--warning);flex-shrink:0"></span><div style="flex:1;min-width:0"><div style="font:var(--type-label);color:var(--text-heading);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">fix build on node 22</div><div style="font:var(--type-caption);color:var(--text-muted);margin-top:2px">waiting on input · 18m</div></div><x-import component-from-global-scope="LeeworksDesignSystem_b3e560.Badge" tone="warning" hint-size="auto,22px">Waiting</x-import></div>
+        <div style="display:flex;align-items:center;gap:10px;padding:12px 16px;min-height:44px"><span style="width:8px;height:8px;border-radius:4px;background:var(--danger);flex-shrink:0"></span><div style="flex:1;min-width:0"><div style="font:var(--type-label);color:var(--text-heading);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">refactor router</div><div style="font:var(--type-caption);color:var(--text-muted);margin-top:2px">failed — 2 tests · 1h</div></div><x-import component-from-global-scope="LeeworksDesignSystem_b3e560.Badge" tone="danger" hint-size="auto,22px">Failed</x-import></div>
+      </div>
+      <div style="background:var(--surface-page);border:1px solid var(--border-subtle);border-radius:10px;box-shadow:var(--shadow-card)">
+        <div style="display:flex;align-items:center;gap:10px;padding:14px 16px;border-bottom:1px solid var(--border-subtle)"><x-import component-from-global-scope="LeeworksDesignSystem_b3e560.Icon" name="folder" size="16" style="color:var(--ink-5)" hint-size="16px,16px"></x-import><span style="font:var(--type-label);font-weight:600;color:var(--text-heading);flex:1">dotfiles</span><span style="font-family:var(--font-mono);font-size:12px;color:var(--text-muted)">1 agent</span><x-import component-from-global-scope="LeeworksDesignSystem_b3e560.Icon" name="chevronRight" size="16" style="color:var(--ink-4)" hint-size="16px,16px"></x-import></div>
+        <div style="display:flex;align-items:center;gap:10px;padding:12px 16px;min-height:44px"><span style="width:8px;height:8px;border-radius:4px;background:var(--positive);flex-shrink:0;animation:lwPulse 2s infinite"></span><div style="flex:1;min-width:0"><div style="font:var(--type-label);color:var(--text-heading);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">port zsh config</div><div style="font:var(--type-caption);color:var(--text-muted);margin-top:2px">running · turn 6</div></div><x-import component-from-global-scope="LeeworksDesignSystem_b3e560.Badge" tone="positive" hint-size="auto,22px">Running</x-import></div>
+      </div>
+    </div>
+  </div>
+  <div style="height:84px;flex-shrink:0;border-top:1px solid var(--border-subtle);background:var(--surface-page);display:flex;padding:8px 12px 24px">
+    <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;padding:6px 0;color:var(--text-heading)"><x-import component-from-global-scope="LeeworksDesignSystem_b3e560.Icon" name="home" size="22" strokeWidth="2" hint-size="22px,22px"></x-import><span style="font:var(--type-caption);font-weight:600">Fleet</span></div>
+    <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;padding:6px 0;color:var(--ink-4)"><x-import component-from-global-scope="LeeworksDesignSystem_b3e560.Icon" name="file" size="22" hint-size="22px,22px"></x-import><span style="font:var(--type-caption);font-weight:500">Log</span></div>
+    <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;padding:6px 0;color:var(--ink-4)"><x-import component-from-global-scope="LeeworksDesignSystem_b3e560.Icon" name="settings" size="22" hint-size="22px,22px"></x-import><span style="font:var(--type-caption);font-weight:500">Settings</span></div>
+  </div>
+  <div style="position:absolute;bottom:8px;left:50%;transform:translateX(-50%);width:134px;height:5px;border-radius:3px;background:var(--ink-9);opacity:.9"></div>
+</div></div>
+
+<!-- ============ 1c Live-log-first ============ -->
+<div class="dv-opt" id="1c"><div class="dv-olabel"><a class="dv-oid" href="#1c">1c</a>Log-first — the fleet as a live terminal feed</div>
+<div data-theme="{{ theme }}" data-screen-label="1c Fleet live feed" style="width:390px;height:844px;background:var(--surface-page);border-radius:48px;border:1px solid var(--border-default);box-shadow:var(--shadow-overlay);overflow:hidden;display:flex;flex-direction:column;font:var(--type-body);color:var(--text-body);position:relative;flex-shrink:0">
+  <div style="height:54px;flex-shrink:0;display:flex;align-items:flex-end;justify-content:space-between;padding:0 28px 6px;font:600 14px/1 var(--font-body);color:var(--text-heading)"><span>9:41</span><span style="display:inline-flex;gap:5px;align-items:center"><svg width="16" height="12" viewBox="0 0 16 12" fill="currentColor"><rect x="0" y="7" width="3" height="5" rx="1"></rect><rect x="4.5" y="5" width="3" height="7" rx="1"></rect><rect x="9" y="2.5" width="3" height="9.5" rx="1"></rect><rect x="13" y="0" width="3" height="12" rx="1" opacity=".35"></rect></svg><svg width="24" height="12" viewBox="0 0 24 12" fill="none"><rect x="0.5" y="0.5" width="20" height="11" rx="3" stroke="currentColor" opacity=".4"></rect><rect x="2" y="2" width="14" height="8" rx="1.5" fill="currentColor"></rect><path d="M22.5 4v4a2 2 0 0 0 0-4z" fill="currentColor" opacity=".4"></path></svg></span></div>
+  <div style="flex:1;overflow:auto;min-height:0;display:flex;flex-direction:column">
+    <div style="padding:20px 20px 16px">
+      <div style="display:flex;align-items:center;gap:12px">
+        <div style="font:var(--type-h3);font-family:var(--font-display);letter-spacing:var(--tracking-tight);color:var(--text-heading);flex:1">handler</div>
+        <span style="display:inline-flex;align-items:center;gap:6px;font-family:var(--font-mono);font-size:12px;color:var(--positive)"><span style="width:7px;height:7px;border-radius:4px;background:var(--positive);animation:lwPulse 1.6s infinite"></span>live</span>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:14px">
+        <span style="display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border-radius:999px;border:1px solid var(--border-default);font-family:var(--font-mono);font-size:12px;color:var(--text-heading)"><span style="width:7px;height:7px;border-radius:4px;background:var(--positive)"></span>6 running</span>
+        <span style="display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border-radius:999px;border:1px solid var(--border-default);font-family:var(--font-mono);font-size:12px;color:var(--text-heading)"><span style="width:7px;height:7px;border-radius:4px;background:var(--warning)"></span>3 waiting</span>
+        <span style="display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border-radius:999px;border:1px solid var(--border-default);font-family:var(--font-mono);font-size:12px;color:var(--text-heading)"><span style="width:7px;height:7px;border-radius:4px;background:var(--ink-4)"></span>42 done</span>
+      </div>
+    </div>
+    <div style="flex:1;background:var(--surface-sunken);border-top:1px solid var(--border-subtle);padding:16px 20px;font-family:var(--font-mono);font-size:12.5px;line-height:2.1">
+      <div style="display:flex;gap:10px"><span style="color:var(--ink-4)">14:02:11</span><span style="color:var(--warning);flex:1">agt-7a1d paused — waiting for input</span></div>
+      <div style="display:flex;gap:10px"><span style="color:var(--ink-4)">13:58:40</span><span style="color:var(--text-body);flex:1">agt-9c77 checkmark updated</span></div>
+      <div style="display:flex;gap:10px"><span style="color:var(--ink-4)">13:51:02</span><span style="color:var(--positive);flex:1">agt-2d08 done — 34 turns, tests pass</span></div>
+      <div style="display:flex;gap:10px"><span style="color:var(--ink-4)">13:44:19</span><span style="color:var(--danger);flex:1">agt-e33a error — 2 tests failed</span></div>
+      <div style="display:flex;gap:10px"><span style="color:var(--ink-4)">13:39:55</span><span style="color:var(--text-body);flex:1">spawn agt-51f0 → dotfiles</span></div>
+      <div style="display:flex;gap:10px"><span style="color:var(--ink-4)">13:31:07</span><span style="color:var(--warning);flex:1">agt-b241 paused — waiting for input</span></div>
+      <div style="display:flex;gap:10px"><span style="color:var(--ink-4)">13:18:44</span><span style="color:var(--text-muted);flex:1">agt-9c77 tool: bash — cargo test</span></div>
+      <div style="display:flex;gap:10px"><span style="color:var(--ink-4)">13:02:30</span><span style="color:var(--positive);flex:1">agt-90bc done — 12 turns</span></div>
+      <div style="display:flex;gap:10px"><span style="color:var(--ink-4)">12:57:12</span><span style="color:var(--text-muted);flex:1">agt-51f0 tool: edit — .zshrc</span></div>
+      <div style="display:flex;gap:10px"><span style="color:var(--ink-4)">12:49:03</span><span style="color:var(--text-body);flex:1">agt-e33a checkmark updated</span></div>
+      <div style="display:flex;gap:10px"><span style="color:var(--ink-4)">12:40:38</span><span style="color:var(--text-body);flex:1">spawn agt-b241 → api-gateway</span></div>
+    </div>
+  </div>
+  <div style="height:84px;flex-shrink:0;border-top:1px solid var(--border-subtle);background:var(--surface-page);display:flex;padding:8px 12px 24px">
+    <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;padding:6px 0;color:var(--text-heading)"><x-import component-from-global-scope="LeeworksDesignSystem_b3e560.Icon" name="home" size="22" strokeWidth="2" hint-size="22px,22px"></x-import><span style="font:var(--type-caption);font-weight:600">Fleet</span></div>
+    <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;padding:6px 0;color:var(--ink-4)"><x-import component-from-global-scope="LeeworksDesignSystem_b3e560.Icon" name="file" size="22" hint-size="22px,22px"></x-import><span style="font:var(--type-caption);font-weight:500">Log</span></div>
+    <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;padding:6px 0;color:var(--ink-4)"><x-import component-from-global-scope="LeeworksDesignSystem_b3e560.Icon" name="settings" size="22" hint-size="22px,22px"></x-import><span style="font:var(--type-caption);font-weight:500">Settings</span></div>
+  </div>
+  <div style="position:absolute;bottom:8px;left:50%;transform:translateX(-50%);width:134px;height:5px;border-radius:3px;background:var(--ink-9);opacity:.9"></div>
+</div></div>
+</div>
+
+<div class="dv-row-label">The flow — agent detail → answer → spawn → global log</div>
+<div class="dv-opts">
+
+<!-- ============ 1d Agent detail ============ -->
+<div class="dv-opt" id="1d"><div class="dv-olabel"><a class="dv-oid" href="#1d">1d</a>Agent detail — checkmark + log (segmented control works)</div>
+<div data-theme="{{ theme }}" data-screen-label="1d Agent detail" style="width:390px;height:844px;background:var(--surface-page);border-radius:48px;border:1px solid var(--border-default);box-shadow:var(--shadow-overlay);overflow:hidden;display:flex;flex-direction:column;font:var(--type-body);color:var(--text-body);position:relative;flex-shrink:0">
+  <div style="height:54px;flex-shrink:0;display:flex;align-items:flex-end;justify-content:space-between;padding:0 28px 6px;font:600 14px/1 var(--font-body);color:var(--text-heading)"><span>9:41</span><span style="display:inline-flex;gap:5px;align-items:center"><svg width="16" height="12" viewBox="0 0 16 12" fill="currentColor"><rect x="0" y="7" width="3" height="5" rx="1"></rect><rect x="4.5" y="5" width="3" height="7" rx="1"></rect><rect x="9" y="2.5" width="3" height="9.5" rx="1"></rect><rect x="13" y="0" width="3" height="12" rx="1" opacity=".35"></rect></svg><svg width="24" height="12" viewBox="0 0 24 12" fill="none"><rect x="0.5" y="0.5" width="20" height="11" rx="3" stroke="currentColor" opacity=".4"></rect><rect x="2" y="2" width="14" height="8" rx="1.5" fill="currentColor"></rect><path d="M22.5 4v4a2 2 0 0 0 0-4z" fill="currentColor" opacity=".4"></path></svg></span></div>
+  <div style="flex:1;overflow:auto;min-height:0;padding:8px 20px 20px">
+    <div style="display:flex;align-items:center;gap:8px;margin:8px 0 16px">
+      <span style="display:inline-flex;width:32px;height:32px;align-items:center;justify-content:center;margin-left:-8px;color:var(--text-heading)"><x-import component-from-global-scope="LeeworksDesignSystem_b3e560.Icon" name="chevronRight" size="20" style="transform:rotate(180deg)" hint-size="20px,20px"></x-import></span>
+      <span style="font-family:var(--font-mono);font-size:13px;color:var(--text-muted);flex:1">agt-7a1d</span>
+      <x-import component-from-global-scope="LeeworksDesignSystem_b3e560.Badge" tone="warning" hint-size="auto,22px">Waiting</x-import>
+    </div>
+    <div style="font:var(--type-h3);font-family:var(--font-display);letter-spacing:var(--tracking-tight);color:var(--text-heading)">Migrate agent state to sqlite</div>
+    <div style="font:var(--type-body-sm);color:var(--text-muted);margin:4px 0 16px">handler · branch <span style="font-family:var(--font-mono)">agt/7a1d</span></div>
+    <div style="display:flex;background:var(--surface-sunken);border-radius:8px;padding:3px;margin-bottom:16px">
+      <button onClick="{{ showState }}" style="{{ segStateStyle }}">Checkmark</button>
+      <button onClick="{{ showLog }}" style="{{ segLogStyle }}">Log</button>
+    </div>
+    <sc-if value="{{ isState }}" hint-placeholder-val="{{ true }}">
+      <div style="background:var(--surface-sunken);border:1px solid var(--border-subtle);border-radius:10px;padding:16px">
+        <div style="font:var(--type-overline);letter-spacing:var(--tracking-wide);text-transform:uppercase;color:var(--text-muted);font-size:11px;margin-bottom:8px">Current state</div>
+        <div style="font-family:var(--font-mono);font-size:13px;line-height:1.7;color:var(--text-body)">Schema written, migrations pass. Blocked on the legacy JSON store — drop it or keep as read fallback? Holding before deleting store/json.rs.</div>
+        <div style="font:var(--type-caption);color:var(--text-muted);margin-top:10px">updated 2m ago</div>
+      </div>
+      <div style="margin-top:16px;background:var(--surface-page);border:1px solid var(--border-subtle);border-radius:10px;box-shadow:var(--shadow-card)">
+        <div style="display:flex;justify-content:space-between;padding:12px 16px;border-bottom:1px solid var(--border-subtle)"><span style="font:var(--type-body-sm);color:var(--text-muted)">Started</span><span style="font-family:var(--font-mono);font-size:13px;color:var(--text-heading)">41m ago</span></div>
+        <div style="display:flex;justify-content:space-between;padding:12px 16px;border-bottom:1px solid var(--border-subtle)"><span style="font:var(--type-body-sm);color:var(--text-muted)">Model</span><span style="font-family:var(--font-mono);font-size:13px;color:var(--text-heading)">claude-sonnet-4</span></div>
+        <div style="display:flex;justify-content:space-between;padding:12px 16px;border-bottom:1px solid var(--border-subtle)"><span style="font:var(--type-body-sm);color:var(--text-muted)">Turns</span><span style="font-family:var(--font-mono);font-size:13px;color:var(--text-heading)">21</span></div>
+        <div style="display:flex;justify-content:space-between;padding:12px 16px"><span style="font:var(--type-body-sm);color:var(--text-muted)">Tokens</span><span style="font-family:var(--font-mono);font-size:13px;color:var(--text-heading)">348k</span></div>
+      </div>
+    </sc-if>
+    <sc-if value="{{ isLog }}" hint-placeholder-val="{{ false }}">
+      <div style="background:var(--surface-sunken);border:1px solid var(--border-subtle);border-radius:10px;padding:16px;font-family:var(--font-mono);font-size:12.5px;line-height:2.1">
+        <div style="display:flex;gap:10px"><span style="color:var(--ink-4)">14:02</span><span style="color:var(--warning)">paused — waiting for input</span></div>
+        <div style="display:flex;gap:10px"><span style="color:var(--ink-4)">13:57</span><span style="color:var(--text-body)">checkmark updated</span></div>
+        <div style="display:flex;gap:10px"><span style="color:var(--ink-4)">13:52</span><span style="color:var(--text-muted)">tool: bash — sqlite3 .schema</span></div>
+        <div style="display:flex;gap:10px"><span style="color:var(--ink-4)">13:48</span><span style="color:var(--text-muted)">tool: edit — store/sqlite.rs</span></div>
+        <div style="display:flex;gap:10px"><span style="color:var(--ink-4)">13:40</span><span style="color:var(--text-muted)">tool: bash — cargo test store</span></div>
+        <div style="display:flex;gap:10px"><span style="color:var(--ink-4)">13:29</span><span style="color:var(--text-body)">checkmark updated</span></div>
+        <div style="display:flex;gap:10px"><span style="color:var(--ink-4)">13:21</span><span style="color:var(--text-muted)">tool: read — store/json.rs</span></div>
+      </div>
+    </sc-if>
+    <div style="display:flex;gap:10px;margin-top:20px">
+      <x-import component-from-global-scope="LeeworksDesignSystem_b3e560.Button" size="lg" style="flex:1" hint-size="100%,48px">Answer</x-import>
+      <x-import component-from-global-scope="LeeworksDesignSystem_b3e560.Button" size="lg" variant="secondary" hint-size="80px,48px">Pause</x-import>
+      <x-import component-from-global-scope="LeeworksDesignSystem_b3e560.Button" size="lg" variant="danger" hint-size="70px,48px">Kill</x-import>
+    </div>
+  </div>
+  <div style="height:34px;flex-shrink:0"></div>
+  <div style="position:absolute;bottom:8px;left:50%;transform:translateX(-50%);width:134px;height:5px;border-radius:3px;background:var(--ink-9);opacity:.9"></div>
+</div></div>
+
+<!-- ============ 1e Answer & resume ============ -->
+<div class="dv-opt" id="1e"><div class="dv-olabel"><a class="dv-oid" href="#1e">1e</a>Answer &amp; resume — quick replies are tappable</div>
+<div data-theme="{{ theme }}" data-screen-label="1e Answer and resume" style="width:390px;height:844px;background:var(--surface-page);border-radius:48px;border:1px solid var(--border-default);box-shadow:var(--shadow-overlay);overflow:hidden;display:flex;flex-direction:column;font:var(--type-body);color:var(--text-body);position:relative;flex-shrink:0">
+  <div style="height:54px;flex-shrink:0;display:flex;align-items:flex-end;justify-content:space-between;padding:0 28px 6px;font:600 14px/1 var(--font-body);color:var(--text-heading)"><span>9:41</span><span style="display:inline-flex;gap:5px;align-items:center"><svg width="16" height="12" viewBox="0 0 16 12" fill="currentColor"><rect x="0" y="7" width="3" height="5" rx="1"></rect><rect x="4.5" y="5" width="3" height="7" rx="1"></rect><rect x="9" y="2.5" width="3" height="9.5" rx="1"></rect><rect x="13" y="0" width="3" height="12" rx="1" opacity=".35"></rect></svg><svg width="24" height="12" viewBox="0 0 24 12" fill="none"><rect x="0.5" y="0.5" width="20" height="11" rx="3" stroke="currentColor" opacity=".4"></rect><rect x="2" y="2" width="14" height="8" rx="1.5" fill="currentColor"></rect><path d="M22.5 4v4a2 2 0 0 0 0-4z" fill="currentColor" opacity=".4"></path></svg></span></div>
+  <div style="flex:1;overflow:auto;min-height:0;padding:8px 20px 20px;display:flex;flex-direction:column">
+    <div style="display:flex;align-items:center;gap:8px;margin:8px 0 16px">
+      <span style="display:inline-flex;width:32px;height:32px;align-items:center;justify-content:center;margin-left:-8px;color:var(--text-heading)"><x-import component-from-global-scope="LeeworksDesignSystem_b3e560.Icon" name="chevronRight" size="20" style="transform:rotate(180deg)" hint-size="20px,20px"></x-import></span>
+      <span style="font-family:var(--font-mono);font-size:13px;color:var(--text-muted);flex:1">agt-7a1d</span>
+      <x-import component-from-global-scope="LeeworksDesignSystem_b3e560.Badge" tone="warning" hint-size="auto,22px">Waiting</x-import>
+    </div>
+    <div style="font:var(--type-h3);font-family:var(--font-display);letter-spacing:var(--tracking-tight);color:var(--text-heading);margin-bottom:16px">Agent needs input</div>
+    <div style="background:var(--surface-sunken);border:1px solid var(--border-subtle);border-radius:10px;padding:16px;margin-bottom:20px">
+      <div style="font:var(--type-overline);letter-spacing:var(--tracking-wide);text-transform:uppercase;color:var(--text-muted);font-size:11px;margin-bottom:8px">Question · 2m ago</div>
+      <div style="font-family:var(--font-mono);font-size:13px;line-height:1.7;color:var(--text-body)">Migrations pass on the new sqlite store. Should I drop the legacy JSON store entirely, or keep it as a read-only fallback for one release?</div>
+    </div>
+    <div style="font:var(--type-overline);letter-spacing:var(--tracking-wide);text-transform:uppercase;color:var(--text-muted);font-size:11px;margin-bottom:10px">Quick replies</div>
+    <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:20px">
+      <sc-for list="{{ quickReplies }}" as="qr" hint-placeholder-count="3">
+        <button onClick="{{ qr.pick }}" style="{{ qr.style }}">{{ qr.label }}</button>
+      </sc-for>
+    </div>
+    <div style="margin-top:auto;display:flex;flex-direction:column;gap:12px">
+      <x-import component-from-global-scope="LeeworksDesignSystem_b3e560.Input" placeholder="Or type a reply…" size="lg" hint-size="100%,48px"></x-import>
+      <x-import component-from-global-scope="LeeworksDesignSystem_b3e560.Button" size="lg" style="width:100%" hint-size="100%,48px">Send &amp; resume</x-import>
+    </div>
+  </div>
+  <div style="height:34px;flex-shrink:0"></div>
+  <div style="position:absolute;bottom:8px;left:50%;transform:translateX(-50%);width:134px;height:5px;border-radius:3px;background:var(--ink-9);opacity:.9"></div>
+</div></div>
+
+<!-- ============ 1f Spawn agent ============ -->
+<div class="dv-opt" id="1f"><div class="dv-olabel"><a class="dv-oid" href="#1f">1f</a>Spawn agent — toggles work</div>
+<div data-theme="{{ theme }}" data-screen-label="1f Spawn agent" style="width:390px;height:844px;background:var(--surface-page);border-radius:48px;border:1px solid var(--border-default);box-shadow:var(--shadow-overlay);overflow:hidden;display:flex;flex-direction:column;font:var(--type-body);color:var(--text-body);position:relative;flex-shrink:0">
+  <div style="height:54px;flex-shrink:0;display:flex;align-items:flex-end;justify-content:space-between;padding:0 28px 6px;font:600 14px/1 var(--font-body);color:var(--text-heading)"><span>9:41</span><span style="display:inline-flex;gap:5px;align-items:center"><svg width="16" height="12" viewBox="0 0 16 12" fill="currentColor"><rect x="0" y="7" width="3" height="5" rx="1"></rect><rect x="4.5" y="5" width="3" height="7" rx="1"></rect><rect x="9" y="2.5" width="3" height="9.5" rx="1"></rect><rect x="13" y="0" width="3" height="12" rx="1" opacity=".35"></rect></svg><svg width="24" height="12" viewBox="0 0 24 12" fill="none"><rect x="0.5" y="0.5" width="20" height="11" rx="3" stroke="currentColor" opacity=".4"></rect><rect x="2" y="2" width="14" height="8" rx="1.5" fill="currentColor"></rect><path d="M22.5 4v4a2 2 0 0 0 0-4z" fill="currentColor" opacity=".4"></path></svg></span></div>
+  <div style="flex:1;overflow:auto;min-height:0;padding:8px 20px 20px;display:flex;flex-direction:column">
+    <div style="display:flex;align-items:center;gap:8px;margin:8px 0 16px">
+      <span style="display:inline-flex;width:32px;height:32px;align-items:center;justify-content:center;margin-left:-8px;color:var(--text-heading)"><x-import component-from-global-scope="LeeworksDesignSystem_b3e560.Icon" name="x" size="20" hint-size="20px,20px"></x-import></span>
+      <span style="font:var(--type-label);font-weight:600;color:var(--text-heading);flex:1">New agent</span>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:16px">
+      <x-import component-from-global-scope="LeeworksDesignSystem_b3e560.Select" label="Project" options="{{ projectOpts }}" value="handler" size="lg" hint-size="100%,72px"></x-import>
+      <div>
+        <div style="font:var(--type-label);color:var(--text-heading);margin-bottom:6px">Task</div>
+        <textarea placeholder="What should this agent do?" style="width:100%;box-sizing:border-box;height:120px;resize:none;padding:12px 14px;border:1px solid var(--border-default);border-radius:8px;background:var(--surface-page);font:var(--type-body);font-family:var(--font-body);color:var(--text-body);outline:none">Add a /agents/:id/resume endpoint. Follow the existing route patterns. Update the OpenAPI spec.</textarea>
+        <div style="font:var(--type-caption);color:var(--text-muted);margin-top:6px">Runs isolated on a fresh branch.</div>
+      </div>
+      <div style="background:var(--surface-page);border:1px solid var(--border-subtle);border-radius:10px;box-shadow:var(--shadow-card)">
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 16px;min-height:44px;border-bottom:1px solid var(--border-subtle)"><div><div style="font:var(--type-label);color:var(--text-heading)">Auto-approve edits</div><div style="font:var(--type-caption);color:var(--text-muted);margin-top:2px">Skip file-edit confirmations</div></div><x-import component-from-global-scope="LeeworksDesignSystem_b3e560.Switch" checked="{{ swEdits }}" onChange="{{ toggleEdits }}" hint-size="44px,24px"></x-import></div>
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 16px;min-height:44px"><div><div style="font:var(--type-label);color:var(--text-heading)">Run tests on done</div><div style="font:var(--type-caption);color:var(--text-muted);margin-top:2px">Checkmark fails if tests fail</div></div><x-import component-from-global-scope="LeeworksDesignSystem_b3e560.Switch" checked="{{ swTests }}" onChange="{{ toggleTests }}" hint-size="44px,24px"></x-import></div>
+      </div>
+    </div>
+    <div style="margin-top:auto">
+      <x-import component-from-global-scope="LeeworksDesignSystem_b3e560.Button" size="lg" style="width:100%" hint-size="100%,48px">Spawn agent</x-import>
+    </div>
+  </div>
+  <div style="height:34px;flex-shrink:0"></div>
+  <div style="position:absolute;bottom:8px;left:50%;transform:translateX(-50%);width:134px;height:5px;border-radius:3px;background:var(--ink-9);opacity:.9"></div>
+</div></div>
+
+<!-- ============ 1g Global log ============ -->
+<div class="dv-opt" id="1g"><div class="dv-olabel"><a class="dv-oid" href="#1g">1g</a>Global log — filters work</div>
+<div data-theme="{{ theme }}" data-screen-label="1g Global log" style="width:390px;height:844px;background:var(--surface-page);border-radius:48px;border:1px solid var(--border-default);box-shadow:var(--shadow-overlay);overflow:hidden;display:flex;flex-direction:column;font:var(--type-body);color:var(--text-body);position:relative;flex-shrink:0">
+  <div style="height:54px;flex-shrink:0;display:flex;align-items:flex-end;justify-content:space-between;padding:0 28px 6px;font:600 14px/1 var(--font-body);color:var(--text-heading)"><span>9:41</span><span style="display:inline-flex;gap:5px;align-items:center"><svg width="16" height="12" viewBox="0 0 16 12" fill="currentColor"><rect x="0" y="7" width="3" height="5" rx="1"></rect><rect x="4.5" y="5" width="3" height="7" rx="1"></rect><rect x="9" y="2.5" width="3" height="9.5" rx="1"></rect><rect x="13" y="0" width="3" height="12" rx="1" opacity=".35"></rect></svg><svg width="24" height="12" viewBox="0 0 24 12" fill="none"><rect x="0.5" y="0.5" width="20" height="11" rx="3" stroke="currentColor" opacity=".4"></rect><rect x="2" y="2" width="14" height="8" rx="1.5" fill="currentColor"></rect><path d="M22.5 4v4a2 2 0 0 0 0-4z" fill="currentColor" opacity=".4"></path></svg></span></div>
+  <div style="flex:1;overflow:auto;min-height:0;display:flex;flex-direction:column">
+    <div style="padding:20px 20px 16px">
+      <div style="font:var(--type-h3);font-family:var(--font-display);letter-spacing:var(--tracking-tight);color:var(--text-heading)">Log</div>
+      <div style="display:flex;gap:8px;margin-top:14px">
+        <button onClick="{{ setFilterAll }}" style="{{ fAllStyle }}">All</button>
+        <button onClick="{{ setFilterHandler }}" style="{{ fHandlerStyle }}">handler</button>
+        <button onClick="{{ setFilterErrors }}" style="{{ fErrStyle }}">Errors</button>
+      </div>
+    </div>
+    <div style="padding:0 20px 8px;font:var(--type-overline);letter-spacing:var(--tracking-wide);text-transform:uppercase;color:var(--text-muted);font-size:11px">Today</div>
+    <div style="flex:1;background:var(--surface-sunken);border-top:1px solid var(--border-subtle);padding:16px 20px;font-family:var(--font-mono);font-size:12.5px;line-height:2.1">
+      <sc-for list="{{ logEntries }}" as="e" hint-placeholder-count="8">
+        <div style="display:flex;gap:10px"><span style="color:var(--ink-4)">{{ e.t }}</span><span style="color:var(--ink-6);width:66px;flex-shrink:0">{{ e.id }}</span><span style="color: {{ e.color }}; flex:1">{{ e.msg }}</span></div>
+      </sc-for>
+    </div>
+  </div>
+  <div style="height:84px;flex-shrink:0;border-top:1px solid var(--border-subtle);background:var(--surface-page);display:flex;padding:8px 12px 24px">
+    <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;padding:6px 0;color:var(--ink-4)"><x-import component-from-global-scope="LeeworksDesignSystem_b3e560.Icon" name="home" size="22" hint-size="22px,22px"></x-import><span style="font:var(--type-caption);font-weight:500">Fleet</span></div>
+    <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;padding:6px 0;color:var(--text-heading)"><x-import component-from-global-scope="LeeworksDesignSystem_b3e560.Icon" name="file" size="22" strokeWidth="2" hint-size="22px,22px"></x-import><span style="font:var(--type-caption);font-weight:600">Log</span></div>
+    <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;padding:6px 0;color:var(--ink-4)"><x-import component-from-global-scope="LeeworksDesignSystem_b3e560.Icon" name="settings" size="22" hint-size="22px,22px"></x-import><span style="font:var(--type-caption);font-weight:500">Settings</span></div>
+  </div>
+  <div style="position:absolute;bottom:8px;left:50%;transform:translateX(-50%);width:134px;height:5px;border-radius:3px;background:var(--ink-9);opacity:.9"></div>
+</div></div>
+</div>
+
+<p class="dv-next">Try next: "commit to <a class="dv-oid" href="#1a">1a</a> and wire the screens into one tappable prototype" · "merge <a class="dv-oid" href="#1b">1b</a>'s project cards into <a class="dv-oid" href="#1a">1a</a>" · "show a dark-mode pass" (there's a Dark mode tweak too)</p>
+</section>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;darkMode&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:false,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;Theme&quot;},&quot;showAgentIds&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;Content&quot;}}">
+class Component extends DCLogic {
+  state = { detailTab: "state", quickPick: null, swEdits: false, swTests: true, logFilter: "all", screen: "fleet", answered: false, swPushWait: true, swPushFail: true };
+  renderVals() {
+    const s = this.state;
+    const seg = (on) => ({ flex: 1, border: "none", cursor: "pointer", padding: "8px 0", borderRadius: "6px", font: "600 13px/1 var(--font-body)", background: on ? "var(--surface-page)" : "transparent", color: on ? "var(--text-heading)" : "var(--text-muted)", boxShadow: on ? "var(--shadow-card)" : "none", transition: "all 140ms ease-out" });
+    const chip = (on) => ({ display: "inline-flex", alignItems: "center", padding: "8px 14px", borderRadius: "999px", cursor: "pointer", font: "500 13px/1 var(--font-body)", border: on ? "1px solid var(--border-strong)" : "1px solid var(--border-default)", background: on ? "var(--interactive)" : "var(--surface-page)", color: on ? "#fff" : "var(--text-body)", transition: "all 140ms ease-out" });
+    const allLog = [
+      { t: "14:02:11", id: "agt-7a1d", p: "handler", msg: "paused — waiting for input", color: "var(--warning)", err: false },
+      { t: "13:58:40", id: "agt-9c77", p: "handler", msg: "checkmark updated", color: "var(--text-body)", err: false },
+      { t: "13:51:02", id: "agt-2d08", p: "handler", msg: "done — 34 turns, tests pass", color: "var(--positive)", err: false },
+      { t: "13:44:19", id: "agt-e33a", p: "wheatsite", msg: "error — 2 tests failed", color: "var(--danger)", err: true },
+      { t: "13:39:55", id: "agt-51f0", p: "dotfiles", msg: "spawned → dotfiles", color: "var(--text-body)", err: false },
+      { t: "13:31:07", id: "agt-b241", p: "api-gateway", msg: "paused — waiting for input", color: "var(--warning)", err: false },
+      { t: "13:18:44", id: "agt-9c77", p: "handler", msg: "tool: bash — cargo test", color: "var(--text-muted)", err: false },
+      { t: "13:02:30", id: "agt-90bc", p: "dotfiles", msg: "done — 12 turns", color: "var(--positive)", err: false },
+      { t: "12:57:12", id: "agt-51f0", p: "dotfiles", msg: "tool: edit — .zshrc", color: "var(--text-muted)", err: false },
+      { t: "12:49:03", id: "agt-e33a", p: "wheatsite", msg: "checkmark updated", color: "var(--text-body)", err: false },
+      { t: "12:40:38", id: "agt-b241", p: "api-gateway", msg: "spawned → api-gateway", color: "var(--text-body)", err: false }
+    ];
+    const logEntries = allLog.filter(e => s.logFilter === "all" ? true : s.logFilter === "errors" ? e.err : e.p === "handler");
+    const qrLabels = ["Drop it", "Keep as fallback", "Ask me later"];
+    const quickReplies = qrLabels.map((label, i) => ({ label, pick: () => this.setState({ quickPick: i }), style: chip(s.quickPick === i) }));
+    const go = (screen) => () => this.setState({ screen });
+    return {
+      theme: this.props.darkMode ? "dark" : "light",
+      isFleet: s.screen === "fleet", isDetail: s.screen === "detail", isAnswer: s.screen === "answer", isSpawn: s.screen === "spawn", isLogScreen: s.screen === "log", isSettings: s.screen === "settings",
+      goFleet: go("fleet"), goDetail: go("detail"), goAnswer: go("answer"), goSpawn: go("spawn"), goLog: go("log"), goSettings: go("settings"),
+      sendResume: () => this.setState({ answered: true, screen: "detail", detailTab: "state" }),
+      spawnGo: () => this.setState({ screen: "fleet" }),
+      notAnswered: !s.answered,
+      agentTone: s.answered ? "positive" : "warning",
+      agentStatus: s.answered ? "Running" : "Waiting",
+      agentStateText: s.answered ? "Answer received: keep the JSON store as a read-only fallback for one release. Deprecating writes now; removal ticket filed for next cycle." : "Schema written, migrations pass. Blocked on the legacy JSON store — drop it or keep as read fallback? Holding before deleting store/json.rs.",
+      swPushWait: s.swPushWait, swPushFail: s.swPushFail,
+      togglePushWait: (v) => this.setState({ swPushWait: !!v }), togglePushFail: (v) => this.setState({ swPushFail: !!v }),
+      showIds: this.props.showAgentIds ?? true,
+      isState: s.detailTab === "state", isLog: s.detailTab === "log",
+      showState: () => this.setState({ detailTab: "state" }), showLog: () => this.setState({ detailTab: "log" }),
+      segStateStyle: seg(s.detailTab === "state"), segLogStyle: seg(s.detailTab === "log"),
+      quickReplies,
+      swEdits: s.swEdits, swTests: s.swTests,
+      toggleEdits: (v) => this.setState({ swEdits: !!v }), toggleTests: (v) => this.setState({ swTests: !!v }),
+      projectOpts: ["handler", "wheatsite", "dotfiles", "api-gateway"],
+      setFilterAll: () => this.setState({ logFilter: "all" }), setFilterHandler: () => this.setState({ logFilter: "handler" }), setFilterErrors: () => this.setState({ logFilter: "errors" }),
+      fAllStyle: chip(s.logFilter === "all"), fHandlerStyle: chip(s.logFilter === "handler"), fErrStyle: chip(s.logFilter === "errors"),
+      logEntries
+    };
+  }
+}
+</script>
+</body>
+</html>
