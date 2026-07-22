@@ -14,6 +14,7 @@ from sqlalchemy import (
     Column,
     ForeignKey,
     Index,
+    LargeBinary,
     MetaData,
     String,
     Table,
@@ -27,7 +28,9 @@ metadata = MetaData()
 
 # Status vocabularies kept as free TEXT (README uses plain strings, not PG enums, so
 # both dialects match). CheckConstraints make the allowed sets explicit and portable.
-AGENT_STATUSES = ("working", "paused_for_input", "blocked", "done")
+# ``crashed`` is reserved for the reaper: it marks an agent whose owning worker went
+# silent mid-run — never a normal exit, which reconciles to done/blocked instead.
+AGENT_STATUSES = ("working", "paused_for_input", "blocked", "done", "crashed")
 GATE_STATUSES = ("pass", "fail", "unknown")
 CI_STATUSES = ("not_applicable", "pending", "pass", "fail")
 VISIBILITIES = ("project", "global")
@@ -55,6 +58,10 @@ COMMAND_TYPES = (
 COMMAND_STATUSES = ("queued", "running", "done", "failed")
 # Forge families a host can belong to (drives per-host token env conventions).
 FORGE_TYPES = ("github", "gitlab", "gitea", "forgejo", "bitbucket")
+# One agent_runs row per headless ``claude -p`` invocation (spawn or resume).
+# ``canceled`` = an operator kill; ``crashed`` = the reaper found the owning worker dead.
+RUN_KINDS = ("spawn", "resume")
+RUN_STATUSES = ("running", "completed", "failed", "crashed", "canceled")
 
 
 def _in(column: str, values: tuple[str, ...]) -> str:
@@ -87,8 +94,14 @@ agents = Table(
     # A periodic snapshot of the agent's live tmux pane tail (last ~40 lines), refreshed by
     # the control worker's poll loop. The tmux socket lives only in the control container,
     # so this DB column is how the API/UI see what a running — or wedged — agent is doing.
+    # Headless runs reuse it, derived from the latest assistant text instead of a pane tail.
     Column("last_output", String),
     Column("output_at", PortableTimestamp),
+    # Headless runner (null on legacy tmux agents — the rollout discriminator): the claude
+    # session UUID pre-assigned at spawn (stable across resumes), and the worker currently
+    # (or last) supervising a run for this agent.
+    Column("session_id", String),
+    Column("worker_id", String),
     Column("created_at", PortableTimestamp, nullable=False, server_default=func.now()),
     UniqueConstraint("project_id", "name", name="uq_agents_project_name"),
     CheckConstraint(_in("status", AGENT_STATUSES), name="ck_agents_status"),
@@ -192,6 +205,9 @@ commands = Table(
     Column("error", String),
     Column("requested_by", String),  # actor label, e.g. "operator:web"
     Column("claimed_by", String),  # worker id that claimed the command
+    # Pins a command to one worker (null = any). login_submit must run on the worker that
+    # ran login_start — the live tmux login session exists only in that container.
+    Column("target_worker", String),
     Column("created_at", PortableTimestamp, nullable=False, server_default=func.now()),
     Column("claimed_at", PortableTimestamp),
     Column("finished_at", PortableTimestamp),
@@ -225,6 +241,79 @@ forge_hosts = Table(
     Column("ssh_private_key_enc", String),  # encrypted private key; never returned by the API
     Column("created_at", PortableTimestamp, nullable=False, server_default=func.now()),
     CheckConstraint(_in("forge_type", FORGE_TYPES), name="ck_forge_hosts_type"),
+)
+
+# Worker registry + heartbeat (headless runner). Each worker container upserts its row
+# every loop pass; the reaper marks a worker's running runs (and their agents) ``crashed``
+# when ``heartbeat_at`` goes stale — the positive-liveness replacement for tmux scraping.
+workers = Table(
+    "workers",
+    metadata,
+    Column("id", String, primary_key=True),  # "worker-<host>-<pid>-<rand>"
+    Column("hostname", String),
+    Column("pid", BigInteger),
+    Column("max_runs", BigInteger),
+    Column("active_runs", BigInteger),
+    Column("started_at", PortableTimestamp, nullable=False, server_default=func.now()),
+    Column("heartbeat_at", PortableTimestamp, nullable=False, server_default=func.now()),
+)
+
+# One row per headless ``claude -p`` invocation. The spawn/resume *command* finishes at
+# launch (fire-and-forget, matching tmux semantics); the run row is what tracks the
+# process's actual life — status, exit code, and the final result event.
+agent_runs = Table(
+    "agent_runs",
+    metadata,
+    Column("id", PortableBigInt, primary_key=True, autoincrement=True),
+    Column("agent_id", BigInteger, ForeignKey("agents.id"), nullable=False),
+    Column("session_id", String, nullable=False),
+    Column("worker_id", String, nullable=False),
+    Column("kind", String, nullable=False),
+    Column("status", String, nullable=False, server_default="running"),
+    # Cross-worker kill: any worker/API sets this; the owning supervisor polls it and
+    # SIGTERMs its own child — nobody signals a process they don't own.
+    Column("cancel_requested", Boolean, nullable=False, server_default="0"),
+    Column("exit_code", BigInteger),
+    Column("result", PortableJSON),  # the stream's result event (cost/turns/is_error/text)
+    Column("started_at", PortableTimestamp, nullable=False, server_default=func.now()),
+    Column("finished_at", PortableTimestamp),
+    CheckConstraint(_in("kind", RUN_KINDS), name="ck_agent_runs_kind"),
+    CheckConstraint(_in("status", RUN_STATUSES), name="ck_agent_runs_status"),
+    Index("ix_agent_runs_status_worker", "status", "worker_id"),
+)
+
+# The persisted event stream — one row per stream-json stdout line of a run, in order.
+# This is what the UI's log/event panel reads; ``type`` mirrors the stream's top-level
+# type (system/assistant/user/result), plus ``hook`` (--include-hook-events), ``worker``
+# (runner-generated notices: crash marks, archive failures, fallback resumes) and ``raw``
+# (an unparseable line, stored verbatim — the parser never drops data).
+agent_events = Table(
+    "agent_events",
+    metadata,
+    Column("id", PortableBigInt, primary_key=True, autoincrement=True),
+    Column("agent_id", BigInteger, ForeignKey("agents.id"), nullable=False),
+    Column("run_id", BigInteger, ForeignKey("agent_runs.id"), nullable=False),
+    Column("session_id", String),
+    Column("seq", BigInteger, nullable=False),  # per-run stdout line counter
+    Column("type", String, nullable=False),
+    Column("payload", PortableJSON),
+    Column("created_at", PortableTimestamp, nullable=False, server_default=func.now()),
+    Index("ix_agent_events_agent_id", "agent_id", "id"),
+)
+
+# Latest claude session archive per agent — the tar.gz of ``<sid>.jsonl`` + its sidecar
+# dir from ``~/.claude/projects/<munged-cwd>/``. Uploaded by the supervising worker
+# (periodically and at run end) and materialized by whichever worker claims the next
+# resume, so ``--resume`` works cross-worker with no shared filesystem (README: DB is the
+# single source of truth; observed sizes are KBs-to-low-MBs).
+session_archives = Table(
+    "session_archives",
+    metadata,
+    Column("agent_id", BigInteger, ForeignKey("agents.id"), primary_key=True),
+    Column("session_id", String, nullable=False),
+    Column("archive", LargeBinary, nullable=False),
+    Column("bytes", BigInteger, nullable=False),
+    Column("updated_at", PortableTimestamp, nullable=False, server_default=func.now()),
 )
 
 # Recurring agent spawns. The worker checks for due rows on every loop pass and enqueues
