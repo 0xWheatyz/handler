@@ -298,6 +298,63 @@ def _run_one(command: dict) -> None:
             repo.finish_command(conn, command["id"], "failed", error=str(exc))
 
 
+def heartbeat(worker_id: str) -> None:
+    """Refresh this worker's registry row — the reaper's proof-of-life."""
+    with connection() as conn:
+        active = len(repo.list_running_runs(conn, worker_id=worker_id))
+        repo.upsert_worker_heartbeat(
+            conn,
+            worker_id,
+            hostname=socket.gethostname(),
+            pid=os.getpid(),
+            max_runs=get_settings().max_concurrent_runs,
+            active_runs=active,
+        )
+
+
+def reap_dead_workers(now: datetime | None = None) -> int:
+    """Settle the record for workers that stopped heartbeating: their ``running`` runs
+    become ``crashed``, and agents those runs left in ``working`` become ``crashed`` too.
+
+    Any surviving worker may reap any dead one — ``finish_run``'s still-running guard
+    makes concurrent reapers idempotent. Deliberately NO auto-requeue: a half-done run
+    may have already pushed commits, so re-running it isn't safe to assume; the operator
+    sees the crashed badge (with the frozen last_output as evidence) and resumes
+    explicitly. Agents in ``paused_for_input``/``blocked`` keep their status — those are
+    still accurate descriptions of what the agent needs. Returns runs reaped.
+    """
+    now = now or datetime.now(UTC)
+    cutoff = now - timedelta(seconds=get_settings().worker_stale_after)
+    reaped = 0
+    with connection() as conn:
+        stale = repo.list_stale_workers(conn, cutoff)
+    for dead in stale:
+        with connection() as conn:
+            for run in repo.list_running_runs(conn, worker_id=dead["id"]):
+                if not repo.finish_run(conn, run["id"], "crashed"):
+                    continue  # another reaper won the race
+                agent = repo.get_agent_by_id(conn, run["agent_id"])
+                if agent is not None and agent["status"] == "working":
+                    repo.set_agent_status(conn, agent["id"], "crashed")
+                repo.insert_agent_event(
+                    conn,
+                    run["agent_id"],
+                    run["id"],
+                    seq=0,  # runner-generated, outside the supervisor's line counter
+                    type="worker",
+                    payload={
+                        "notice": "worker died mid-run; run marked crashed",
+                        "worker_id": dead["id"],
+                    },
+                    session_id=run["session_id"],
+                )
+                reaped += 1
+            # Row served its purpose; dropping it keeps the registry to live workers
+            # (and stops every future pass re-scanning long-dead ids).
+            repo.delete_worker(conn, dead["id"])
+    return reaped
+
+
 def fire_due_schedules(now: datetime | None = None) -> int:
     """Enqueue a spawn command for every schedule whose ``next_run_at`` has passed.
 
@@ -419,10 +476,11 @@ def run(
     ci_interval: float = 30.0,
     capture_interval: float = 2.0,
     credsync_interval: float = 30.0,
+    reap_interval: float = 15.0,
     iterations: int | None = None,
 ) -> None:
     """The control-container main loop: drain the command queue, snapshot live agent
-    output, sync claude credentials, and sweep CI periodically.
+    output, sync claude credentials, heartbeat + reap dead workers, and sweep CI.
 
     ``iterations`` bounds the loop for tests; production runs unbounded. Sleeps
     ``poll_interval`` only when a pass found no commands, so bursts drain promptly.
@@ -431,8 +489,19 @@ def run(
     last_ci = 0.0
     last_capture = 0.0
     last_credsync = 0.0
+    last_reap = 0.0
     count = 0
     while iterations is None or count < iterations:
+        try:
+            heartbeat(worker_id)
+        except Exception:  # noqa: BLE001 - a heartbeat hiccup must not kill the worker
+            pass
+        if reap_interval > 0 and time.monotonic() - last_reap >= reap_interval:
+            try:
+                reap_dead_workers()
+            except Exception:  # noqa: BLE001 - a reap hiccup must not kill the worker
+                pass
+            last_reap = time.monotonic()
         try:
             fire_due_schedules()
         except Exception:  # noqa: BLE001 - a schedule hiccup must not kill the worker

@@ -7,13 +7,14 @@ import { useMemo, useState } from "react";
 import { useDashboard } from "@/components/store";
 import { Badge, Button, Callout, Stat, StatusBadge, Tabs, Textarea } from "@/components/ui";
 import { fmtFull, shortSha, statusTone, timeAgo } from "@/lib/format";
-import type { Agent } from "@/lib/api";
+import type { Agent, AgentEvent } from "@/lib/api";
 
 const FILTERS = [
   { value: "all", label: "All" },
   { value: "needs", label: "Needs Input" },
   { value: "working", label: "Working" },
   { value: "done", label: "Done" },
+  { value: "crashed", label: "Crashed" },
 ];
 
 function matches(filter: string, status: string): boolean {
@@ -21,6 +22,7 @@ function matches(filter: string, status: string): boolean {
   if (filter === "needs") return status === "paused_for_input";
   if (filter === "working") return status === "working" || status === "running";
   if (filter === "done") return status === "done" || status === "completed";
+  if (filter === "crashed") return status === "crashed" || status === "blocked";
   return true;
 }
 
@@ -239,6 +241,40 @@ function RunDetail() {
           </div>
         )}
 
+        {/* Headless run event stream (empty for legacy tmux agents) */}
+        {agent?.session_id && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            <div className="eyebrow">
+              Run events
+              {agent.worker_id ? (
+                <span className="faint mono" style={{ fontSize: "var(--text-xs)", marginLeft: 8 }}>
+                  on {agent.worker_id}
+                </span>
+              ) : null}
+            </div>
+            {s.events.length === 0 ? (
+              <div className="empty">No events yet.</div>
+            ) : (
+              <div
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 6,
+                  maxHeight: 420,
+                  overflow: "auto",
+                  padding: "10px 12px",
+                  background: "var(--surface-2, rgba(0,0,0,0.25))",
+                  borderRadius: 6,
+                }}
+              >
+                {s.events.map((e) => (
+                  <EventLine key={e.id} e={e} />
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Log */}
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
           <div className="eyebrow">Log · newest first</div>
@@ -303,4 +339,100 @@ function RunDetail() {
       </div>
     </>
   );
+}
+
+/* One stream-json event, rendered by type: assistant text as prose, tool calls as chips,
+ * the result as a cost/turns footer, worker notices as callouts, raw lines verbatim. */
+function EventLine({ e }: { e: AgentEvent }) {
+  const p = (e.payload ?? {}) as Record<string, any>;
+  const xs = { fontSize: "var(--text-xs)" } as const;
+
+  if (e.type === "system") {
+    return (
+      <div className="faint mono" style={xs}>
+        ▸ session {p.subtype ?? "event"}
+        {p.session_id ? ` · ${String(p.session_id).slice(0, 8)}` : ""}
+        {Array.isArray(p.tools) ? ` · ${p.tools.length} tools` : ""}
+      </div>
+    );
+  }
+  if (e.type === "assistant") {
+    const content = p.message?.content;
+    const blocks: any[] = Array.isArray(content) ? content : [];
+    const text = blocks
+      .filter((b) => b?.type === "text" && b.text)
+      .map((b) => b.text)
+      .join("\n");
+    const tools = blocks.filter((b) => b?.type === "tool_use");
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+        {text && (
+          <div style={{ fontSize: "var(--text-sm)", whiteSpace: "pre-wrap" }}>{text}</div>
+        )}
+        {tools.length > 0 && (
+          <div className="hstack" style={{ gap: 6, flexWrap: "wrap" }}>
+            {tools.map((t, i) => (
+              <Badge key={i} tone="info">
+                {t.name}
+                {t.input ? `: ${oneLine(t.input)}` : ""}
+              </Badge>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
+  if (e.type === "result") {
+    const err = Boolean(p.is_error);
+    return (
+      <div className="hstack" style={{ gap: 8, flexWrap: "wrap" }}>
+        <Badge tone={err ? "danger" : "success"}>{err ? "run errored" : "run finished"}</Badge>
+        <span className="faint mono" style={xs}>
+          {p.num_turns != null ? `${p.num_turns} turns` : ""}
+          {p.total_cost_usd != null ? ` · $${Number(p.total_cost_usd).toFixed(4)}` : ""}
+        </span>
+        {typeof p.result === "string" && p.result && (
+          <span className="muted" style={{ ...xs, whiteSpace: "pre-wrap", width: "100%" }}>
+            {p.result}
+          </span>
+        )}
+      </div>
+    );
+  }
+  if (e.type === "worker") {
+    return (
+      <Callout tone="danger">
+        {p.notice ?? "runner notice"}
+        {p.stderr_tail ? (
+          <pre className="mono" style={{ ...xs, margin: "6px 0 0", whiteSpace: "pre-wrap" }}>
+            {p.stderr_tail}
+          </pre>
+        ) : null}
+      </Callout>
+    );
+  }
+  if (e.type === "raw") {
+    return (
+      <div className="faint mono" style={{ ...xs, whiteSpace: "pre-wrap" }}>
+        {typeof p.line === "string" ? p.line.trimEnd() : JSON.stringify(p)}
+      </div>
+    );
+  }
+  // user (tool results) and anything future: a quiet one-liner, nothing lost, no noise.
+  return (
+    <div className="faint mono" style={xs}>
+      ▸ {e.type}
+    </div>
+  );
+}
+
+/* Compact single-line preview of a tool_use input object. */
+function oneLine(input: unknown): string {
+  const s =
+    typeof input === "string"
+      ? input
+      : (input as Record<string, unknown>)?.command
+        ? String((input as Record<string, unknown>).command)
+        : JSON.stringify(input);
+  return s.length > 80 ? `${s.slice(0, 77)}…` : s;
 }

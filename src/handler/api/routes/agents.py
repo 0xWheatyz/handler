@@ -15,7 +15,15 @@ from sqlalchemy.exc import IntegrityError
 from ...config import get_settings
 from ...db import repository as repo
 from ..deps import db_conn, require_admin, require_auth
-from ..schemas import AgentIn, AgentOut, CheckmarkOut, CommandOut, LogEntryOut, SpawnIn
+from ..schemas import (
+    AgentEventOut,
+    AgentIn,
+    AgentOut,
+    CheckmarkOut,
+    CommandOut,
+    LogEntryOut,
+    SpawnIn,
+)
 from .common import resolve_agent
 
 router = APIRouter(
@@ -121,6 +129,23 @@ def get_checkmark(project: str, name: str, conn: Connection = Depends(db_conn)) 
             detail=f"agent '{name}' has no checkmark yet",
         )
     return checkmark
+
+
+@router.get("/{name}/events", response_model=list[AgentEventOut])
+def get_events(
+    project: str,
+    name: str,
+    after_id: int = Query(0, ge=0),
+    limit: int = Query(200, ge=1, le=1000),
+    conn: Connection = Depends(db_conn),
+) -> list[dict]:
+    """The headless run event stream, oldest-first, cursor-paged by row id.
+
+    The UI polls with ``after_id`` = the largest id it has seen, so each poll returns
+    only new events (an empty list for a legacy tmux agent or an idle one).
+    """
+    agent = resolve_agent(conn, project, name)
+    return repo.list_agent_events(conn, agent["id"], after_id=after_id, limit=limit)
 
 
 @router.get("/{name}/log", response_model=list[LogEntryOut])

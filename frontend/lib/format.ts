@@ -21,6 +21,7 @@ export function statusTone(status: string | null | undefined): Tone {
     case "blocked":
     case "rejected":
     case "error":
+    case "crashed":
       return "danger";
     case "pending":
     case "queued":

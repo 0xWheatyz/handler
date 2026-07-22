@@ -727,6 +727,12 @@ def list_stale_workers(conn: Connection, cutoff: datetime) -> list[dict]:
     return [dict(r._mapping) for r in rows]
 
 
+def delete_worker(conn: Connection, worker_id: str) -> bool:
+    """Drop a (dead) worker's registry row after its runs have been settled."""
+    result = conn.execute(workers.delete().where(workers.c.id == worker_id))
+    return result.rowcount > 0
+
+
 def create_run(
     conn: Connection, agent_id: int, session_id: str, worker_id: str, kind: str
 ) -> dict:
