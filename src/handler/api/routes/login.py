@@ -50,7 +50,7 @@ def enqueue_login_submit(body: LoginSubmitIn, conn: Connection = Depends(db_conn
     nothing to paste into. No prior login_start leaves the pin empty (single-worker
     deployments behave exactly as before).
     """
-    started = repo.get_latest_finished_command(conn, "login_start")
+    started = repo.get_latest_claimed_command(conn, "login_start")
     return repo.enqueue_command(
         conn,
         "login_submit",

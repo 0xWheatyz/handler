@@ -55,17 +55,29 @@ def test_cancel_request_roundtrip(conn):
 def test_list_running_runs_scoped_by_worker(conn):
     agent = _agent(conn)
     r1 = repo.create_run(conn, agent["id"], "s1", "worker-a", "spawn")
-    r2 = repo.create_run(conn, agent["id"], "s2", "worker-b", "spawn")
     repo.finish_run(conn, r1["id"], "completed")
+    r2 = repo.create_run(conn, agent["id"], "s2", "worker-b", "spawn")
     running = repo.list_running_runs(conn)
     assert [r["id"] for r in running] == [r2["id"]]
     assert repo.list_running_runs(conn, worker_id="worker-a") == []
     assert [r["id"] for r in repo.list_running_runs(conn, worker_id="worker-b")] == [r2["id"]]
 
 
+def test_create_run_refuses_concurrent_run_for_agent(conn):
+    """One running run per agent, atomically — two workers racing a resume must not both
+    launch a claude process on the same session."""
+    import pytest
+
+    agent = _agent(conn)
+    repo.create_run(conn, agent["id"], "s1", "worker-a", "spawn")
+    with pytest.raises(repo.RunConflictError):
+        repo.create_run(conn, agent["id"], "s1", "worker-b", "resume")
+
+
 def test_latest_run_and_agent_session(conn):
     agent = _agent(conn)
-    repo.create_run(conn, agent["id"], "s1", "w", "spawn")
+    first = repo.create_run(conn, agent["id"], "s1", "w", "spawn")
+    repo.finish_run(conn, first["id"], "completed")
     latest = repo.create_run(conn, agent["id"], "s1", "w", "resume")
     assert repo.get_latest_run(conn, agent["id"])["id"] == latest["id"]
 

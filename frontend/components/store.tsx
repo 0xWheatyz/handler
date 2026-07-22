@@ -211,6 +211,10 @@ export function DashboardProvider({
   const [events, setEvents] = useState<AgentEvent[]>([]);
   const eventsRef = useRef<AgentEvent[]>([]);
   eventsRef.current = events;
+  /* Bumped on every selectRun: an in-flight loadRun that resolves after the user picked
+   * a different run must drop its writes, or run A's checkmark/log/events land on run
+   * B's panel (the 5s tick keeps polls in flight constantly). */
+  const runGenRef = useRef(0);
   const [approvals, setApprovals] = useState<Approval[]>([]);
   const [hosts, setHosts] = useState<Host[]>([]);
   const [commands, setCommands] = useState<Command[]>([]);
@@ -270,12 +274,15 @@ export function DashboardProvider({
 
   const loadRun = useCallback(async (projectId: string, name: string) => {
     const path = `/projects/${encodeURIComponent(projectId)}/agents/${encodeURIComponent(name)}`;
+    const gen = runGenRef.current;
+    const stale = () => gen !== runGenRef.current;
     try {
       const cm = await clientRef.current.api<Checkmark>(`${path}/checkmark`);
+      if (stale()) return;
       setCheckmark(cm);
       setCheckmarkMissing(false);
     } catch (e) {
-      if (e instanceof AuthError) return;
+      if (e instanceof AuthError || stale()) return;
       if ((e as ApiError).status === 404) {
         setCheckmark(null);
         setCheckmarkMissing(true);
@@ -285,9 +292,10 @@ export function DashboardProvider({
       const entries = await clientRef.current.api<LogEntry[]>(
         `${path}/log?limit=${LOG_LIMIT}&offset=${logOffsetRef.current}`,
       );
+      if (stale()) return;
       setLog(entries);
     } catch (e) {
-      swallow(e);
+      if (!stale()) swallow(e);
     }
     try {
       // Cursor poll: only events newer than what we already hold come back.
@@ -296,9 +304,16 @@ export function DashboardProvider({
       const fresh = await clientRef.current.api<AgentEvent[]>(
         `${path}/events?after_id=${after}&limit=500`,
       );
-      if (fresh.length) setEvents((prev) => [...prev, ...fresh]);
+      if (stale() || fresh.length === 0) return;
+      // Dedup by id at append time: overlapping polls for the same run can both fetch
+      // from the same cursor; only genuinely-new rows may append.
+      setEvents((prev) => {
+        const last = prev.length ? prev[prev.length - 1].id : 0;
+        const add = fresh.filter((e) => e.id > last);
+        return add.length ? [...prev, ...add] : prev;
+      });
     } catch (e) {
-      swallow(e);
+      if (!stale()) swallow(e);
     }
   }, []);
 
@@ -419,6 +434,7 @@ export function DashboardProvider({
 
   const selectRun = useCallback(
     (projectId: string, name: string) => {
+      runGenRef.current += 1; // invalidate any in-flight loadRun for the previous run
       setSelectedRun({ projectId, name });
       setLogOffset(0);
       logOffsetRef.current = 0;

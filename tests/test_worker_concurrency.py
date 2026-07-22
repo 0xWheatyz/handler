@@ -22,22 +22,26 @@ def headless_env(env, monkeypatch):
     config.get_settings.cache_clear()
 
 
-def _seed(conn_count_running_for=None):
+def _seed(extra_agents=("b",)):
     with get_engine().begin() as conn:
         repo.create_project(conn, "p", "/tmp/p")
         agent = repo.create_agent(conn, "p", "a", "/tmp/p/a")
+        for name in extra_agents:
+            repo.create_agent(conn, "p", name, f"/tmp/p/{name}")
         return agent
 
 
-def _running_run(agent_id, worker_id):
+def _running_run(agent_name, worker_id):
     with get_engine().begin() as conn:
-        return repo.create_run(conn, agent_id, f"sid-{worker_id}", worker_id, "spawn")
+        agent = repo.get_agent_by_name(conn, "p", agent_name)
+        return repo.create_run(conn, agent["id"], f"sid-{agent_name}", worker_id, "spawn")
 
 
 def test_full_worker_skips_run_commands_but_processes_others(headless_env, monkeypatch):
     agent = _seed()
-    _running_run(agent["id"], "w-full")
-    _running_run(agent["id"], "w-full")  # 2 running == MAX_CONCURRENT_RUNS
+    # 2 running (one per agent — one running run per agent) == MAX_CONCURRENT_RUNS
+    _running_run("a", "w-full")
+    _running_run("b", "w-full")
 
     spawned = {}
     monkeypatch.setattr(
@@ -66,9 +70,9 @@ def test_full_worker_skips_run_commands_but_processes_others(headless_env, monke
 
 
 def test_slot_frees_when_run_finishes(headless_env, monkeypatch):
-    agent = _seed()
-    run1 = _running_run(agent["id"], "w1")
-    _running_run(agent["id"], "w1")
+    _seed()
+    run1 = _running_run("a", "w1")
+    _running_run("b", "w1")
     assert worker._full_slot_exclusions("w1") == worker._RUN_COMMANDS
 
     with get_engine().begin() as conn:

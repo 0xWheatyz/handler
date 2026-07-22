@@ -733,10 +733,35 @@ def delete_worker(conn: Connection, worker_id: str) -> bool:
     return result.rowcount > 0
 
 
+class RunConflictError(Exception):
+    """The agent already has a ``running`` run — a second concurrent claude process on
+    one session would corrupt its transcript."""
+
+
 def create_run(
     conn: Connection, agent_id: int, session_id: str, worker_id: str, kind: str
 ) -> dict:
-    """Open an ``agent_runs`` row for a launching headless invocation."""
+    """Open an ``agent_runs`` row for a launching headless invocation.
+
+    Enforces **one running run per agent** atomically: two workers that both claimed a
+    resume for the same agent must not both launch. The agent row is locked first on
+    Postgres (``FOR UPDATE``) so concurrent transactions serialize; SQLite's single
+    writer gives the same guarantee for free. Raises :class:`RunConflictError` if a
+    running run already exists.
+    """
+    lock = select(agents.c.id).where(agents.c.id == agent_id)
+    if conn.dialect.name == "postgresql":
+        lock = lock.with_for_update()
+    conn.execute(lock)
+    existing = conn.execute(
+        select(agent_runs.c.id)
+        .where(agent_runs.c.agent_id == agent_id, agent_runs.c.status == "running")
+        .limit(1)
+    ).first()
+    if existing is not None:
+        raise RunConflictError(
+            f"agent {agent_id} already has running run {existing[0]}"
+        )
     result = conn.execute(
         agent_runs.insert().values(
             agent_id=agent_id,
@@ -902,12 +927,13 @@ def get_runtime_secret(conn: Connection, key: str) -> dict | None:
     return _row_to_dict(row)
 
 
-def get_latest_finished_command(conn: Connection, type: str) -> dict | None:
-    """The most recent ``done`` command of a type (login pinning reads login_start's
-    ``claimed_by`` to route login_submit to the same worker container)."""
+def get_latest_claimed_command(conn: Connection, type: str) -> dict | None:
+    """The most recent command of a type that some worker has claimed (running or
+    finished). Login pinning reads login_start's ``claimed_by`` to route login_submit to
+    the same worker container — including while the login_start is still in flight."""
     row = conn.execute(
         select(commands)
-        .where(commands.c.type == type, commands.c.status == "done")
+        .where(commands.c.type == type, commands.c.claimed_by.is_not(None))
         .order_by(commands.c.id.desc())
         .limit(1)
     ).first()

@@ -198,6 +198,7 @@ class RunSupervisor:
         self.archive_interval = archive_interval
         self.on_exit = on_exit  # worker's slot-release callback
         self._seq = 0
+        self._seq_lock = threading.Lock()  # reader thread + supervisor both emit events
         self._result_payload: dict | None = None
         self._canceled = False
         self.thread: threading.Thread | None = None
@@ -211,13 +212,15 @@ class RunSupervisor:
     # ---------------------------------------------------------------- internals
 
     def _insert_event(self, etype: str, payload: dict) -> None:
-        self._seq += 1
+        with self._seq_lock:
+            self._seq += 1
+            seq = self._seq
         with connection() as conn:
             repo.insert_agent_event(
                 conn,
                 self.agent["id"],
                 self.run["id"],
-                seq=self._seq,
+                seq=seq,
                 type=etype,
                 payload=payload,
                 session_id=self.run["session_id"],
@@ -299,13 +302,22 @@ class RunSupervisor:
                 last_archive = now
         proc.wait()
         reader.join(timeout=30.0)
+        if proc.stdout is not None:
+            proc.stdout.close()
         stderr_file.seek(0)
         stderr_tail = stderr_file.read()[-4000:].decode("utf-8", "replace")
         stderr_file.close()
         self._settle(exit_code=proc.returncode, stderr_tail=stderr_tail)
 
     def _settle(self, exit_code: int | None, stderr_tail: str) -> None:
-        """Reconcile run + agent status once the process is gone, then final-archive."""
+        """Final-archive, then reconcile run + agent status once the process is gone.
+
+        Order matters: a resume can be claimed the moment the run leaves ``running``, and
+        it materializes from ``session_archives`` — so the archive upload must land
+        BEFORE the run is marked finished, or a fast resume races an incomplete archive
+        and needlessly degrades to context re-injection.
+        """
+        self._upload_archive()
         result = self._result_payload
         clean = (
             exit_code == 0
@@ -341,7 +353,6 @@ class RunSupervisor:
                 self._insert_event("worker", detail)
         except Exception:  # noqa: BLE001 - never let bookkeeping raise out of the thread
             pass
-        self._upload_archive()
         if self.on_exit is not None:
             try:
                 self.on_exit(self)

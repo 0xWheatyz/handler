@@ -268,14 +268,20 @@ def resume(agent: dict, answer: str, worker_id: str | None = None) -> tuple[bool
     elif not transcript.exists():
         return _resume_reinjected(agent, answer, settings_path, env, worker_id)
 
-    run = headless.launch(
-        agent,
-        kind="resume",
-        prompt=answer,
-        settings_path=settings_path,
-        env=env,
-        worker_id=worker_id,
-    )
+    try:
+        run = headless.launch(
+            agent,
+            kind="resume",
+            prompt=answer,
+            settings_path=settings_path,
+            env=env,
+            worker_id=worker_id,
+        )
+    except repo.RunConflictError:
+        # Another worker won the race for this resume (two queued resume commands, or a
+        # concurrent spawn) — losing loudly here beats two claude processes corrupting
+        # one session transcript.
+        return False, "another worker is already running this agent's session"
     return True, f"headless resume run {run['id']} started for session {agent['session_id']}"
 
 
@@ -302,14 +308,17 @@ def _resume_reinjected(
         if entry.get("summary"):
             parts.append(f"Earlier log: {entry['summary']}")
     parts.append(f"The operator's answer/instruction: {answer}")
-    run = headless.launch(
-        agent,
-        kind="spawn",  # a genuinely new session (new UUID) — --resume has nothing to load
-        prompt="\n\n".join(parts),
-        settings_path=settings_path,
-        env=env,
-        worker_id=worker_id,
-    )
+    try:
+        run = headless.launch(
+            agent,
+            kind="spawn",  # a genuinely new session (new UUID) — --resume has nothing to load
+            prompt="\n\n".join(parts),
+            settings_path=settings_path,
+            env=env,
+            worker_id=worker_id,
+        )
+    except repo.RunConflictError:
+        return False, "another worker is already running this agent's session"
     with connection() as conn:
         repo.insert_agent_event(
             conn,
