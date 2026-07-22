@@ -12,7 +12,6 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import Connection
 from sqlalchemy.exc import IntegrityError
 
-from ...config import get_settings
 from ...db import repository as repo
 from ..deps import db_conn, require_admin, require_auth
 from ..schemas import (
@@ -79,10 +78,10 @@ def enqueue_spawn(project: str, body: SpawnIn, conn: Connection = Depends(db_con
             status.HTTP_409_CONFLICT,
             detail=f"agent '{body.name}' already exists in project '{project}'",
         )
-    if get_settings().runner == "headless" and not body.task:
-        # A tmux agent can idle at the REPL awaiting input; a headless `claude -p` run
-        # with no prompt exits immediately. Reject here (400) instead of letting the
-        # command fail asynchronously in the worker.
+    if not body.task:
+        # A headless `claude -p` run with no prompt exits immediately having done
+        # nothing. Reject here (400) instead of letting the command fail asynchronously
+        # in the worker.
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
             detail="a task is required: the headless runner has no idle-REPL mode",

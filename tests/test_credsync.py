@@ -101,10 +101,3 @@ def test_disabled_without_secret_key(env, tmp_path):
     _write_local_credentials(tmp_path)
     assert credsync.upload() is False
     assert credsync.refresh() is None
-
-
-def test_note_local_write_suppresses_upload(secret_env, tmp_path):
-    _write_local_credentials(tmp_path)
-    credsync.note_local_write()
-    # The deliberate local write (e.g. ensure_onboarded at spawn) is not re-published.
-    assert credsync.refresh() is None

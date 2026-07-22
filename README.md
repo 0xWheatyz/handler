@@ -13,10 +13,11 @@ git remote, and your own network exposure.
 > control layer, HTTP API, database, migrations, and verification/approval hooks are
 > implemented and tested (106 tests, SQLite). Phase 2 adds credential resolution +
 > injection, role-based forge-workflow skills, a hard approval gate, and a CI-status
-> poller. Live end-to-end agent spawning against a real `claude` binary + tmux is stubbed
-> behind mockable seams (`tmux`, `verify`, `forge`, `gitops`, `spawn.resume`) and wired
-> but not yet exercised against production binaries. See [`docs/PLAN.md`](docs/PLAN.md)
-> for the full design and roadmap.
+> poller. Agent runs are headless (`claude -p --output-format stream-json`, supervised
+> by the worker, events persisted to the DB); the run/kill/resume paths are exercised
+> end-to-end against a scripted fake claude binary, with a manual validation script
+> (`scripts/validate_claude_headless.sh`) for the real one. See
+> [`docs/PLAN.md`](docs/PLAN.md) for the full design and roadmap.
 
 ---
 
@@ -45,19 +46,23 @@ the control layer and API are disposable compute that can restart or scale out f
 ```
         writes                                        reads (+ answer backfill)
   ┌──────────────────┐        ┌──────────────┐        ┌──────────────────┐
-  │  control layer   │───────▶│   database   │◀───────│    HTTP API      │
+  │  worker(s)       │───────▶│   database   │◀───────│    HTTP API      │
   │  (CLI + hooks)   │        │  PG / SQLite │        │  (FastAPI)       │
   └──────────────────┘        └──────────────┘        └──────────────────┘
      │        ▲                                              ▲
      │ spawns │ Stop / PreToolUse / Notification hooks       │ curl, UI, any client
-     ▼        │ write checkmark + log rows                   │ (bearer token)
-  tmux + claude binary (one working dir / worktree per agent)
+     ▼        │ + streamed run events, checkmark, log        │ (bearer token)
+  claude -p --output-format stream-json (one working dir / worktree per agent)
 ```
 
-- **Control layer** (`handler.control`) — the only writer. Spawns/lists/attaches/kills
-  agents as `tmux` sessions running the `claude` binary, one working directory or git
-  worktree per agent, namespaced `project__agent`. Stateless; every write goes straight
-  to the database.
+- **Control layer / workers** (`handler.control`) — the only writer. Runs each agent as
+  a **headless** `claude -p --output-format stream-json` subprocess (one working
+  directory or git worktree per agent), streams every stdout event into the database as
+  it happens, and reconciles agent status from the process itself (exit code + EOF —
+  positive liveness, no screen scraping). Stateless: repo state is pulled from git when
+  a task is claimed, claude session transcripts are archived to / materialized from the
+  DB for cross-worker `--resume`, and the claude login credential bundle is distributed
+  encrypted through the DB. tmux survives only to drive the interactive `/login` flow.
 - **Hooks** (`handler.hooks`) — run inside each agent via a generated `settings.json`.
   They write the checkpoint/log rows and enforce the test and push gates.
 - **API** (`handler.api`) — a thin, read-mostly HTTP layer over the same database (the
@@ -77,10 +82,32 @@ The data model is defined once (SQLAlchemy Core) and renders correctly on both:
 Portable column types bridge the two, and the checkmark upsert uses native
 `INSERT … ON CONFLICT DO UPDATE` on both dialects. Migrations are Alembic, dual-dialect.
 
+### Scaling workers horizontally
+
+Multiple worker containers can drain the same command queue concurrently (Postgres
+`FOR UPDATE SKIP LOCKED`); each supervises up to `MAX_CONCURRENT_RUNS` claude processes
+and skips claiming run-starting commands while full, leaving them for a less-loaded
+worker. Workers heartbeat into the DB; if one dies mid-run, any surviving worker's
+reaper marks its runs (and their agents) `crashed` — visible in the UI with the last
+output preserved — and the operator resumes explicitly on whichever worker picks it up.
+
+Deployment invariants for multi-worker:
+
+- **No shared filesystems.** Git carries repo state (workers clone/pull on claim);
+  claude session transcripts live in `session_archives`; login credentials are
+  Fernet-encrypted into `runtime_secrets` and materialized by every worker.
+- **Identical `PROJECTS_ROOT` on every worker** — claude keys its session storage to
+  the absolute working-dir path, so cross-worker `--resume` needs the same layout.
+- **The same `HANDLER_SECRET_KEY` on every worker** (and the API) — without it, the
+  credential bundle can't be distributed and only the worker that ran `/login` can run
+  agents.
+- The two-step web login is automatically pinned to one worker
+  (`commands.target_worker`), so it works unchanged with a fleet.
+
 ## Requirements
 
 - Python 3.11+
-- `git` and `tmux` (for live spawning)
+- `git` (for live spawning) and `tmux` (only for the web `/login` flow)
 - A `claude` binary, authenticated (for live spawning)
 - `mise` in each managed project, with a `.mise.toml` defining at least a `test` task
 - Postgres (default) — or nothing but a file path for the SQLite fallback

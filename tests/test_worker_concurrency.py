@@ -16,7 +16,6 @@ from handler.db.engine import get_engine
 def headless_env(env, monkeypatch):
     from handler import config
 
-    monkeypatch.setenv("RUNNER", "headless")
     monkeypatch.setenv("MAX_CONCURRENT_RUNS", "2")
     config.get_settings.cache_clear()
     yield env
@@ -75,7 +74,3 @@ def test_slot_frees_when_run_finishes(headless_env, monkeypatch):
     with get_engine().begin() as conn:
         repo.finish_run(conn, run1["id"], "completed", exit_code=0)
     assert worker._full_slot_exclusions("w1") == ()
-
-
-def test_tmux_runner_never_excludes(env):
-    assert worker._full_slot_exclusions("w") == ()

@@ -43,15 +43,19 @@ def _credential_files() -> dict[str, str]:
 
 
 def fingerprint() -> tuple:
-    """(path, mtime_ns, size) of the on-disk credential files — cheap change detection."""
-    fp = []
-    for path in sorted(_credential_files().values()):
-        try:
-            st = os.stat(path)
-            fp.append((path, st.st_mtime_ns, st.st_size))
-        except OSError:
-            continue
-    return tuple(fp)
+    """(path, mtime_ns, size) of the OAuth token file — cheap change detection.
+
+    Deliberately only ``.claude/.credentials.json``: claude touches ``~/.claude.json``
+    on every run (project entries, UI state), and treating those as "new credentials"
+    would ping-pong uploads between workers forever. A login that only rewrites
+    ``.claude.json`` is still published — the login flow calls :func:`upload` directly.
+    """
+    path = _credential_files()[".claude/.credentials.json"]
+    try:
+        st = os.stat(path)
+    except OSError:
+        return ()
+    return ((path, st.st_mtime_ns, st.st_size),)
 
 
 def upload() -> bool:
@@ -165,10 +169,3 @@ def refresh() -> str | None:
             _state.seen_updated_at = stored["updated_at"] if stored else None
             return "uploaded"
     return None
-
-
-def note_local_write() -> None:
-    """Record that this process just changed local credentials deliberately (e.g. the
-    claude_config onboarding merge at spawn), so refresh() doesn't misread the mtime
-    bump as a new login and ping-pong uploads between workers."""
-    _state.last_fingerprint = fingerprint()

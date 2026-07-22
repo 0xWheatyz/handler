@@ -15,16 +15,13 @@ from ..config import get_settings
 from ..db import repository as repo
 from ..db.engine import connection
 from . import (
-    claude_config,
     credentials,
-    credsync,
     forge,
     gitops,
     headless,
     mise,
     reposync,
     settings_gen,
-    tmux,
     worktree,
 )
 
@@ -45,18 +42,6 @@ def require_test_task(working_dir: str) -> None:
             f"mise config in {working_dir} has no [tasks.test]: the verification gate "
             "requires a canonical test task"
         )
-
-
-def _claude_command(task: str | None, settings_path: str) -> str:
-    claude = get_settings().claude_bin
-    argv = [claude, "--settings", settings_path]
-    if task:
-        argv.append(_shell_quote(task))
-    return " ".join(argv)
-
-
-def _shell_quote(value: str) -> str:
-    return "'" + value.replace("'", "'\\''") + "'"
 
 
 def _install_git_credentials(
@@ -97,10 +82,10 @@ def spawn(
     test gate. ``worker_id`` identifies the calling worker container (headless runs record
     it on the run row; the CLI defaults to a pid-scoped id).
     """
-    if get_settings().runner == "headless" and not task:
-        # A tmux agent without a task idles at the REPL waiting for input; ``claude -p``
-        # has no such mode — an empty prompt would exit immediately having done nothing.
-        raise SpawnError("a headless agent requires a task (the runner is 'headless')")
+    if not task:
+        # ``claude -p`` has no idle-REPL mode — an empty prompt would exit immediately
+        # having done nothing, so a task is a hard requirement.
+        raise SpawnError("an agent requires a task (headless claude has no idle mode)")
     sync_note = None
     with connection() as conn:
         project = repo.get_project(conn, project_id)
@@ -154,8 +139,7 @@ def spawn(
             role=role,
         )
 
-    headless_run = get_settings().runner == "headless"
-    settings_path = settings_gen.write_settings(working_dir, headless=headless_run)
+    settings_path = settings_gen.write_settings(working_dir)
     env = _agent_env(project, agent, token, role=role, mise_init=mise_init)
 
     # Verify the pinned forge version, if one is configured. Non-fatal: a version drift
@@ -163,25 +147,14 @@ def spawn(
     # touches forge and the base image is the real pin (README 3.6, Phase 2).
     forge_note = _check_forge_version(working_dir)
 
-    # Mark Claude Code onboarding complete + trust the working dir before launching. The
-    # tmux path needs both (no human at the TTY to answer the theme/trust screens);
-    # ``-p`` skips the trust dialog but still reads onboarding state, so keep it for both.
-    claude_config.ensure_onboarded(working_dir)
-    credsync.note_local_write()
-
-    if headless_run:
-        headless.launch(
-            agent,
-            kind="spawn",
-            prompt=task,
-            settings_path=settings_path,
-            env=env,
-            worker_id=worker_id or f"cli-{os.getpid()}",
-        )
-    else:
-        session = tmux.session_name(project_id, name)
-        command = _claude_command(task, settings_path)
-        tmux.new_session(session, cwd=working_dir, command=command, env=env)
+    headless.launch(
+        agent,
+        kind="spawn",
+        prompt=task,
+        settings_path=settings_path,
+        env=env,
+        worker_id=worker_id or f"cli-{os.getpid()}",
+    )
     agent = {**agent, "forge_note": forge_note, "sync_note": sync_note}
     return agent
 
@@ -234,51 +207,35 @@ def _check_forge_version(working_dir: str) -> str | None:
 
 
 def kill(project_id: str, name: str) -> None:
+    """Stop an agent: flag its running run for cancel and mark the row done.
+
+    The owning worker's supervisor polls the cancel flag and SIGTERMs its own child
+    (cross-worker safe — nobody signals a process they don't own). No running run means
+    the process is already gone; the status update is all that's left to do.
+    """
     with connection() as conn:
         agent = repo.get_agent_by_name(conn, project_id, name)
         if agent is None:
             raise SpawnError(f"agent '{name}' not found in project '{project_id}'")
-        if agent.get("session_id"):
-            # Headless agent: flag the running run for cancel; the owning worker's
-            # supervisor polls the flag and SIGTERMs its own child (cross-worker safe —
-            # nobody signals a process they don't own). No running run = already dead.
-            run = repo.get_latest_run(conn, agent["id"])
-            if run is not None and run["status"] == "running":
-                repo.request_run_cancel(conn, run["id"])
-            repo.set_agent_status(conn, agent["id"], "done")
-            return
-        session = tmux.session_name(project_id, name)
-        if tmux.has_session(session):
-            tmux.kill_session(session)
+        run = repo.get_latest_run(conn, agent["id"])
+        if run is not None and run["status"] == "running":
+            repo.request_run_cancel(conn, run["id"])
         repo.set_agent_status(conn, agent["id"], "done")
 
 
 def resume(agent: dict, answer: str, worker_id: str | None = None) -> tuple[bool, str]:
-    """Feed an operator's answer back to an agent.
+    """Feed an operator's answer back to an agent as a new ``claude -p --resume`` run.
 
-    The seam the API's ``/resume`` route calls (and the one tests mock). Legacy tmux
-    agents (``session_id`` null) get the answer typed into their live session; headless
-    agents get a brand-new ``claude -p --resume`` run on this worker, with the session
-    transcript materialized from the DB archive first so any worker can serve the resume.
+    The seam the API's ``/resume`` route calls (and the one tests mock). The session
+    transcript is materialized from the DB archive first, so ANY worker can serve the
+    resume. Refuses while a run is still live (two concurrent processes on one session
+    would corrupt it). When no transcript survives anywhere — the owning worker died
+    before its first archive, or the row predates the headless runner — falls back to a
+    *fresh* session whose prompt re-injects context from the DB (checkmark + open
+    question + answer), recorded as a ``worker`` event so the UI shows the degraded
+    continuity.
     """
-    if agent.get("session_id"):
-        return _resume_headless(agent, answer, worker_id or f"cli-{os.getpid()}")
-    session = tmux.session_name(agent["project_id"], agent["name"])
-    if not tmux.has_session(session):
-        return False, f"no live session '{session}' to resume"
-    tmux.send_keys(session, answer)
-    return True, f"answer delivered to session '{session}'"
-
-
-def _resume_headless(agent: dict, answer: str, worker_id: str) -> tuple[bool, str]:
-    """Launch a ``--resume`` run for a headless agent, materializing its session first.
-
-    Refuses while a run is still live (two concurrent processes on one session would
-    corrupt it). When neither this worker nor the DB has the transcript — the owning
-    worker died before its first archive — falls back to a *fresh* session whose prompt
-    re-injects context from the DB (checkmark + open question + answer), recorded as a
-    ``worker`` event so the UI shows the degraded continuity.
-    """
+    worker_id = worker_id or f"cli-{os.getpid()}"
     with connection() as conn:
         run = repo.get_latest_run(conn, agent["id"])
         if run is not None and run["status"] == "running":
@@ -289,7 +246,7 @@ def _resume_headless(agent: dict, answer: str, worker_id: str) -> tuple[bool, st
         return False, f"project '{agent['project_id']}' not registered"
 
     working_dir = agent["working_dir"]
-    settings_path = settings_gen.write_settings(working_dir, headless=True)
+    settings_path = settings_gen.write_settings(working_dir)
     try:
         token = None
         with connection() as conn:
@@ -297,6 +254,10 @@ def _resume_headless(agent: dict, answer: str, worker_id: str) -> tuple[bool, st
     except credentials.CredentialError as exc:
         return False, str(exc)
     env = _agent_env(project, agent, token)
+
+    if not agent.get("session_id"):
+        # Pre-headless agent row (or a spawn that never launched): nothing to --resume.
+        return _resume_reinjected(agent, answer, settings_path, env, worker_id)
 
     transcript = headless.session_dir(working_dir) / f"{agent['session_id']}.jsonl"
     if archive is not None:

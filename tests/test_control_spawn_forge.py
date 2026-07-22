@@ -19,15 +19,15 @@ def _register(root, **kw):
         repo.create_project(conn, "proj", str(root), **kw)
 
 
-def test_spawn_injects_credentials_and_installs_helper(env, fake_tmux, fake_gitops, monkeypatch):
+def test_spawn_injects_credentials_and_installs_helper(env, fake_launch, fake_gitops, monkeypatch):
     monkeypatch.setenv("PROJ_TOKEN", "s3cret")
     root = env["tmp"] / "proj"
     _write_mise(root)
     _register(root, git_remote="https://github.com/me/proj.git", credential_ref="env:PROJ_TOKEN")
 
-    spawn.spawn("proj", "junior", role="junior")
+    spawn.spawn("proj", "junior", role="junior", task="do it")
 
-    call = fake_tmux["calls"]["new_session"][0]
+    call = fake_launch[0]
     # Token injected under the generic + host-specific names, never the raw ref stored.
     assert call["env"]["FORGE_TOKEN"] == "s3cret"
     assert call["env"]["GITHUB_TOKEN"] == "s3cret"
@@ -38,43 +38,43 @@ def test_spawn_injects_credentials_and_installs_helper(env, fake_tmux, fake_gito
     assert "$FORGE_TOKEN" in helper[0]["value"]
 
 
-def test_spawn_ssh_remote_installs_no_https_helper(env, fake_tmux, fake_gitops, monkeypatch):
+def test_spawn_ssh_remote_installs_no_https_helper(env, fake_launch, fake_gitops, monkeypatch):
     monkeypatch.setenv("PROJ_TOKEN", "s3cret")
     root = env["tmp"] / "proj"
     _write_mise(root)
     _register(root, git_remote="git@github.com:me/proj.git", credential_ref="env:PROJ_TOKEN")
-    spawn.spawn("proj", "junior", role="junior")
+    spawn.spawn("proj", "junior", role="junior", task="do it")
     # ssh remote -> token still injected, but no HTTPS credential helper installed.
-    assert fake_tmux["calls"]["new_session"][0]["env"]["GITHUB_TOKEN"] == "s3cret"
+    assert fake_launch[0]["env"]["GITHUB_TOKEN"] == "s3cret"
     assert fake_gitops["config"] == []
 
 
-def test_spawn_fails_fast_on_broken_credential_ref(env, fake_tmux, fake_gitops, monkeypatch):
+def test_spawn_fails_fast_on_broken_credential_ref(env, fake_launch, fake_gitops, monkeypatch):
     monkeypatch.delenv("ABSENT_TOKEN", raising=False)
     root = env["tmp"] / "proj"
     _write_mise(root)
     _register(root, credential_ref="env:ABSENT_TOKEN")
 
     with pytest.raises(spawn.SpawnError, match="not set"):
-        spawn.spawn("proj", "junior", role="junior")
+        spawn.spawn("proj", "junior", role="junior", task="do it")
     # No agent row and no session left behind by the failed spawn.
     with get_engine().begin() as conn:
         assert repo.get_agent_by_name(conn, "proj", "junior") is None
-    assert fake_tmux["calls"]["new_session"] == []
+    assert fake_launch == []
 
 
-def test_spawn_without_credential_ref_injects_no_token(env, fake_tmux, fake_gitops):
+def test_spawn_without_credential_ref_injects_no_token(env, fake_launch, fake_gitops):
     root = env["tmp"] / "proj"
     _write_mise(root)
     _register(root)
-    spawn.spawn("proj", "api")
-    call = fake_tmux["calls"]["new_session"][0]
+    spawn.spawn("proj", "api", task="do it")
+    call = fake_launch[0]
     assert "FORGE_TOKEN" not in call["env"]
     # No token -> no credential helper installed.
     assert fake_gitops["config"] == []
 
 
-def test_spawn_reports_forge_version_mismatch(env, fake_tmux, fake_gitops, fake_forge, monkeypatch):
+def test_spawn_reports_forge_version_mismatch(env, fake_launch, fake_gitops, fake_forge, monkeypatch):
     monkeypatch.setenv("FORGE_VERSION", "9.9.9")
     from handler import config
     from handler.db import engine
@@ -88,5 +88,5 @@ def test_spawn_reports_forge_version_mismatch(env, fake_tmux, fake_gitops, fake_
     fake_forge["version_ok"] = False
     fake_forge["version_out"] = "forge 1.2.3"
 
-    agent = spawn.spawn("proj", "api")
+    agent = spawn.spawn("proj", "api", task="do it")
     assert "9.9.9" in agent["forge_note"]

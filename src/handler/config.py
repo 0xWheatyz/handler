@@ -51,10 +51,9 @@ class Settings(BaseSettings):
     forge_bin: str = "forge"
     git_bin: str = "git"
 
-    # ---- Headless runner (claude -p --output-format stream-json). ``runner`` selects the
-    # launch path: "tmux" (legacy interactive session, the default until the headless path
-    # is validated) or "headless" (worker-owned subprocess streaming events to the DB).
-    runner: str = "tmux"
+    # ---- Headless runner (claude -p --output-format stream-json): worker-owned
+    # subprocesses streaming events to the DB. Agent runs are always headless; tmux
+    # remains only for the interactive /login flow.
     # How many concurrent claude runs one worker container supervises; commands that would
     # start a run are left queued (for another worker) while all slots are busy.
     max_concurrent_runs: int = 4

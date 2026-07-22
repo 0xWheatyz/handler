@@ -26,7 +26,6 @@ def headless_env(env, monkeypatch):
     from handler import config
 
     monkeypatch.setenv("CLAUDE_BIN", FAKE_CLAUDE)
-    monkeypatch.setenv("RUNNER", "headless")
     config.get_settings.cache_clear()
     yield env
     config.get_settings.cache_clear()
@@ -250,15 +249,12 @@ def test_resume_refused_while_run_live(headless_env, tmp_path, monkeypatch):
     _wait_for(_finished_run(run["id"]), timeout=30.0)
 
 
-def test_headless_settings_include_permissions(headless_env, tmp_path):
-    path = settings_gen.write_settings(str(tmp_path / "wd"), headless=True)
+def test_settings_include_permissions_and_hooks(headless_env, tmp_path):
+    path = settings_gen.write_settings(str(tmp_path / "wd"))
     data = json.loads(Path(path).read_text())
     assert data["permissions"]["defaultMode"] == "acceptEdits"
     assert "Bash(git *)" in data["permissions"]["allow"]
     assert "hooks" in data  # the hard gate is untouched
-
-    tmux_path = settings_gen.write_settings(str(tmp_path / "wd2"))
-    assert "permissions" not in json.loads(Path(tmux_path).read_text())
 
 
 def test_api_rejects_empty_task_headless_spawn(headless_env, client, auth):
