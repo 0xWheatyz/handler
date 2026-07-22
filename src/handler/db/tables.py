@@ -243,6 +243,18 @@ forge_hosts = Table(
     CheckConstraint(_in("forge_type", FORGE_TYPES), name="ck_forge_hosts_type"),
 )
 
+# Control-plane key/value secrets, Fernet-encrypted like forge_hosts tokens (see
+# ``handler.secretstore``). Holds the claude OAuth credential bundle so every worker
+# container can materialize it locally — the login flow runs on ONE worker, but all of
+# them need to run ``claude``. Never exposed by any API route.
+runtime_secrets = Table(
+    "runtime_secrets",
+    metadata,
+    Column("key", String, primary_key=True),
+    Column("value_enc", String, nullable=False),
+    Column("updated_at", PortableTimestamp, nullable=False, server_default=func.now()),
+)
+
 # Worker registry + heartbeat (headless runner). Each worker container upserts its row
 # every loop pass; the reaper marks a worker's running runs (and their agents) ``crashed``
 # when ``heartbeat_at`` goes stale — the positive-liveness replacement for tmux scraping.

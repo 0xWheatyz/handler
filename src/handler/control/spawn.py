@@ -17,8 +17,10 @@ from ..db.engine import connection
 from . import (
     claude_config,
     credentials,
+    credsync,
     forge,
     gitops,
+    headless,
     mise,
     reposync,
     settings_gen,
@@ -84,6 +86,7 @@ def spawn(
     role: str | None = None,
     require_tests: bool = True,
     mise_init: bool = False,
+    worker_id: str | None = None,
 ) -> dict:
     """Create and launch an agent. Returns the agent row.
 
@@ -91,8 +94,13 @@ def spawn(
     it off, because a project with no ``.mise.toml`` yet is exactly what it exists to fix.
     ``mise_init`` marks the launched agent (via ``HANDLER_MISE_INIT``) so its hooks enforce
     the bootstrap contract — create the test task, commit, and push — instead of the normal
-    test gate.
+    test gate. ``worker_id`` identifies the calling worker container (headless runs record
+    it on the run row; the CLI defaults to a pid-scoped id).
     """
+    if get_settings().runner == "headless" and not task:
+        # A tmux agent without a task idles at the REPL waiting for input; ``claude -p``
+        # has no such mode — an empty prompt would exit immediately having done nothing.
+        raise SpawnError("a headless agent requires a task (the runner is 'headless')")
     sync_note = None
     with connection() as conn:
         project = repo.get_project(conn, project_id)
@@ -146,14 +154,56 @@ def spawn(
             role=role,
         )
 
-    settings_path = settings_gen.write_settings(working_dir)
+    headless_run = get_settings().runner == "headless"
+    settings_path = settings_gen.write_settings(working_dir, headless=headless_run)
+    env = _agent_env(project, agent, token, role=role, mise_init=mise_init)
 
+    # Verify the pinned forge version, if one is configured. Non-fatal: a version drift
+    # is recorded as a warning rather than blocking the spawn, since not every agent
+    # touches forge and the base image is the real pin (README 3.6, Phase 2).
+    forge_note = _check_forge_version(working_dir)
+
+    # Mark Claude Code onboarding complete + trust the working dir before launching. The
+    # tmux path needs both (no human at the TTY to answer the theme/trust screens);
+    # ``-p`` skips the trust dialog but still reads onboarding state, so keep it for both.
+    claude_config.ensure_onboarded(working_dir)
+    credsync.note_local_write()
+
+    if headless_run:
+        headless.launch(
+            agent,
+            kind="spawn",
+            prompt=task,
+            settings_path=settings_path,
+            env=env,
+            worker_id=worker_id or f"cli-{os.getpid()}",
+        )
+    else:
+        session = tmux.session_name(project_id, name)
+        command = _claude_command(task, settings_path)
+        tmux.new_session(session, cwd=working_dir, command=command, env=env)
+    agent = {**agent, "forge_note": forge_note, "sync_note": sync_note}
+    return agent
+
+
+def _agent_env(
+    project: dict,
+    agent: dict,
+    token: str | None,
+    *,
+    role: str | None = None,
+    mise_init: bool = False,
+) -> dict[str, str]:
+    """The environment an agent process (and therefore its hooks) runs with: identity,
+    ``DATABASE_URL``, and resolved forge/git credentials. Shared by spawn and the
+    headless resume path (a resume is a brand-new process needing the same env)."""
     env = {
-        "HANDLER_PROJECT_ID": project_id,
-        "HANDLER_AGENT_NAME": name,
+        "HANDLER_PROJECT_ID": project["id"],
+        "HANDLER_AGENT_NAME": agent["name"],
         "HANDLER_AGENT_ID": str(agent["id"]),
         "DATABASE_URL": get_settings().database_url,
     }
+    role = role or agent.get("role")
     if role:
         env["HANDLER_AGENT_ROLE"] = role
     if mise_init:
@@ -164,28 +214,13 @@ def spawn(
     with connection() as conn:
         env.update(credentials.credential_env(token, project.get("git_remote"), conn))
         if token:
-            _install_git_credentials(working_dir, project.get("git_remote"), conn)
+            _install_git_credentials(agent["working_dir"], project.get("git_remote"), conn)
         # SSH remotes: pin the agent's git to the server's deploy key, when one is stored.
         try:
             env.update(reposync.ssh_env(project.get("git_remote"), conn))
         except reposync.SyncError as exc:
             raise SpawnError(str(exc)) from exc
-
-    # Verify the pinned forge version, if one is configured. Non-fatal: a version drift
-    # is recorded as a warning rather than blocking the spawn, since not every agent
-    # touches forge and the base image is the real pin (README 3.6, Phase 2).
-    forge_note = _check_forge_version(working_dir)
-
-    # Mark Claude Code onboarding complete + trust the working dir before launching, so the
-    # detached agent boots straight to the REPL instead of wedging on the first-run theme
-    # picker / trust prompt with no human at the tmux TTY to answer it.
-    claude_config.ensure_onboarded(working_dir)
-
-    session = tmux.session_name(project_id, name)
-    command = _claude_command(task, settings_path)
-    tmux.new_session(session, cwd=working_dir, command=command, env=env)
-    agent = {**agent, "forge_note": forge_note, "sync_note": sync_note}
-    return agent
+    return env
 
 
 def _check_forge_version(working_dir: str) -> str | None:
@@ -203,20 +238,128 @@ def kill(project_id: str, name: str) -> None:
         agent = repo.get_agent_by_name(conn, project_id, name)
         if agent is None:
             raise SpawnError(f"agent '{name}' not found in project '{project_id}'")
+        if agent.get("session_id"):
+            # Headless agent: flag the running run for cancel; the owning worker's
+            # supervisor polls the flag and SIGTERMs its own child (cross-worker safe —
+            # nobody signals a process they don't own). No running run = already dead.
+            run = repo.get_latest_run(conn, agent["id"])
+            if run is not None and run["status"] == "running":
+                repo.request_run_cancel(conn, run["id"])
+            repo.set_agent_status(conn, agent["id"], "done")
+            return
         session = tmux.session_name(project_id, name)
         if tmux.has_session(session):
             tmux.kill_session(session)
         repo.set_agent_status(conn, agent["id"], "done")
 
 
-def resume(agent: dict, answer: str) -> tuple[bool, str]:
-    """Feed an operator's answer back to a live agent.
+def resume(agent: dict, answer: str, worker_id: str | None = None) -> tuple[bool, str]:
+    """Feed an operator's answer back to an agent.
 
-    The seam the API's ``/resume`` route calls (and the one tests mock). Sends the
-    answer into the agent's tmux session so the waiting ``claude`` process receives it.
+    The seam the API's ``/resume`` route calls (and the one tests mock). Legacy tmux
+    agents (``session_id`` null) get the answer typed into their live session; headless
+    agents get a brand-new ``claude -p --resume`` run on this worker, with the session
+    transcript materialized from the DB archive first so any worker can serve the resume.
     """
+    if agent.get("session_id"):
+        return _resume_headless(agent, answer, worker_id or f"cli-{os.getpid()}")
     session = tmux.session_name(agent["project_id"], agent["name"])
     if not tmux.has_session(session):
         return False, f"no live session '{session}' to resume"
     tmux.send_keys(session, answer)
     return True, f"answer delivered to session '{session}'"
+
+
+def _resume_headless(agent: dict, answer: str, worker_id: str) -> tuple[bool, str]:
+    """Launch a ``--resume`` run for a headless agent, materializing its session first.
+
+    Refuses while a run is still live (two concurrent processes on one session would
+    corrupt it). When neither this worker nor the DB has the transcript — the owning
+    worker died before its first archive — falls back to a *fresh* session whose prompt
+    re-injects context from the DB (checkmark + open question + answer), recorded as a
+    ``worker`` event so the UI shows the degraded continuity.
+    """
+    with connection() as conn:
+        run = repo.get_latest_run(conn, agent["id"])
+        if run is not None and run["status"] == "running":
+            return False, "agent already has a live run; wait for it to finish or kill it"
+        project = repo.get_project(conn, agent["project_id"])
+        archive = repo.get_session_archive(conn, agent["id"])
+    if project is None:
+        return False, f"project '{agent['project_id']}' not registered"
+
+    working_dir = agent["working_dir"]
+    settings_path = settings_gen.write_settings(working_dir, headless=True)
+    try:
+        token = None
+        with connection() as conn:
+            token = credentials.resolve_for_project(project, conn)
+    except credentials.CredentialError as exc:
+        return False, str(exc)
+    env = _agent_env(project, agent, token)
+
+    transcript = headless.session_dir(working_dir) / f"{agent['session_id']}.jsonl"
+    if archive is not None:
+        try:
+            headless.materialize_session(working_dir, bytes(archive["archive"]))
+        except (OSError, ValueError) as exc:
+            return False, f"could not materialize session archive: {exc}"
+    elif not transcript.exists():
+        return _resume_reinjected(agent, answer, settings_path, env, worker_id)
+
+    run = headless.launch(
+        agent,
+        kind="resume",
+        prompt=answer,
+        settings_path=settings_path,
+        env=env,
+        worker_id=worker_id,
+    )
+    return True, f"headless resume run {run['id']} started for session {agent['session_id']}"
+
+
+def _resume_reinjected(
+    agent: dict, answer: str, settings_path: str, env: dict, worker_id: str
+) -> tuple[bool, str]:
+    """Degraded resume: no transcript anywhere, so start a fresh session with the
+    context rebuilt from the DB. Continuity is approximate — say so in the event log."""
+    with connection() as conn:
+        checkmark = repo.get_checkmark(conn, agent["id"])
+        recent = repo.get_log(conn, agent["id"], limit=5)
+    parts = [
+        "You are resuming work you started in an earlier session whose transcript is "
+        "unavailable. Reconstruct context from your checkpoint below, then continue.",
+    ]
+    if checkmark:
+        if checkmark.get("where_it_stopped"):
+            parts.append(f"Where you stopped: {checkmark['where_it_stopped']}")
+        if checkmark.get("next_steps"):
+            parts.append(f"Planned next steps: {checkmark['next_steps']}")
+        if checkmark.get("open_question"):
+            parts.append(f"You had asked: {checkmark['open_question']}")
+    for entry in reversed(recent):
+        if entry.get("summary"):
+            parts.append(f"Earlier log: {entry['summary']}")
+    parts.append(f"The operator's answer/instruction: {answer}")
+    run = headless.launch(
+        agent,
+        kind="spawn",  # a genuinely new session (new UUID) — --resume has nothing to load
+        prompt="\n\n".join(parts),
+        settings_path=settings_path,
+        env=env,
+        worker_id=worker_id,
+    )
+    with connection() as conn:
+        repo.insert_agent_event(
+            conn,
+            agent["id"],
+            run["id"],
+            seq=0,
+            type="worker",
+            payload={
+                "notice": "resume without transcript — context re-injected from DB",
+                "previous_session_id": agent["session_id"],
+            },
+            session_id=run["session_id"],
+        )
+    return True, f"transcript unavailable; started fresh run {run['id']} with re-injected context"

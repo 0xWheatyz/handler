@@ -43,10 +43,18 @@ def enqueue_login_start(conn: Connection = Depends(db_conn)) -> dict:
     dependencies=[Depends(require_admin)],
 )
 def enqueue_login_submit(body: LoginSubmitIn, conn: Connection = Depends(db_conn)) -> dict:
-    """Feed the pasted authorization code back into the waiting login session."""
+    """Feed the pasted authorization code back into the waiting login session.
+
+    Pinned to the worker that ran ``login_start`` — the live tmux login session exists
+    only in that container, so with multiple workers any other claimant would find
+    nothing to paste into. No prior login_start leaves the pin empty (single-worker
+    deployments behave exactly as before).
+    """
+    started = repo.get_latest_finished_command(conn, "login_start")
     return repo.enqueue_command(
         conn,
         "login_submit",
         payload={"code": body.code},
         requested_by="operator:web",
+        target_worker=started["claimed_by"] if started else None,
     )

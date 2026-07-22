@@ -31,6 +31,7 @@ from .tables import (
     forge_hosts,
     log_entries,
     projects,
+    runtime_secrets,
     schedules,
     session_archives,
     shared_context,
@@ -872,5 +873,36 @@ def upsert_session_archive(
 def get_session_archive(conn: Connection, agent_id: int) -> dict | None:
     row = conn.execute(
         select(session_archives).where(session_archives.c.agent_id == agent_id)
+    ).first()
+    return _row_to_dict(row)
+
+
+def upsert_runtime_secret(conn: Connection, key: str, value_enc: str) -> None:
+    """Store an encrypted control-plane secret (the caller encrypts via secretstore)."""
+    now = _now()
+    result = conn.execute(
+        runtime_secrets.update()
+        .where(runtime_secrets.c.key == key)
+        .values(value_enc=value_enc, updated_at=now)
+    )
+    if result.rowcount == 0:
+        conn.execute(
+            runtime_secrets.insert().values(key=key, value_enc=value_enc, updated_at=now)
+        )
+
+
+def get_runtime_secret(conn: Connection, key: str) -> dict | None:
+    row = conn.execute(select(runtime_secrets).where(runtime_secrets.c.key == key)).first()
+    return _row_to_dict(row)
+
+
+def get_latest_finished_command(conn: Connection, type: str) -> dict | None:
+    """The most recent ``done`` command of a type (login pinning reads login_start's
+    ``claimed_by`` to route login_submit to the same worker container)."""
+    row = conn.execute(
+        select(commands)
+        .where(commands.c.type == type, commands.c.status == "done")
+        .order_by(commands.c.id.desc())
+        .limit(1)
     ).first()
     return _row_to_dict(row)

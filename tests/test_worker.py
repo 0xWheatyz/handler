@@ -65,8 +65,8 @@ def test_resume_command_feeds_answer_and_sets_working(env, monkeypatch):
     _seed_project("api")
     seen = {}
 
-    def fake_resume(agent, ans):
-        seen.update(name=agent["name"], ans=ans)
+    def fake_resume(agent, ans, worker_id=None):
+        seen.update(name=agent["name"], ans=ans, worker_id=worker_id)
         return True, "ok"
 
     monkeypatch.setattr(spawn, "resume", fake_resume)
@@ -74,9 +74,27 @@ def test_resume_command_feeds_answer_and_sets_working(env, monkeypatch):
 
     worker.drain("w")
     assert _get(cmd["id"])["status"] == "done"
-    assert seen == {"name": "api", "ans": "Postgres"}
+    assert seen == {"name": "api", "ans": "Postgres", "worker_id": "w"}
     with get_engine().begin() as conn:
         assert repo.get_agent_by_name(conn, "p", "api")["status"] == "working"
+
+
+def test_resume_command_fails_loudly_when_undeliverable(env, monkeypatch):
+    """An undeliverable answer must surface as a FAILED command — never a silent 'done'
+    (the original bug: send-keys into a dead tmux pane reported success)."""
+    _seed_project("api")
+    monkeypatch.setattr(
+        spawn, "resume", lambda agent, ans, worker_id=None: (False, "no live session")
+    )
+    cmd = _enqueue(type="resume", project_id="p", agent_name="api", payload={"answer": "x"})
+
+    worker.drain("w")
+    failed = _get(cmd["id"])
+    assert failed["status"] == "failed"
+    assert "no live session" in failed["error"]
+    with get_engine().begin() as conn:
+        # The agent must NOT be flipped to working when nothing was delivered.
+        assert repo.get_agent_by_name(conn, "p", "api")["status"] != "working"
 
 
 def test_approve_command_records_operator_verdict_with_head_sha(env, fake_gitops):

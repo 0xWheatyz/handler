@@ -96,6 +96,10 @@ class Settings(BaseSettings):
         return {b.strip() for b in self.protected_branches.split(",") if b.strip()}
 
     @property
+    def headless_allowed_tools_list(self) -> list[str]:
+        return [t.strip() for t in self.headless_allowed_tools.split(",") if t.strip()]
+
+    @property
     def cors_origin_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
 

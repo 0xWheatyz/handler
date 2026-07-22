@@ -15,12 +15,24 @@ returns a JSON-safe result or raises); ``drain``/``run`` are the claim+finish pl
 from __future__ import annotations
 
 import os
+import secrets
+import socket
 import time
 from datetime import UTC, datetime, timedelta
 
+from ..config import get_settings
 from ..db import repository as repo
 from ..db.engine import connection
-from . import gitops, login, poller, reposync, skills_gen, spawn, tmux
+from . import credsync, gitops, login, poller, reposync, skills_gen, spawn, tmux
+
+# Command types that launch a claude run and therefore need a free slot on this worker.
+# A worker with all slots busy leaves these queued for a less-loaded worker to claim.
+_RUN_COMMANDS = ("spawn", "resume", "mise_init")
+
+
+def make_worker_id() -> str:
+    """A stable-for-this-process, unique-across-containers worker id."""
+    return f"worker-{socket.gethostname()}-{os.getpid()}-{secrets.token_hex(2)}"
 
 
 class CommandError(Exception):
@@ -43,6 +55,7 @@ def _cmd_spawn(command: dict) -> dict:
         worktree_branch=p.get("worktree"),
         task=p.get("task"),
         role=p.get("role"),
+        worker_id=command.get("claimed_by"),
     )
     result = {
         "agent_id": agent["id"],
@@ -73,11 +86,15 @@ def _cmd_resume(command: dict) -> dict:
         agent = repo.get_agent_by_name(conn, command["project_id"], name)
     if agent is None:
         raise CommandError(f"agent '{name}' not found in project '{command['project_id']}'")
-    ok, detail = spawn.resume(agent, answer)
-    if ok:
-        with connection() as conn:
-            repo.set_agent_status(conn, agent["id"], "working")
-    return {"resumed": ok, "detail": detail}
+    ok, detail = spawn.resume(agent, answer, worker_id=command.get("claimed_by"))
+    if not ok:
+        # A resume that couldn't be delivered is a FAILED command, not a quiet no-op —
+        # the operator's input must never vanish silently (the old tmux path typed into
+        # dead panes and reported success).
+        raise CommandError(detail)
+    with connection() as conn:
+        repo.set_agent_status(conn, agent["id"], "working")
+    return {"resumed": True, "detail": detail}
 
 
 def _record_verdict(command: dict, status: str) -> dict:
@@ -219,6 +236,13 @@ def _cmd_login_submit(command: dict) -> dict:
         # Surface the pane tail so the operator can see why claude rejected the code.
         detail = result.get("output") or "claude did not confirm a successful login"
         raise CommandError(f"login not confirmed — {detail}")
+    # Publish the fresh credentials so every other worker container can materialize
+    # them (multi-worker: the login ran here, but any worker may run the next agent).
+    try:
+        result["credentials_published"] = credsync.upload()
+    except Exception as exc:  # noqa: BLE001 - login succeeded; publishing is best-effort
+        result["credentials_published"] = False
+        result["credsync_note"] = str(exc)
     return result
 
 
@@ -360,7 +384,9 @@ def drain(worker_id: str, limit: int | None = None) -> int:
     processed = 0
     while limit is None or processed < limit:
         with connection() as conn:
-            command = repo.claim_next_command(conn, worker_id)
+            command = repo.claim_next_command(
+                conn, worker_id, types_excluded=_full_slot_exclusions(worker_id)
+            )
         if command is None:
             break
         _run_one(command)
@@ -368,22 +394,43 @@ def drain(worker_id: str, limit: int | None = None) -> int:
     return processed
 
 
+def _full_slot_exclusions(worker_id: str) -> tuple[str, ...]:
+    """Command types this worker must not claim right now.
+
+    Headless runs are supervised in-process, so a worker at ``max_concurrent_runs`` skips
+    claiming run-starting commands — they stay queued for a worker with a free slot. Slot
+    accounting is DB-driven (this worker's ``running`` runs), so it needs no in-memory
+    registry and survives restarts (a fresh process gets a fresh worker id; stale rows
+    belong to the old id and are the reaper's problem). Tmux runs are fire-and-forget and
+    never consume a slot.
+    """
+    if get_settings().runner != "headless":
+        return ()
+    with connection() as conn:
+        active = len(repo.list_running_runs(conn, worker_id=worker_id))
+    if active >= get_settings().max_concurrent_runs:
+        return _RUN_COMMANDS
+    return ()
+
+
 def run(
     worker_id: str | None = None,
     poll_interval: float = 2.0,
     ci_interval: float = 30.0,
     capture_interval: float = 2.0,
+    credsync_interval: float = 30.0,
     iterations: int | None = None,
 ) -> None:
     """The control-container main loop: drain the command queue, snapshot live agent
-    output, and sweep CI periodically.
+    output, sync claude credentials, and sweep CI periodically.
 
     ``iterations`` bounds the loop for tests; production runs unbounded. Sleeps
     ``poll_interval`` only when a pass found no commands, so bursts drain promptly.
     """
-    worker_id = worker_id or f"worker-{os.getpid()}"
+    worker_id = worker_id or make_worker_id()
     last_ci = 0.0
     last_capture = 0.0
+    last_credsync = 0.0
     count = 0
     while iterations is None or count < iterations:
         try:
@@ -398,6 +445,14 @@ def run(
             except Exception:  # noqa: BLE001 - a capture hiccup must not kill the worker
                 pass
             last_capture = now
+        if credsync_interval > 0 and (last_credsync == 0.0 or now - last_credsync >= credsync_interval):
+            # First pass runs immediately: a fresh worker container must materialize the
+            # claude credentials before it claims its first spawn.
+            try:
+                credsync.refresh()
+            except Exception:  # noqa: BLE001 - cred sync must not kill the worker
+                pass
+            last_credsync = now
         if ci_interval > 0 and now - last_ci >= ci_interval:
             try:
                 poller.sweep()
