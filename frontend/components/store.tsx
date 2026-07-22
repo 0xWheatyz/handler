@@ -17,6 +17,7 @@ import {
   AuthError,
   createClient,
   type Agent,
+  type AgentEvent,
   type ApiError,
   type Approval,
   type Checkmark,
@@ -83,6 +84,9 @@ interface StoreValue {
   log: LogEntry[];
   logOffset: number;
   pageLog: (dir: 1 | -1) => void;
+  /* Headless run event stream for the selected run, oldest-first, appended by cursor
+   * polls (empty for legacy tmux agents). */
+  events: AgentEvent[];
 
   approvals: Approval[];
   hosts: Host[];
@@ -204,6 +208,9 @@ export function DashboardProvider({
   const [checkmarkMissing, setCheckmarkMissing] = useState(false);
   const [log, setLog] = useState<LogEntry[]>([]);
   const [logOffset, setLogOffset] = useState(0);
+  const [events, setEvents] = useState<AgentEvent[]>([]);
+  const eventsRef = useRef<AgentEvent[]>([]);
+  eventsRef.current = events;
   const [approvals, setApprovals] = useState<Approval[]>([]);
   const [hosts, setHosts] = useState<Host[]>([]);
   const [commands, setCommands] = useState<Command[]>([]);
@@ -279,6 +286,17 @@ export function DashboardProvider({
         `${path}/log?limit=${LOG_LIMIT}&offset=${logOffsetRef.current}`,
       );
       setLog(entries);
+    } catch (e) {
+      swallow(e);
+    }
+    try {
+      // Cursor poll: only events newer than what we already hold come back.
+      const cur = eventsRef.current;
+      const after = cur.length ? cur[cur.length - 1].id : 0;
+      const fresh = await clientRef.current.api<AgentEvent[]>(
+        `${path}/events?after_id=${after}&limit=500`,
+      );
+      if (fresh.length) setEvents((prev) => [...prev, ...fresh]);
     } catch (e) {
       swallow(e);
     }
@@ -407,6 +425,8 @@ export function DashboardProvider({
       setCheckmark(null);
       setCheckmarkMissing(false);
       setLog([]);
+      setEvents([]);
+      eventsRef.current = [];
       void loadRun(projectId, name);
     },
     [loadRun],
@@ -925,6 +945,7 @@ export function DashboardProvider({
     log,
     logOffset,
     pageLog,
+    events,
     approvals,
     hosts,
     commands,

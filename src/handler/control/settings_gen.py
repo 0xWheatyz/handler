@@ -12,6 +12,8 @@ import json
 import os
 import sys
 
+from ..config import get_settings
+
 
 def _hook_command(event: str) -> str:
     # Use the exact interpreter the control layer runs under, so the hook resolves the
@@ -20,7 +22,7 @@ def _hook_command(event: str) -> str:
 
 
 def build_settings() -> dict:
-    return {
+    settings = {
         "hooks": {
             "Stop": [{"hooks": [{"type": "command", "command": _hook_command("stop")}]}],
             "SessionEnd": [
@@ -37,6 +39,16 @@ def build_settings() -> dict:
             ],
         }
     }
+    # ``claude -p`` never prompts — anything that would ask for permission is
+    # auto-denied. The allowlist is therefore what lets normal work (git, mise, the
+    # project's own tooling) proceed; the PreToolUse/Stop hooks above remain the hard
+    # gate either way, since a hook deny overrides any allow.
+    s = get_settings()
+    settings["permissions"] = {
+        "defaultMode": s.headless_permission_mode,
+        "allow": s.headless_allowed_tools_list,
+    }
+    return settings
 
 
 def write_settings(working_dir: str) -> str:

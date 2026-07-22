@@ -22,6 +22,8 @@ from typing import Any
 from sqlalchemy import Connection, select
 
 from .tables import (
+    agent_events,
+    agent_runs,
     agents,
     approvals,
     checkmarks,
@@ -29,8 +31,11 @@ from .tables import (
     forge_hosts,
     log_entries,
     projects,
+    runtime_secrets,
     schedules,
+    session_archives,
     shared_context,
+    workers,
 )
 from .upsert import upsert_checkmark
 
@@ -373,6 +378,10 @@ def _purge_agent_dependents(conn: Connection, agent_ids: list[int]) -> None:
     conn.execute(approvals.delete().where(approvals.c.approved_by_agent_id.in_(agent_ids)))
     conn.execute(checkmarks.delete().where(checkmarks.c.agent_id.in_(agent_ids)))
     conn.execute(log_entries.delete().where(log_entries.c.agent_id.in_(agent_ids)))
+    # Headless-runner rows: events reference runs, so they go first.
+    conn.execute(agent_events.delete().where(agent_events.c.agent_id.in_(agent_ids)))
+    conn.execute(agent_runs.delete().where(agent_runs.c.agent_id.in_(agent_ids)))
+    conn.execute(session_archives.delete().where(session_archives.c.agent_id.in_(agent_ids)))
 
 
 def delete_project(conn: Connection, project_id: str) -> bool:
@@ -424,8 +433,13 @@ def enqueue_command(
     agent_name: str | None = None,
     payload: dict | None = None,
     requested_by: str | None = None,
+    target_worker: str | None = None,
 ) -> dict:
-    """Insert a ``queued`` control command for the worker to pick up. Returns the row."""
+    """Insert a ``queued`` control command for the worker to pick up. Returns the row.
+
+    ``target_worker`` pins the command to one worker id (used by login_submit, which must
+    reach the container holding the live login tmux session); null = any worker.
+    """
     result = conn.execute(
         commands.insert().values(
             project_id=project_id,
@@ -434,6 +448,7 @@ def enqueue_command(
             payload=payload,
             status="queued",
             requested_by=requested_by,
+            target_worker=target_worker,
             created_at=_now(),
         )
     )
@@ -457,20 +472,34 @@ def list_commands(
     return [dict(r._mapping) for r in rows]
 
 
-def claim_next_command(conn: Connection, worker_id: str) -> dict | None:
+def claim_next_command(
+    conn: Connection,
+    worker_id: str,
+    types_excluded: tuple[str, ...] = (),
+) -> dict | None:
     """Atomically claim the oldest queued command, flipping it to ``running``.
 
     Postgres uses ``FOR UPDATE SKIP LOCKED`` so multiple workers never grab the same row;
     on SQLite (single writer per transaction) the guarded ``WHERE status='queued'`` update
     plus a rowcount check is enough. Returns the claimed row, or ``None`` when the queue is
     empty or another worker won the race.
+
+    A command whose ``target_worker`` is set is only claimable by that worker (the login
+    flow's two steps must land on the same container). ``types_excluded`` lets a worker
+    with no free run slots skip claiming commands that would launch a new run, leaving
+    them for a less-loaded worker.
     """
     sel = (
         select(commands.c.id)
-        .where(commands.c.status == "queued")
+        .where(
+            commands.c.status == "queued",
+            (commands.c.target_worker.is_(None)) | (commands.c.target_worker == worker_id),
+        )
         .order_by(commands.c.id.asc())
         .limit(1)
     )
+    if types_excluded:
+        sel = sel.where(commands.c.type.not_in(types_excluded))
     if conn.dialect.name == "postgresql":
         sel = sel.with_for_update(skip_locked=True)
     row = conn.execute(sel).first()
@@ -659,3 +688,227 @@ def mark_schedule_run(
             last_run_at=last_run_at, next_run_at=next_run_at, last_command_id=last_command_id
         )
     )
+
+
+# ------------------------------------------------- headless runner (workers/runs/events)
+
+
+def upsert_worker_heartbeat(
+    conn: Connection,
+    worker_id: str,
+    *,
+    hostname: str | None = None,
+    pid: int | None = None,
+    max_runs: int | None = None,
+    active_runs: int | None = None,
+) -> None:
+    """Register a worker or refresh its heartbeat — the reaper's liveness signal."""
+    now = _now()
+    result = conn.execute(
+        workers.update()
+        .where(workers.c.id == worker_id)
+        .values(
+            hostname=hostname, pid=pid, max_runs=max_runs,
+            active_runs=active_runs, heartbeat_at=now,
+        )
+    )
+    if result.rowcount == 0:
+        conn.execute(
+            workers.insert().values(
+                id=worker_id, hostname=hostname, pid=pid, max_runs=max_runs,
+                active_runs=active_runs, started_at=now, heartbeat_at=now,
+            )
+        )
+
+
+def list_stale_workers(conn: Connection, cutoff: datetime) -> list[dict]:
+    """Workers whose heartbeat predates ``cutoff`` — reaper input."""
+    rows = conn.execute(select(workers).where(workers.c.heartbeat_at < cutoff)).all()
+    return [dict(r._mapping) for r in rows]
+
+
+def delete_worker(conn: Connection, worker_id: str) -> bool:
+    """Drop a (dead) worker's registry row after its runs have been settled."""
+    result = conn.execute(workers.delete().where(workers.c.id == worker_id))
+    return result.rowcount > 0
+
+
+def create_run(
+    conn: Connection, agent_id: int, session_id: str, worker_id: str, kind: str
+) -> dict:
+    """Open an ``agent_runs`` row for a launching headless invocation."""
+    result = conn.execute(
+        agent_runs.insert().values(
+            agent_id=agent_id,
+            session_id=session_id,
+            worker_id=worker_id,
+            kind=kind,
+            status="running",
+            cancel_requested=False,
+            started_at=_now(),
+        )
+    )
+    return get_run(conn, result.inserted_primary_key[0])
+
+
+def get_run(conn: Connection, run_id: int) -> dict | None:
+    row = conn.execute(select(agent_runs).where(agent_runs.c.id == run_id)).first()
+    return _row_to_dict(row)
+
+
+def finish_run(
+    conn: Connection,
+    run_id: int,
+    status: str,
+    exit_code: int | None = None,
+    result: dict | None = None,
+) -> bool:
+    """Close a run — only if still ``running``, so a reaper's ``crashed`` verdict and the
+    supervisor's own exit reconciliation can race without the loser clobbering the winner."""
+    res = conn.execute(
+        agent_runs.update()
+        .where(agent_runs.c.id == run_id, agent_runs.c.status == "running")
+        .values(status=status, exit_code=exit_code, result=result, finished_at=_now())
+    )
+    return res.rowcount > 0
+
+
+def request_run_cancel(conn: Connection, run_id: int) -> bool:
+    """Flag a running run for cancellation; its owning supervisor polls and SIGTERMs."""
+    result = conn.execute(
+        agent_runs.update()
+        .where(agent_runs.c.id == run_id, agent_runs.c.status == "running")
+        .values(cancel_requested=True)
+    )
+    return result.rowcount > 0
+
+
+def get_cancel_requested(conn: Connection, run_id: int) -> bool:
+    row = conn.execute(
+        select(agent_runs.c.cancel_requested).where(agent_runs.c.id == run_id)
+    ).first()
+    return bool(row[0]) if row is not None else False
+
+
+def list_running_runs(conn: Connection, worker_id: str | None = None) -> list[dict]:
+    """Runs currently ``running`` — all of them, or one worker's (the reaper's sweep)."""
+    stmt = select(agent_runs).where(agent_runs.c.status == "running")
+    if worker_id is not None:
+        stmt = stmt.where(agent_runs.c.worker_id == worker_id)
+    rows = conn.execute(stmt.order_by(agent_runs.c.id)).all()
+    return [dict(r._mapping) for r in rows]
+
+
+def get_latest_run(conn: Connection, agent_id: int) -> dict | None:
+    row = conn.execute(
+        select(agent_runs)
+        .where(agent_runs.c.agent_id == agent_id)
+        .order_by(agent_runs.c.id.desc())
+        .limit(1)
+    ).first()
+    return _row_to_dict(row)
+
+
+def set_agent_session(
+    conn: Connection, agent_id: int, session_id: str, worker_id: str
+) -> None:
+    """Record the claude session UUID + supervising worker on the agent row."""
+    conn.execute(
+        agents.update()
+        .where(agents.c.id == agent_id)
+        .values(session_id=session_id, worker_id=worker_id)
+    )
+
+
+def insert_agent_event(
+    conn: Connection,
+    agent_id: int,
+    run_id: int,
+    seq: int,
+    type: str,
+    payload: dict | None = None,
+    session_id: str | None = None,
+) -> int:
+    result = conn.execute(
+        agent_events.insert().values(
+            agent_id=agent_id,
+            run_id=run_id,
+            session_id=session_id,
+            seq=seq,
+            type=type,
+            payload=payload,
+            created_at=_now(),
+        )
+    )
+    return result.inserted_primary_key[0]
+
+
+def list_agent_events(
+    conn: Connection, agent_id: int, after_id: int = 0, limit: int = 200
+) -> list[dict]:
+    """Events for an agent in insertion order, cursor-paged by row id (the UI polls with
+    ``after_id`` = the last id it has, so each poll returns only what's new)."""
+    rows = conn.execute(
+        select(agent_events)
+        .where(agent_events.c.agent_id == agent_id, agent_events.c.id > after_id)
+        .order_by(agent_events.c.id.asc())
+        .limit(limit)
+    ).all()
+    return [dict(r._mapping) for r in rows]
+
+
+def upsert_session_archive(
+    conn: Connection, agent_id: int, session_id: str, archive: bytes
+) -> None:
+    """Store (replace) the agent's latest claude session archive."""
+    now = _now()
+    result = conn.execute(
+        session_archives.update()
+        .where(session_archives.c.agent_id == agent_id)
+        .values(session_id=session_id, archive=archive, bytes=len(archive), updated_at=now)
+    )
+    if result.rowcount == 0:
+        conn.execute(
+            session_archives.insert().values(
+                agent_id=agent_id, session_id=session_id, archive=archive,
+                bytes=len(archive), updated_at=now,
+            )
+        )
+
+
+def get_session_archive(conn: Connection, agent_id: int) -> dict | None:
+    row = conn.execute(
+        select(session_archives).where(session_archives.c.agent_id == agent_id)
+    ).first()
+    return _row_to_dict(row)
+
+
+def upsert_runtime_secret(conn: Connection, key: str, value_enc: str) -> None:
+    """Store an encrypted control-plane secret (the caller encrypts via secretstore)."""
+    now = _now()
+    result = conn.execute(
+        runtime_secrets.update()
+        .where(runtime_secrets.c.key == key)
+        .values(value_enc=value_enc, updated_at=now)
+    )
+    if result.rowcount == 0:
+        conn.execute(
+            runtime_secrets.insert().values(key=key, value_enc=value_enc, updated_at=now)
+        )
+
+
+def get_runtime_secret(conn: Connection, key: str) -> dict | None:
+    row = conn.execute(select(runtime_secrets).where(runtime_secrets.c.key == key)).first()
+    return _row_to_dict(row)
+
+
+def get_latest_finished_command(conn: Connection, type: str) -> dict | None:
+    """The most recent ``done`` command of a type (login pinning reads login_start's
+    ``claimed_by`` to route login_submit to the same worker container)."""
+    row = conn.execute(
+        select(commands)
+        .where(commands.c.type == type, commands.c.status == "done")
+        .order_by(commands.c.id.desc())
+        .limit(1)
+    ).first()
+    return _row_to_dict(row)

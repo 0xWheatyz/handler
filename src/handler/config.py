@@ -51,6 +51,27 @@ class Settings(BaseSettings):
     forge_bin: str = "forge"
     git_bin: str = "git"
 
+    # ---- Headless runner (claude -p --output-format stream-json): worker-owned
+    # subprocesses streaming events to the DB. Agent runs are always headless; tmux
+    # remains only for the interactive /login flow.
+    # How many concurrent claude runs one worker container supervises; commands that would
+    # start a run are left queued (for another worker) while all slots are busy.
+    max_concurrent_runs: int = 4
+    # Heartbeats older than this many seconds mark a worker dead; the reaper flips its
+    # running runs (and their agents) to ``crashed``.
+    worker_stale_after: float = 60.0
+    # Per-run spend cap passed as ``--max-budget-usd``. 0 disables the flag.
+    run_budget_usd: float = 0.0
+    # Refuse to upload a claude session archive larger than this (a runaway sidecar dir
+    # shouldn't balloon the DB); the run still works, only cross-worker resume degrades.
+    session_archive_max_bytes: int = 32 * 1024 * 1024
+    # settings.json ``permissions.defaultMode`` for headless runs. ``-p`` auto-denies
+    # anything that would prompt interactively, so this plus the allowlist below is what
+    # lets normal work proceed; the PreToolUse/Stop hooks stay the hard gate.
+    headless_permission_mode: str = "acceptEdits"
+    # Comma-separated permission allow rules added to generated settings for headless runs.
+    headless_allowed_tools: str = "Bash(git *),Bash(mise *)"
+
     # The pinned `forge` version (README 3.6 / Phase 2: pin, never float on @latest).
     # When set, spawn verifies the injected forge matches and records a mismatch; when
     # empty the check is skipped. Operators align this with what their base image installs.
@@ -72,6 +93,10 @@ class Settings(BaseSettings):
     @property
     def protected_branch_set(self) -> set[str]:
         return {b.strip() for b in self.protected_branches.split(",") if b.strip()}
+
+    @property
+    def headless_allowed_tools_list(self) -> list[str]:
+        return [t.strip() for t in self.headless_allowed_tools.split(",") if t.strip()]
 
     @property
     def cors_origin_list(self) -> list[str]:

@@ -1,10 +1,11 @@
 """``handler`` CLI — the control layer's write side.
 
-Spawn/list/attach/kill manage agent processes. Phase 2 adds the forge-workflow control
-commands: ``approve``/``reject`` (the senior agent records its verdict, which the deploy
-gate checks), ``poll-ci`` (backfill CI verdicts), and ``forge-init`` (write the role
-skills into a managed repo). The DB is the source of truth for what agents exist; tmux is
-cross-checked for liveness. All commands are project-namespaced.
+Spawn/list/kill manage agent runs (headless ``claude -p`` processes supervised by the
+worker). Phase 2 adds the forge-workflow control commands: ``approve``/``reject`` (the
+senior agent records its verdict, which the deploy gate checks), ``poll-ci`` (backfill
+CI verdicts), and ``forge-init`` (write the role skills into a managed repo). The DB is
+the single source of truth: what agents exist AND whether their runs are live both come
+from it. All commands are project-namespaced.
 """
 
 from __future__ import annotations
@@ -15,7 +16,7 @@ import sys
 
 from ..db import repository as repo
 from ..db.engine import connection
-from . import poller, reposync, skills_gen, spawn, tmux, worker
+from . import poller, reposync, skills_gen, spawn, worker
 
 
 def _cmd_spawn(args: argparse.Namespace) -> int:
@@ -37,36 +38,25 @@ def _cmd_spawn(args: argparse.Namespace) -> int:
         print(f"  role: {args.role}")
     if agent.get("forge_note"):
         print(f"  warning: {agent['forge_note']}", file=sys.stderr)
-    print(f"  tmux session: {tmux.session_name(args.project, args.name)}")
     return 0
 
 
 def _cmd_list(args: argparse.Namespace) -> int:
-    live = set(tmux.list_sessions())
     with connection() as conn:
+        live = {run["agent_id"] for run in repo.list_running_runs(conn)}
         if args.project:
             projects = [args.project] if repo.get_project(conn, args.project) else []
         else:
             projects = [p["id"] for p in repo.list_projects(conn)]
         for project_id in projects:
             for agent in repo.list_agents(conn, project_id):
-                session = tmux.session_name(project_id, agent["name"])
-                alive = "live" if session in live else "-"
+                alive = "live" if agent["id"] in live else "-"
                 role = agent.get("role") or "-"
+                worker_id = agent.get("worker_id") or "-"
                 print(
-                    f"{project_id}/{agent['name']}\t{role}\t{agent['status']}\t{alive}\t{session}"
+                    f"{project_id}/{agent['name']}\t{role}\t{agent['status']}\t{alive}\t{worker_id}"
                 )
     return 0
-
-
-def _cmd_attach(args: argparse.Namespace) -> int:
-    session = tmux.session_name(args.project, args.name)
-    if not tmux.has_session(session):
-        print(f"error: no live session '{session}'", file=sys.stderr)
-        return 1
-    # Replace this process with an interactive tmux attach.
-    os.execvp("tmux", ["tmux", "attach", "-t", session])
-    return 0  # pragma: no cover - execvp does not return
 
 
 def _cmd_kill(args: argparse.Namespace) -> int:
@@ -232,11 +222,6 @@ def build_parser() -> argparse.ArgumentParser:
     p_list = sub.add_parser("list", help="list agents")
     p_list.add_argument("--project", help="limit to one project")
     p_list.set_defaults(func=_cmd_list)
-
-    p_attach = sub.add_parser("attach", help="attach to an agent's tmux session")
-    p_attach.add_argument("--project", required=True)
-    p_attach.add_argument("--name", required=True)
-    p_attach.set_defaults(func=_cmd_attach)
 
     p_kill = sub.add_parser("kill", help="kill an agent's session")
     p_kill.add_argument("--project", required=True)

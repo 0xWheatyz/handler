@@ -65,8 +65,8 @@ def test_resume_command_feeds_answer_and_sets_working(env, monkeypatch):
     _seed_project("api")
     seen = {}
 
-    def fake_resume(agent, ans):
-        seen.update(name=agent["name"], ans=ans)
+    def fake_resume(agent, ans, worker_id=None):
+        seen.update(name=agent["name"], ans=ans, worker_id=worker_id)
         return True, "ok"
 
     monkeypatch.setattr(spawn, "resume", fake_resume)
@@ -74,9 +74,27 @@ def test_resume_command_feeds_answer_and_sets_working(env, monkeypatch):
 
     worker.drain("w")
     assert _get(cmd["id"])["status"] == "done"
-    assert seen == {"name": "api", "ans": "Postgres"}
+    assert seen == {"name": "api", "ans": "Postgres", "worker_id": "w"}
     with get_engine().begin() as conn:
         assert repo.get_agent_by_name(conn, "p", "api")["status"] == "working"
+
+
+def test_resume_command_fails_loudly_when_undeliverable(env, monkeypatch):
+    """An undeliverable answer must surface as a FAILED command — never a silent 'done'
+    (the original bug: send-keys into a dead tmux pane reported success)."""
+    _seed_project("api")
+    monkeypatch.setattr(
+        spawn, "resume", lambda agent, ans, worker_id=None: (False, "no live session")
+    )
+    cmd = _enqueue(type="resume", project_id="p", agent_name="api", payload={"answer": "x"})
+
+    worker.drain("w")
+    failed = _get(cmd["id"])
+    assert failed["status"] == "failed"
+    assert "no live session" in failed["error"]
+    with get_engine().begin() as conn:
+        # The agent must NOT be flipped to working when nothing was delivered.
+        assert repo.get_agent_by_name(conn, "p", "api")["status"] != "working"
 
 
 def test_approve_command_records_operator_verdict_with_head_sha(env, fake_gitops):
@@ -209,45 +227,6 @@ def test_bad_command_is_recorded_failed_not_raised(env):
     failed = _get(cmd["id"])
     assert failed["status"] == "failed"
     assert "agent name" in failed["error"]
-
-
-def test_capture_agent_output_snapshots_working_agents(env, monkeypatch):
-    with get_engine().begin() as conn:
-        repo.create_project(conn, "p", "/tmp/p")
-        agent = repo.create_agent(conn, "p", "api", "/tmp/p/api", status="working")
-
-    monkeypatch.setattr(worker.tmux, "has_session", lambda name: True)
-    monkeypatch.setattr(
-        worker.tmux, "capture_pane", lambda name, escapes=False: "boot\nTheme picker\n\n\n"
-    )
-
-    assert worker.capture_agent_output() == 1
-    with get_engine().begin() as conn:
-        row = repo.get_agent_by_id(conn, agent["id"])
-    # The tail is stored with trailing blank lines trimmed.
-    assert row["last_output"] == "boot\nTheme picker"
-    assert row["output_at"] is not None
-
-
-def test_capture_agent_output_skips_dead_sessions_and_nonworking(env, monkeypatch):
-    with get_engine().begin() as conn:
-        repo.create_project(conn, "p", "/tmp/p")
-        repo.create_agent(conn, "p", "gone", "/tmp/p/gone", status="working")
-        done = repo.create_agent(conn, "p", "done", "/tmp/p/done", status="done")
-
-    captured = []
-    monkeypatch.setattr(worker.tmux, "has_session", lambda name: False)
-    monkeypatch.setattr(
-        worker.tmux,
-        "capture_pane",
-        lambda name, escapes=False: captured.append(name) or "x",
-    )
-
-    # The working agent's session is dead (skipped); the done agent isn't queried at all.
-    assert worker.capture_agent_output() == 0
-    assert captured == []
-    with get_engine().begin() as conn:
-        assert repo.get_agent_by_id(conn, done["id"])["last_output"] is None
 
 
 def test_drain_processes_multiple_then_stops(env, monkeypatch):

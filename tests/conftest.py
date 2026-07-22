@@ -1,7 +1,8 @@
 """Shared fixtures. Everything runs on a fresh SQLite file per test, materialized via
 a *real* ``alembic upgrade head`` — so the migration path itself is under test, not
-just ``create_all``. No live claude/tmux/mise is ever touched: the three seams
-(``control.tmux``, ``hooks.verify``, ``control.spawn.resume``) are faked.
+just ``create_all``. No live claude/tmux/mise is ever touched: the seams
+(``control.headless.launch`` for runs, ``control.tmux`` for the login flow,
+``hooks.verify``, ``control.spawn.resume``) are faked.
 """
 
 from __future__ import annotations
@@ -111,18 +112,42 @@ def fake_tmux(monkeypatch):
     def send_enter(name):
         calls["send_enter"].append({"name": name})
 
-    def list_sessions():
-        return list(live)
-
     monkeypatch.setattr(tmux, "new_session", new_session)
     monkeypatch.setattr(tmux, "has_session", has_session)
     monkeypatch.setattr(tmux, "kill_session", kill_session)
     monkeypatch.setattr(tmux, "send_keys", send_keys)
     monkeypatch.setattr(tmux, "send_text", send_text)
     monkeypatch.setattr(tmux, "send_enter", send_enter)
-    monkeypatch.setattr(tmux, "list_sessions", list_sessions)
 
     return {"calls": calls, "live": live}
+
+
+@pytest.fixture
+def fake_launch(monkeypatch):
+    """Record ``headless.launch`` calls instead of spawning a claude subprocess.
+
+    Mirrors the real launch's DB side effects (run row + agent session/worker) so kill/
+    resume logic downstream of a fake spawn behaves like production, minus the process.
+    """
+    from handler.control import headless
+    from handler.db import repository as repo
+    from handler.db.engine import connection
+
+    calls: list[dict] = []
+
+    def launch(agent, *, kind, prompt, settings_path, env, worker_id, on_exit=None):
+        session_id = agent.get("session_id") if kind == "resume" else f"fake-sid-{len(calls) + 1}"
+        with connection() as conn:
+            run = repo.create_run(conn, agent["id"], session_id, worker_id, kind)
+            repo.set_agent_session(conn, agent["id"], session_id, worker_id)
+        calls.append(
+            {"agent": agent, "kind": kind, "prompt": prompt, "settings_path": settings_path,
+             "env": env, "worker_id": worker_id, "run": run}
+        )
+        return run
+
+    monkeypatch.setattr(headless, "launch", launch)
+    return calls
 
 
 @pytest.fixture

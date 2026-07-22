@@ -30,10 +30,28 @@ export interface Agent {
   working_dir: string;
   status: string;
   role?: string | null;
-  /* Latest tmux pane-tail snapshot from the worker, so the UI can show what a running
-   * agent is actually doing (and expose one wedged on an interactive prompt). */
+  /* Latest output snapshot from the worker: the tmux pane tail for legacy agents, the
+   * latest assistant text for headless runs. For a crashed agent this is the evidence
+   * frame — the last thing the process said. */
   last_output?: string | null;
   output_at?: string | null;
+  /* Headless runner: claude session UUID (null = legacy tmux agent) + supervising worker. */
+  session_id?: string | null;
+  worker_id?: string | null;
+  created_at: string;
+}
+
+/* One persisted stream-json event of a headless run (GET .../events, cursor-paged by id).
+ * `type` mirrors the stream (system/assistant/user/result) plus `worker` (runner notices)
+ * and `raw` (unparseable line kept verbatim). */
+export interface AgentEvent {
+  id: number;
+  agent_id: number;
+  run_id: number;
+  session_id?: string | null;
+  seq: number;
+  type: string;
+  payload?: Record<string, unknown> | null;
   created_at: string;
 }
 

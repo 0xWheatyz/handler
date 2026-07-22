@@ -1,7 +1,8 @@
-"""Thin tmux wrapper — the single mock seam for spawning.
+"""Thin tmux wrapper — now used ONLY by the interactive ``/login`` flow.
 
-Every tmux/claude invocation goes through these functions so tests can substitute a
-fake and never touch a real tmux server or ``claude`` binary.
+Agent runs are headless (``control.headless``); the one thing that still genuinely
+needs a TTY is driving claude's ``/login`` OAuth screens. Everything here goes through
+subprocess so the login tests can substitute a fake and never touch a real tmux server.
 """
 
 from __future__ import annotations
@@ -9,14 +10,6 @@ from __future__ import annotations
 import subprocess
 
 from ..config import get_settings
-
-
-def session_name(project_id: str, agent_name: str) -> str:
-    """``project__agent`` with tmux-illegal characters sanitized (README 3.4)."""
-    safe = f"{project_id}__{agent_name}"
-    for ch in (".", ":", " "):
-        safe = safe.replace(ch, "-")
-    return safe
 
 
 def new_session(
@@ -55,18 +48,6 @@ def has_session(name: str) -> bool:
         capture_output=True,
     )
     return result.returncode == 0
-
-
-def list_sessions() -> list[str]:
-    tmux = get_settings().tmux_bin
-    result = subprocess.run(
-        [tmux, "list-sessions", "-F", "#{session_name}"],
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode != 0:
-        return []
-    return [line for line in result.stdout.splitlines() if line]
 
 
 def kill_session(name: str) -> None:

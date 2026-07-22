@@ -144,11 +144,12 @@ export function AgentsSection() {
                             </div>
                           </td>
                         </tr>
-                        {a.status === "working" && a.last_output?.trim() && (
+                        {(a.status === "working" || a.status === "crashed") && a.last_output?.trim() && (
                           <tr>
                             <td colSpan={6} style={{ paddingTop: 0 }}>
                               <div className="faint" style={{ fontSize: "var(--text-xs)", marginBottom: 4 }}>
-                                live output{a.output_at ? ` · ${timeAgo(a.output_at)}` : ""}
+                                {a.status === "crashed" ? "last output before crash" : "live output"}
+                                {a.output_at ? ` · ${timeAgo(a.output_at)}` : ""}
                               </div>
                               <pre
                                 className="mono"

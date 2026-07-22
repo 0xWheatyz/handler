@@ -14,7 +14,15 @@ from sqlalchemy.exc import IntegrityError
 
 from ...db import repository as repo
 from ..deps import db_conn, require_admin, require_auth
-from ..schemas import AgentIn, AgentOut, CheckmarkOut, CommandOut, LogEntryOut, SpawnIn
+from ..schemas import (
+    AgentEventOut,
+    AgentIn,
+    AgentOut,
+    CheckmarkOut,
+    CommandOut,
+    LogEntryOut,
+    SpawnIn,
+)
 from .common import resolve_agent
 
 router = APIRouter(
@@ -63,12 +71,20 @@ def create_agent(project: str, body: AgentIn, conn: Connection = Depends(db_conn
     dependencies=[Depends(require_admin)],
 )
 def enqueue_spawn(project: str, body: SpawnIn, conn: Connection = Depends(db_conn)) -> dict:
-    """Enqueue a spawn; the worker creates the agent row + tmux session and reports back."""
+    """Enqueue a spawn; the worker creates the agent row + claude process and reports back."""
     _require_project(conn, project)
     if repo.get_agent_by_name(conn, project, body.name) is not None:
         raise HTTPException(
             status.HTTP_409_CONFLICT,
             detail=f"agent '{body.name}' already exists in project '{project}'",
+        )
+    if not body.task:
+        # A headless `claude -p` run with no prompt exits immediately having done
+        # nothing. Reject here (400) instead of letting the command fail asynchronously
+        # in the worker.
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            detail="a task is required: the headless runner has no idle-REPL mode",
         )
     payload = body.model_dump(exclude={"name"}, exclude_none=True)
     return repo.enqueue_command(
@@ -112,6 +128,23 @@ def get_checkmark(project: str, name: str, conn: Connection = Depends(db_conn)) 
             detail=f"agent '{name}' has no checkmark yet",
         )
     return checkmark
+
+
+@router.get("/{name}/events", response_model=list[AgentEventOut])
+def get_events(
+    project: str,
+    name: str,
+    after_id: int = Query(0, ge=0),
+    limit: int = Query(200, ge=1, le=1000),
+    conn: Connection = Depends(db_conn),
+) -> list[dict]:
+    """The headless run event stream, oldest-first, cursor-paged by row id.
+
+    The UI polls with ``after_id`` = the largest id it has seen, so each poll returns
+    only new events (an empty list for a legacy tmux agent or an idle one).
+    """
+    agent = resolve_agent(conn, project, name)
+    return repo.list_agent_events(conn, agent["id"], after_id=after_id, limit=limit)
 
 
 @router.get("/{name}/log", response_model=list[LogEntryOut])

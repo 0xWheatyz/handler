@@ -128,10 +128,14 @@ class AgentOut(BaseModel):
     working_dir: str
     status: str
     role: Role | None = None
-    # Latest tmux pane-tail snapshot (worker poll loop) so the UI can show what a running
-    # agent is doing — including one wedged on an interactive prompt no one can answer.
+    # Latest output snapshot so the UI can show what a running agent is doing: the tmux
+    # pane tail for legacy agents, the latest assistant text for headless runs.
     last_output: str | None = None
     output_at: datetime | None = None
+    # Headless runner: the claude session UUID (null = legacy tmux agent) and the worker
+    # container supervising (or last to supervise) this agent's runs.
+    session_id: str | None = None
+    worker_id: str | None = None
     created_at: datetime
 
 
@@ -304,6 +308,25 @@ class LogEntryOut(BaseModel):
     push_sha: str | None = None
     ci_status: str
     ci_checked_at: datetime | None = None
+
+
+class AgentEventOut(BaseModel):
+    """One persisted stream-json event of a headless run (the UI's live log panel).
+
+    ``type`` mirrors the stream's top-level type (system/assistant/user/result), plus
+    ``worker`` (runner-generated notices) and ``raw`` (unparseable line, kept verbatim).
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    agent_id: int
+    run_id: int
+    session_id: str | None = None
+    seq: int
+    type: str
+    payload: dict | None = None
+    created_at: datetime
 
 
 class AnswerIn(BaseModel):

@@ -1,11 +1,13 @@
-"""The control-container worker: executes commands the API enqueues.
+"""The control/worker container: executes commands the API enqueues and supervises
+headless claude runs.
 
-The API (in its own container) has no ``git``/``tmux``/``claude`` and does not own the
-tmux sessions, so it cannot run control actions directly. Instead it writes a ``queued``
-row to the ``commands`` table; this worker — running in the control container — claims each
-row, dispatches it to the *same* control functions the CLI uses (``spawn``/``poller``/
-``skills_gen``/``repo.record_approval``), and writes the result or error back. It also runs
-the periodic CI sweep, subsuming the old ``poll-ci --watch`` loop.
+The API (in its own container) has no ``git``/``claude``, so it cannot run control
+actions directly. Instead it writes a ``queued`` row to the ``commands`` table; any
+worker claims each row (multi-worker safe — ``FOR UPDATE SKIP LOCKED`` + slot-aware
+claim filters), dispatches it to the *same* control functions the CLI uses (``spawn``/
+``poller``/``skills_gen``/``repo.record_approval``), and writes the result or error
+back. It also heartbeats + reaps dead workers' runs, syncs claude credentials, and runs
+the periodic CI sweep.
 
 Every command runs in isolation: one bad command is recorded as ``failed`` and never stops
 the loop. ``execute_command`` is the pure dispatch seam (given a claimed command dict,
@@ -15,12 +17,24 @@ returns a JSON-safe result or raises); ``drain``/``run`` are the claim+finish pl
 from __future__ import annotations
 
 import os
+import secrets
+import socket
 import time
 from datetime import UTC, datetime, timedelta
 
+from ..config import get_settings
 from ..db import repository as repo
 from ..db.engine import connection
-from . import gitops, login, poller, reposync, skills_gen, spawn, tmux
+from . import credsync, gitops, login, poller, reposync, skills_gen, spawn
+
+# Command types that launch a claude run and therefore need a free slot on this worker.
+# A worker with all slots busy leaves these queued for a less-loaded worker to claim.
+_RUN_COMMANDS = ("spawn", "resume", "mise_init")
+
+
+def make_worker_id() -> str:
+    """A stable-for-this-process, unique-across-containers worker id."""
+    return f"worker-{socket.gethostname()}-{os.getpid()}-{secrets.token_hex(2)}"
 
 
 class CommandError(Exception):
@@ -43,6 +57,7 @@ def _cmd_spawn(command: dict) -> dict:
         worktree_branch=p.get("worktree"),
         task=p.get("task"),
         role=p.get("role"),
+        worker_id=command.get("claimed_by"),
     )
     result = {
         "agent_id": agent["id"],
@@ -73,11 +88,15 @@ def _cmd_resume(command: dict) -> dict:
         agent = repo.get_agent_by_name(conn, command["project_id"], name)
     if agent is None:
         raise CommandError(f"agent '{name}' not found in project '{command['project_id']}'")
-    ok, detail = spawn.resume(agent, answer)
-    if ok:
-        with connection() as conn:
-            repo.set_agent_status(conn, agent["id"], "working")
-    return {"resumed": ok, "detail": detail}
+    ok, detail = spawn.resume(agent, answer, worker_id=command.get("claimed_by"))
+    if not ok:
+        # A resume that couldn't be delivered is a FAILED command, not a quiet no-op —
+        # the operator's input must never vanish silently (the old tmux path typed into
+        # dead panes and reported success).
+        raise CommandError(detail)
+    with connection() as conn:
+        repo.set_agent_status(conn, agent["id"], "working")
+    return {"resumed": True, "detail": detail}
 
 
 def _record_verdict(command: dict, status: str) -> dict:
@@ -219,6 +238,13 @@ def _cmd_login_submit(command: dict) -> dict:
         # Surface the pane tail so the operator can see why claude rejected the code.
         detail = result.get("output") or "claude did not confirm a successful login"
         raise CommandError(f"login not confirmed — {detail}")
+    # Publish the fresh credentials so every other worker container can materialize
+    # them (multi-worker: the login ran here, but any worker may run the next agent).
+    try:
+        result["credentials_published"] = credsync.upload()
+    except Exception as exc:  # noqa: BLE001 - login succeeded; publishing is best-effort
+        result["credentials_published"] = False
+        result["credsync_note"] = str(exc)
     return result
 
 
@@ -274,6 +300,63 @@ def _run_one(command: dict) -> None:
             repo.finish_command(conn, command["id"], "failed", error=str(exc))
 
 
+def heartbeat(worker_id: str) -> None:
+    """Refresh this worker's registry row — the reaper's proof-of-life."""
+    with connection() as conn:
+        active = len(repo.list_running_runs(conn, worker_id=worker_id))
+        repo.upsert_worker_heartbeat(
+            conn,
+            worker_id,
+            hostname=socket.gethostname(),
+            pid=os.getpid(),
+            max_runs=get_settings().max_concurrent_runs,
+            active_runs=active,
+        )
+
+
+def reap_dead_workers(now: datetime | None = None) -> int:
+    """Settle the record for workers that stopped heartbeating: their ``running`` runs
+    become ``crashed``, and agents those runs left in ``working`` become ``crashed`` too.
+
+    Any surviving worker may reap any dead one — ``finish_run``'s still-running guard
+    makes concurrent reapers idempotent. Deliberately NO auto-requeue: a half-done run
+    may have already pushed commits, so re-running it isn't safe to assume; the operator
+    sees the crashed badge (with the frozen last_output as evidence) and resumes
+    explicitly. Agents in ``paused_for_input``/``blocked`` keep their status — those are
+    still accurate descriptions of what the agent needs. Returns runs reaped.
+    """
+    now = now or datetime.now(UTC)
+    cutoff = now - timedelta(seconds=get_settings().worker_stale_after)
+    reaped = 0
+    with connection() as conn:
+        stale = repo.list_stale_workers(conn, cutoff)
+    for dead in stale:
+        with connection() as conn:
+            for run in repo.list_running_runs(conn, worker_id=dead["id"]):
+                if not repo.finish_run(conn, run["id"], "crashed"):
+                    continue  # another reaper won the race
+                agent = repo.get_agent_by_id(conn, run["agent_id"])
+                if agent is not None and agent["status"] == "working":
+                    repo.set_agent_status(conn, agent["id"], "crashed")
+                repo.insert_agent_event(
+                    conn,
+                    run["agent_id"],
+                    run["id"],
+                    seq=0,  # runner-generated, outside the supervisor's line counter
+                    type="worker",
+                    payload={
+                        "notice": "worker died mid-run; run marked crashed",
+                        "worker_id": dead["id"],
+                    },
+                    session_id=run["session_id"],
+                )
+                reaped += 1
+            # Row served its purpose; dropping it keeps the registry to live workers
+            # (and stops every future pass re-scanning long-dead ids).
+            repo.delete_worker(conn, dead["id"])
+    return reaped
+
+
 def fire_due_schedules(now: datetime | None = None) -> int:
     """Enqueue a spawn command for every schedule whose ``next_run_at`` has passed.
 
@@ -313,43 +396,6 @@ def fire_due_schedules(now: datetime | None = None) -> int:
     return fired
 
 
-# How many trailing pane lines to snapshot — enough to show the current screen (a menu, a
-# prompt, the tail of the last command) without bloating the row.
-_PANE_TAIL_LINES = 40
-
-
-def _pane_tail(pane: str, lines: int = _PANE_TAIL_LINES) -> str:
-    """The last ``lines`` of a captured pane, trailing blank lines trimmed so an idle
-    screen doesn't store as a wall of whitespace."""
-    rows = (pane or "").splitlines()
-    while rows and not rows[-1].strip():
-        rows.pop()
-    return "\n".join(rows[-lines:])
-
-
-def capture_agent_output() -> int:
-    """Snapshot each working agent's live tmux pane tail into the DB.
-
-    The tmux socket lives only in the control container, so this is the one channel the
-    API/UI have onto what a running — or wedged — agent is actually doing: an agent stuck
-    on claude's first-run theme picker surfaces as that screen instead of a misleading
-    green 'working'. A missing session is skipped (its process is gone). Returns the count
-    updated.
-    """
-    with connection() as conn:
-        working = repo.list_agents_by_status(conn, "working")
-    updated = 0
-    for agent in working:
-        session = tmux.session_name(agent["project_id"], agent["name"])
-        if not tmux.has_session(session):
-            continue
-        tail = _pane_tail(tmux.capture_pane(session))
-        with connection() as conn:
-            repo.update_agent_output(conn, agent["id"], tail)
-        updated += 1
-    return updated
-
-
 def drain(worker_id: str, limit: int | None = None) -> int:
     """Claim and run queued commands until the queue is empty (or ``limit`` reached).
 
@@ -360,7 +406,9 @@ def drain(worker_id: str, limit: int | None = None) -> int:
     processed = 0
     while limit is None or processed < limit:
         with connection() as conn:
-            command = repo.claim_next_command(conn, worker_id)
+            command = repo.claim_next_command(
+                conn, worker_id, types_excluded=_full_slot_exclusions(worker_id)
+            )
         if command is None:
             break
         _run_one(command)
@@ -368,36 +416,66 @@ def drain(worker_id: str, limit: int | None = None) -> int:
     return processed
 
 
+def _full_slot_exclusions(worker_id: str) -> tuple[str, ...]:
+    """Command types this worker must not claim right now.
+
+    Runs are supervised in-process, so a worker at ``max_concurrent_runs`` skips
+    claiming run-starting commands — they stay queued for a worker with a free slot. Slot
+    accounting is DB-driven (this worker's ``running`` runs), so it needs no in-memory
+    registry and survives restarts (a fresh process gets a fresh worker id; stale rows
+    belong to the old id and are the reaper's problem).
+    """
+    with connection() as conn:
+        active = len(repo.list_running_runs(conn, worker_id=worker_id))
+    if active >= get_settings().max_concurrent_runs:
+        return _RUN_COMMANDS
+    return ()
+
+
 def run(
     worker_id: str | None = None,
     poll_interval: float = 2.0,
     ci_interval: float = 30.0,
-    capture_interval: float = 2.0,
+    credsync_interval: float = 30.0,
+    reap_interval: float = 15.0,
     iterations: int | None = None,
 ) -> None:
-    """The control-container main loop: drain the command queue, snapshot live agent
-    output, and sweep CI periodically.
+    """The control-container main loop: drain the command queue, sync claude
+    credentials, heartbeat + reap dead workers, and sweep CI.
 
     ``iterations`` bounds the loop for tests; production runs unbounded. Sleeps
     ``poll_interval`` only when a pass found no commands, so bursts drain promptly.
     """
-    worker_id = worker_id or f"worker-{os.getpid()}"
+    worker_id = worker_id or make_worker_id()
     last_ci = 0.0
-    last_capture = 0.0
+    last_credsync = 0.0
+    last_reap = 0.0
     count = 0
     while iterations is None or count < iterations:
+        try:
+            heartbeat(worker_id)
+        except Exception:  # noqa: BLE001 - a heartbeat hiccup must not kill the worker
+            pass
+        if reap_interval > 0 and time.monotonic() - last_reap >= reap_interval:
+            try:
+                reap_dead_workers()
+            except Exception:  # noqa: BLE001 - a reap hiccup must not kill the worker
+                pass
+            last_reap = time.monotonic()
         try:
             fire_due_schedules()
         except Exception:  # noqa: BLE001 - a schedule hiccup must not kill the worker
             pass
         did_work = drain(worker_id) > 0
         now = time.monotonic()
-        if capture_interval > 0 and now - last_capture >= capture_interval:
+        if credsync_interval > 0 and (last_credsync == 0.0 or now - last_credsync >= credsync_interval):
+            # First pass runs immediately: a fresh worker container must materialize the
+            # claude credentials before it claims its first spawn.
             try:
-                capture_agent_output()
-            except Exception:  # noqa: BLE001 - a capture hiccup must not kill the worker
+                credsync.refresh()
+            except Exception:  # noqa: BLE001 - cred sync must not kill the worker
                 pass
-            last_capture = now
+            last_credsync = now
         if ci_interval > 0 and now - last_ci >= ci_interval:
             try:
                 poller.sweep()
