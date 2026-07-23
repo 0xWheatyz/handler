@@ -337,12 +337,14 @@ class RunSupervisor:
                 )
                 # Hooks are the authority on agent status — they ran inside the run and
                 # may have set paused_for_input/blocked/done already. Only an agent still
-                # marked ``working`` needs the process's verdict.
+                # marked ``working`` needs the process's verdict — and ``done`` is a gate
+                # outcome, not an exit code: an agent still ``working`` after a clean
+                # exit means the Stop gate never recorded a verdict (hook misfired,
+                # identity missing), so nothing has verified its tests/commits/pushes.
+                # An operator cancel is the one completion that needs no gate.
                 agent = repo.get_agent_by_id(conn, self.agent["id"])
                 if finished and agent is not None and agent["status"] == "working":
                     if self._canceled:
-                        repo.set_agent_status(conn, self.agent["id"], "done")
-                    elif clean:
                         repo.set_agent_status(conn, self.agent["id"], "done")
                     else:
                         repo.set_agent_status(conn, self.agent["id"], "blocked")

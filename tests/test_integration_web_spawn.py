@@ -71,13 +71,15 @@ def test_spawn_via_api_then_worker_runs_headless_claude(client, auth, headless_e
     assert got["result"]["name"] == "api"
 
     # ...and the run's whole life shows up via the API: events stream in, the agent
-    # reconciles to done, last_output is the assistant's text.
+    # reconciles, last_output is the assistant's text. The fake claude never runs the
+    # Stop gate, so the clean exit reconciles to blocked, not done — done is only ever
+    # a gate verdict (tests pass, work committed and pushed).
     def finished():
         agents = client.get("/projects/proj/agents", headers=auth).json()
-        return agents if agents and agents[0]["status"] == "done" else None
+        return agents if agents and agents[0]["status"] == "blocked" else None
 
     agents = _wait(finished)
-    assert agents is not None, "run never reconciled to done"
+    assert agents is not None, "run never reconciled"
     agent = agents[0]
     assert agent["name"] == "api"
     assert agent["session_id"]

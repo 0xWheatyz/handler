@@ -45,6 +45,10 @@ class HookInput:
         return self.raw.get("message")
 
     @property
+    def transcript_path(self) -> str | None:
+        return self.raw.get("transcript_path")
+
+    @property
     def stop_hook_active(self) -> bool:
         return bool(self.raw.get("stop_hook_active"))
 

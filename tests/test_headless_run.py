@@ -81,7 +81,9 @@ def test_spawn_run_streams_events_and_completes(headless_env, tmp_path):
     assert [e["seq"] for e in events] == [1, 2, 3]
     # last_output is now derived from assistant text — the log the UI shows is real.
     assert updated["last_output"] == "working on: build the thing"
-    assert updated["status"] == "done"
+    # done is a gate outcome, not an exit code: the fake claude never ran the Stop
+    # hook, so nothing verified tests/commits/pushes and the agent must not be done.
+    assert updated["status"] == "blocked"
     assert updated["session_id"] == run["session_id"]
     assert updated["worker_id"] == "w1"
     # The session archive was uploaded at exit for cross-worker resume.

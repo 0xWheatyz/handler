@@ -82,6 +82,29 @@ def ahead_count(cwd: str) -> int | None:
         return None
 
 
+def has_origin(cwd: str) -> bool:
+    """Whether the repo has an ``origin`` remote configured."""
+    ok, out = _run(["remote"], cwd)
+    return ok and "origin" in out.split()
+
+
+def unpushed_count(cwd: str) -> int | None:
+    """Commits reachable from HEAD that no ``origin/*`` ref contains.
+
+    0 means everything on the current line of history has been pushed *somewhere* on
+    origin. Works with or without an upstream — worktree branches are created with
+    ``--no-track``, so an ``@{upstream}``-based count would come up empty for them.
+    ``None`` when the count cannot be computed.
+    """
+    ok, out = _run(["rev-list", "--count", "HEAD", "--not", "--remotes=origin"], cwd)
+    if not ok:
+        return None
+    try:
+        return int(out.strip())
+    except ValueError:
+        return None
+
+
 def add(cwd: str, paths: list[str]) -> tuple[bool, str]:
     return _run(["add", *paths], cwd)
 
@@ -114,6 +137,34 @@ def clone(
     return _run(args, cwd=None, env=env, timeout=_NETWORK_TIMEOUT)
 
 
-def pull_ff(cwd: str, env: dict[str, str] | None = None) -> tuple[bool, str]:
-    """Fast-forward-only pull — never merges, so a diverged clone fails loudly."""
-    return _run(["pull", "--ff-only"], cwd, env=env, timeout=_NETWORK_TIMEOUT)
+def fetch(cwd: str, env: dict[str, str] | None = None) -> tuple[bool, str]:
+    """``git fetch origin`` — refreshes every ``origin/*`` ref.
+
+    Unlike a plain pull, this works no matter which branch the working tree has
+    checked out (or left parked), so the remote's state is always current locally.
+    """
+    return _run(["fetch", "origin"], cwd, env=env, timeout=_NETWORK_TIMEOUT)
+
+
+def set_default_head(cwd: str, env: dict[str, str] | None = None) -> tuple[bool, str]:
+    """``git remote set-head origin --auto`` — (re)pin ``origin/HEAD``.
+
+    ``origin/HEAD`` is how the remote's default branch is known locally; clones made
+    by older tooling can lack it, and the remote's default can change.
+    """
+    return _run(["remote", "set-head", "origin", "--auto"], cwd, env=env,
+                timeout=_NETWORK_TIMEOUT)
+
+
+def default_branch_ref(cwd: str) -> str | None:
+    """The remote default branch as a local ref name (``origin/main``), or ``None``."""
+    ok, out = _run(["symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"], cwd)
+    if not ok or not out:
+        return None
+    return out.removeprefix("refs/remotes/") or None
+
+
+def merge_ff(cwd: str, ref: str) -> tuple[bool, str]:
+    """Fast-forward-only merge of ``ref`` — never merges, so a diverged checkout
+    fails loudly instead of silently growing a merge commit."""
+    return _run(["merge", "--ff-only", ref], cwd)

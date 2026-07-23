@@ -31,6 +31,36 @@ def repo(tmp_path):
     return root
 
 
+@pytest.fixture
+def cloned(tmp_path):
+    """A root cloned from an origin whose main has since moved on.
+
+    Mirrors the spawn-time state after ``reposync.sync_project``: origin/* is fresh
+    (fetched), but the root's checkout still sits on the older commit.
+    """
+    origin = tmp_path / "origin"
+    origin.mkdir()
+    _git(origin, "init", "-q", "-b", "main")
+    _git(origin, "config", "user.email", "t@t.co")
+    _git(origin, "config", "user.name", "t")
+    _git(origin, "config", "commit.gpgsign", "false")
+    _git(origin, "commit", "-q", "--allow-empty", "-m", "one")
+    root = tmp_path / "proj"
+    subprocess.run(
+        ["git", "clone", "-q", str(origin), str(root)], check=True, capture_output=True
+    )
+    _git(origin, "commit", "-q", "--allow-empty", "-m", "two")
+    _git(root, "fetch", "-q", "origin")
+    return root
+
+
+def _sha(cwd, ref="HEAD") -> str:
+    return subprocess.run(
+        ["git", "-C", str(cwd), "rev-parse", ref],
+        check=True, capture_output=True, text=True,
+    ).stdout.strip()
+
+
 def _is_worktree(root, path) -> bool:
     out = subprocess.run(
         ["git", "-C", str(root), "worktree", "list", "--porcelain"],
@@ -52,6 +82,30 @@ def test_creates_branch_when_it_does_not_exist(repo):
         check=True, capture_output=True, text=True,
     ).stdout
     assert "feat/new-thing" in branches
+
+
+def test_new_branch_is_cut_from_remote_default_not_root_head(cloned):
+    # The regression: new agent branches were cut from the root's HEAD, so a checkout
+    # sitting behind (or parked on an earlier agent's branch) produced branches several
+    # commits behind origin's default branch.
+    target = worktree.resolve_working_dir(
+        str(cloned), "agent", worktree_branch="feat/fresh"
+    )
+    assert _sha(target) == _sha(cloned, "origin/main")
+    assert _sha(target) != _sha(cloned, "HEAD")
+
+
+def test_new_branch_from_remote_default_gets_no_upstream(cloned):
+    # --no-track: without it the new branch adopts origin/main as upstream, and the
+    # agent's plain `git push` would aim at the default branch.
+    target = worktree.resolve_working_dir(
+        str(cloned), "agent", worktree_branch="feat/fresh"
+    )
+    upstream = subprocess.run(
+        ["git", "-C", target, "rev-parse", "--abbrev-ref", "@{upstream}"],
+        capture_output=True, text=True,
+    )
+    assert upstream.returncode != 0
 
 
 def test_checks_out_existing_branch(repo):
