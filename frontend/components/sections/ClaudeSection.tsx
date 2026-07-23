@@ -43,6 +43,51 @@ function parseLines(text: string): string[] {
 
 const emptySkill = { name: "", description: "", content: "", enabled: true };
 
+/* Install-from-prompt: paste the "install prompt" a marketplace page (SkillsMP etc.)
+ * shows, and the worker runs it through a one-off headless claude, importing whatever
+ * it fetches as managed skills. Headless = nobody to answer questions, so the run makes
+ * the choices a human would be asked (scope, options) itself — always user scope,
+ * sensible defaults — and reports them; the import lands below for review/editing. */
+function InstallCard() {
+  const s = useDashboard();
+  const [prompt, setPrompt] = useState("");
+
+  const run = async () => {
+    const ok = await s.installClaudeSkill(prompt.trim());
+    if (ok) setPrompt("");
+  };
+
+  return (
+    <Card>
+      <div className="card-head" style={{ marginBottom: 14 }}>
+        <span className="card-title" style={{ fontSize: "var(--text-md)", color: "var(--text-heading)" }}>
+          Install from a marketplace prompt
+        </span>
+      </div>
+      <Textarea
+        label="Paste the skill's install prompt (from SkillsMP or any marketplace page)"
+        value={prompt}
+        onChange={setPrompt}
+        rows={5}
+        placeholder={"Install the pdf-tools skill from https://…\n(the whole prompt the marketplace tells you to paste into Claude)"}
+      />
+      <div className="faint" style={{ fontSize: "var(--text-xs)", marginTop: 8 }}>
+        Runs headlessly on the worker — nobody can answer questions mid-install, so when
+        the instructions offer choices (user vs repo scope, optional variants) Claude
+        picks the defaults itself: skills here are always <b>user scope</b> (Handler
+        syncs them to every worker), and recommended options win. What it chose is
+        reported in the result — review the imported skill below and edit or disable it
+        if a choice was wrong.
+      </div>
+      <div className="hstack mt14">
+        <Button variant="primary" disabled={s.cmd.busy || !prompt.trim()} onClick={run}>
+          {s.cmd.busy ? "Installing…" : "Run install"}
+        </Button>
+      </div>
+    </Card>
+  );
+}
+
 function SkillsPanel() {
   const s = useDashboard();
   const [form, setForm] = useState(emptySkill);
@@ -77,8 +122,10 @@ function SkillsPanel() {
       <div className="faint" style={{ fontSize: "var(--text-sm)", marginBottom: 14 }}>
         Custom Claude Code skills, synced to every worker&apos;s{" "}
         <span className="mono">~/.claude/skills</span> at each launch. The description is
-        what makes Claude pick the skill up — say when to use it.
+        what makes Claude pick the skill up — say when to use it. Install one from a
+        marketplace prompt, or author one by hand below.
       </div>
+      <InstallCard />
       <Card>
         <div className="card-head" style={{ marginBottom: 14 }}>
           <span className="card-title" style={{ fontSize: "var(--text-md)", color: "var(--text-heading)" }}>
@@ -148,6 +195,11 @@ function SkillsPanel() {
           {sk.description && (
             <div className="faint" style={{ fontSize: "var(--text-sm)", marginTop: 8 }}>
               {sk.description}
+            </div>
+          )}
+          {sk.files.length > 0 && (
+            <div className="mono faint" style={{ fontSize: "var(--text-xs)", marginTop: 8 }}>
+              ships with: {sk.files.join("  ·  ")}
             </div>
           )}
         </Card>

@@ -10,10 +10,11 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 
 import pytest
 
-from handler.control import claude_gen, headless, settings_gen, spawn
+from handler.control import claude_gen, headless, settings_gen, skill_install, spawn, worker
 from handler.db import repository as repo
 from handler.db.engine import get_engine
 
@@ -273,6 +274,147 @@ def test_argv_carries_mcp_config():
     assert "--mcp-config" not in headless.build_spawn_argv("task", "/s.json", "sid")
     argv = headless.build_resume_argv("sid", "answer", "/s.json", "/m.json")
     assert argv[argv.index("--mcp-config") + 1] == "/m.json"
+
+
+# --- install from a marketplace prompt -------------------------------------------------
+
+
+def _stage_skill(staging, name, front="---\nname: {n}\ndescription: fetched\n---\n", extra=None):
+    d = staging / name
+    d.mkdir(parents=True)
+    (d / "SKILL.md").write_text(front.format(n=name) + "# fetched body\n")
+    for rel, content in (extra or {}).items():
+        p = d / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        if isinstance(content, bytes):
+            p.write_bytes(content)
+        else:
+            p.write_text(content)
+    return d
+
+
+def test_import_staged_creates_and_updates(conn, tmp_path):
+    staging = tmp_path / "stage"
+    _stage_skill(
+        staging, "pdf-tools", extra={"references/usage.md": "how-to", "scripts/x.py": "print()"}
+    )
+    results = skill_install.import_staged(str(staging), conn)
+    assert results == [
+        {
+            "name": "pdf-tools",
+            "action": "created",
+            "extra_files": ["references/usage.md", "scripts/x.py"],
+        }
+    ]
+    row = repo.get_claude_skill_by_name(conn, "pdf-tools")
+    assert row["description"] == "fetched" and "# fetched body" in row["content"]
+    files = repo.list_claude_skill_files(conn, row["id"])
+    assert [f["path"] for f in files] == ["references/usage.md", "scripts/x.py"]
+
+    # Reinstall = update in place (same row, refreshed content + file set).
+    shutil.rmtree(staging)
+    _stage_skill(staging, "pdf-tools", extra={"references/v2.md": "new"})
+    results = skill_install.import_staged(str(staging), conn)
+    assert results[0]["action"] == "updated"
+    again = repo.get_claude_skill_by_name(conn, "pdf-tools")
+    assert again["id"] == row["id"]
+    assert [f["path"] for f in repo.list_claude_skill_files(conn, again["id"])] == [
+        "references/v2.md"
+    ]
+
+
+def test_import_staged_tolerates_messy_output(conn, tmp_path):
+    staging = tmp_path / "stage"
+    # No front-matter: name falls back to the dirname, description to the name.
+    d = staging / "bare"
+    d.mkdir(parents=True)
+    (d / "SKILL.md").write_text("just a body\n")
+    # Binary sidecar files are skipped, not fatal.
+    _stage_skill(staging, "with-bin", extra={"img.png": b"\x89PNG\x00\xff"})
+    # A dir without SKILL.md (clone debris) is ignored.
+    (staging / "debris").mkdir()
+    (staging / "debris" / "README.md").write_text("not a skill")
+
+    results = skill_install.import_staged(str(staging), conn)
+    by_name = {r["name"]: r for r in results}
+    assert set(by_name) == {"bare", "with-bin"}
+    assert repo.get_claude_skill_by_name(conn, "bare")["description"] == "bare"
+    assert by_name["with-bin"]["skipped_files"] == ["img.png (binary)"]
+    assert repo.get_claude_skill_by_name(conn, "debris") is None
+
+
+def test_skill_install_command_runs_wrapped_prompt(env, monkeypatch):
+    """The worker command fakes the claude run: assert the pasted prompt travels inside
+    the non-interactive wrapper, and the staged result lands as managed rows."""
+    seen = {}
+
+    def fake_run_claude(prompt, staging_dir, settings_path):
+        seen["prompt"] = prompt
+        assert "permissions" in json.load(open(settings_path))
+        d = os.path.join(staging_dir, "deploy-helper")
+        os.makedirs(d)
+        with open(os.path.join(d, "SKILL.md"), "w") as fh:
+            fh.write("---\nname: deploy-helper\ndescription: ship it\n---\n# steps\n")
+        return "Installed deploy-helper. Chose user scope (no repo option taken)."
+
+    monkeypatch.setattr(skill_install, "_run_claude", fake_run_claude)
+
+    result = worker.execute_command(
+        {"id": 1, "type": "skill_install", "payload": {"prompt": "Install deploy-helper from https://skillsmp.example"}}
+    )
+    assert result["skills"][0] == {
+        "name": "deploy-helper",
+        "action": "created",
+        "extra_files": [],
+    }
+    assert "user scope" in result["summary"]
+    # The pasted prompt is data inside the wrapper, after the non-interactive rules.
+    assert "never stop to ask a question" in seen["prompt"]
+    assert seen["prompt"].endswith("Install deploy-helper from https://skillsmp.example\n")
+    with get_engine().begin() as conn:
+        assert repo.get_claude_skill_by_name(conn, "deploy-helper") is not None
+
+
+def test_skill_install_command_fails_when_nothing_lands(env, monkeypatch):
+    monkeypatch.setattr(skill_install, "_run_claude", lambda *a: "I could not fetch it")
+    with pytest.raises(worker.CommandError, match="no <skill>/SKILL.md landed"):
+        worker.execute_command({"id": 1, "type": "skill_install", "payload": {"prompt": "x"}})
+    with pytest.raises(worker.CommandError, match="requires a 'prompt'"):
+        worker.execute_command({"id": 1, "type": "skill_install", "payload": {}})
+
+
+def test_skill_install_route_enqueues(client, auth, lowpriv):
+    r = client.post("/claude/skills/install", json={"prompt": "Install x from y"}, headers=auth)
+    assert r.status_code == 202
+    body = r.json()
+    assert body["type"] == "skill_install" and body["status"] == "queued"
+    assert body["payload"] == {"prompt": "Install x from y"}
+
+    assert (
+        client.post("/claude/skills/install", json={"prompt": "x"}, headers=lowpriv).status_code
+        == 403
+    )
+    empty = client.post("/claude/skills/install", json={"prompt": ""}, headers=auth)
+    assert empty.status_code == 422
+
+
+def test_sync_writes_and_rebuilds_aux_files(env, tmp_path):
+    home = str(tmp_path / "home")
+    skill = {
+        "name": "pdf-tools",
+        "description": "d",
+        "content": "# body",
+        "files": {"references/usage.md": "how-to", "../escape.md": "nope"},
+    }
+    claude_gen.sync_user_skills([skill], home=home)
+    root = tmp_path / "home" / ".claude" / "skills" / "pdf-tools"
+    assert (root / "references" / "usage.md").read_text() == "how-to"
+    assert not (tmp_path / "home" / ".claude" / "skills" / "escape.md").exists()
+
+    # The dir is rebuilt each sync: files dropped from the DB disappear on disk too.
+    claude_gen.sync_user_skills([{**skill, "files": {}}], home=home)
+    assert not (root / "references").exists()
+    assert (root / "SKILL.md").exists()
 
 
 # --- spawn integration -----------------------------------------------------------------

@@ -30,6 +30,7 @@ from .tables import (
     claude_config,
     claude_connectors,
     claude_plugins,
+    claude_skill_files,
     claude_skills,
     commands,
     forge_hosts,
@@ -985,8 +986,29 @@ def update_claude_skill(conn: Connection, skill_id: int, **fields: Any) -> dict 
 
 
 def delete_claude_skill(conn: Connection, skill_id: int) -> bool:
+    # Explicit dependent delete: SQLite only honors ON DELETE CASCADE with foreign_keys
+    # pragma on, so don't rely on it.
+    conn.execute(claude_skill_files.delete().where(claude_skill_files.c.skill_id == skill_id))
     result = conn.execute(claude_skills.delete().where(claude_skills.c.id == skill_id))
     return result.rowcount > 0
+
+
+def list_claude_skill_files(conn: Connection, skill_id: int) -> list[dict]:
+    rows = conn.execute(
+        select(claude_skill_files)
+        .where(claude_skill_files.c.skill_id == skill_id)
+        .order_by(claude_skill_files.c.path)
+    ).all()
+    return [dict(r._mapping) for r in rows]
+
+
+def set_claude_skill_files(conn: Connection, skill_id: int, files: dict[str, str]) -> None:
+    """Replace a skill's auxiliary file set wholesale (the importer's write shape)."""
+    conn.execute(claude_skill_files.delete().where(claude_skill_files.c.skill_id == skill_id))
+    for path, content in sorted(files.items()):
+        conn.execute(
+            claude_skill_files.insert().values(skill_id=skill_id, path=path, content=content)
+        )
 
 
 def list_claude_connectors(conn: Connection, enabled_only: bool = False) -> list[dict]:

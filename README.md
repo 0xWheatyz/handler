@@ -259,7 +259,13 @@ What the dashboard can now do (all state-changing actions require `ADMIN_TOKEN`)
   (marker-file managed, so hand-installed skills survive), enabled connectors become the
   run's `--mcp-config` file (nothing lands in the repo tree), and plugins/permissions fold
   into the generated per-agent `settings.json` — so a change in the UI reaches the next
-  launch of every agent, no redeploy.
+  launch of every agent, no redeploy. Skills can also be **installed from a marketplace
+  prompt** (SkillsMP and friends): paste the page's install prompt and a `skill_install`
+  command runs it through a one-off headless claude in a staging dir on the worker, then
+  imports whatever `<skill>/SKILL.md` (+ auxiliary files) landed as managed rows.
+  Headless means nobody can answer questions mid-install, so the wrapped prompt makes the
+  choices a human would be asked — always user scope, the instructions' defaults — and
+  reports them in the command result for after-the-fact review.
 
 The command queue is exposed over HTTP as `POST …/agents/spawn`, `POST …/agents/{n}/kill`,
 `POST …/approvals`, `POST …/forge-init`, `POST …/poll-ci`, `POST …/sync`,

@@ -137,6 +137,8 @@ interface StoreValue {
   createClaudeSkill: (b: SkillBody) => Promise<boolean>;
   updateClaudeSkill: (id: number, b: Partial<SkillBody>) => Promise<boolean>;
   deleteClaudeSkill: (id: number) => Promise<void>;
+  /* Run a pasted marketplace install prompt on the worker and import the result. */
+  installClaudeSkill: (prompt: string) => Promise<boolean>;
   createClaudeConnector: (b: ConnectorBody) => Promise<boolean>;
   updateClaudeConnector: (id: number, b: Partial<ConnectorBody>) => Promise<boolean>;
   deleteClaudeConnector: (id: number) => Promise<void>;
@@ -1061,6 +1063,55 @@ export function DashboardProvider({
     [claudeWrite],
   );
 
+  const installClaudeSkill = useCallback(
+    async (prompt: string): Promise<boolean> => {
+      // A worker-run command (the API has no claude), tracked like login/spawn. The
+      // worker-side run is budgeted at ~4 minutes; poll a little past that.
+      setCmd({
+        text: "skill install: running the marketplace prompt through headless claude on the worker…",
+        error: false,
+        busy: true,
+      });
+      try {
+        const command = await clientRef.current.api<Command>("/claude/skills/install", {
+          method: "POST",
+          body: { prompt },
+        });
+        const final = await clientRef.current.trackCommand(command.id, { attempts: 600 });
+        if (!final) {
+          setCmd({
+            text: "skill install: still running (see Activity). Is the control worker running?",
+            error: false,
+            busy: false,
+          });
+          return false;
+        }
+        if (final.status !== "done") {
+          setCmd({
+            text: `skill install failed — ${final.error ?? "unknown error"}`,
+            error: true,
+            busy: false,
+          });
+          return false;
+        }
+        const skills = (final.result?.skills ?? []) as { name: string; action: string }[];
+        const names = skills.map((s) => `${s.name} (${s.action})`).join(", ");
+        setCmd({
+          text: `skill install done: ${names || "no skills"} — review the import below; Claude's report of the choices it made is in Activity.`,
+          error: false,
+          busy: false,
+        });
+        await loadClaude();
+        return true;
+      } catch (e) {
+        if (e instanceof AuthError) return false;
+        setCmd({ text: `skill install failed: ${(e as Error).message}`, error: true, busy: false });
+        return false;
+      }
+    },
+    [loadClaude],
+  );
+
   const createClaudeConnector = useCallback(
     (b: ConnectorBody) =>
       claudeWrite(
@@ -1210,6 +1261,7 @@ export function DashboardProvider({
     createClaudeSkill,
     updateClaudeSkill,
     deleteClaudeSkill,
+    installClaudeSkill,
     createClaudeConnector,
     updateClaudeConnector,
     deleteClaudeConnector,

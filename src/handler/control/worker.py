@@ -25,7 +25,7 @@ from datetime import UTC, datetime, timedelta
 from ..config import get_settings
 from ..db import repository as repo
 from ..db.engine import connection
-from . import credsync, gitops, login, poller, reposync, skills_gen, spawn
+from . import credsync, gitops, login, poller, reposync, skill_install, skills_gen, spawn
 
 # Command types that launch a claude run and therefore need a free slot on this worker.
 # A worker with all slots busy leaves these queued for a less-loaded worker to claim.
@@ -248,6 +248,18 @@ def _cmd_login_submit(command: dict) -> dict:
     return result
 
 
+def _cmd_skill_install(command: dict) -> dict:
+    """Run a pasted marketplace install prompt through a one-off headless claude and
+    import the fetched skills as managed rows (Claude page, Skills tab)."""
+    prompt = _payload(command).get("prompt")
+    if not prompt or not str(prompt).strip():
+        raise CommandError("skill_install requires a 'prompt' in the payload")
+    try:
+        return skill_install.run(str(prompt))
+    except skill_install.InstallError as exc:
+        raise CommandError(str(exc)) from exc
+
+
 def _cmd_sync(command: dict) -> dict:
     project_id = command.get("project_id")
     if not project_id:
@@ -274,6 +286,7 @@ _DISPATCH = {
     "sync": _cmd_sync,
     "login_start": _cmd_login_start,
     "login_submit": _cmd_login_submit,
+    "skill_install": _cmd_skill_install,
 }
 
 

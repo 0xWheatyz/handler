@@ -42,6 +42,8 @@ APPROVAL_STATUSES = ("approved", "rejected")
 # flow from the web UI: the worker opens an interactive claude session in the control
 # container, returns the claude.com authorization URL, and later feeds back the pasted
 # code — the API container has no ``claude`` and can't run it directly.
+# ``skill_install`` runs an operator-pasted marketplace install prompt through a one-off
+# headless claude in a staging dir and imports what it fetched as managed skill rows.
 COMMAND_TYPES = (
     "spawn",
     "kill",
@@ -54,6 +56,7 @@ COMMAND_TYPES = (
     "sync",
     "login_start",
     "login_submit",
+    "skill_install",
 )
 COMMAND_STATUSES = ("queued", "running", "done", "failed")
 # Forge families a host can belong to (drives per-host token env conventions).
@@ -348,6 +351,24 @@ claude_skills = Table(
     Column("enabled", Boolean, nullable=False, server_default="1"),
     Column("created_at", PortableTimestamp, nullable=False, server_default=func.now()),
     Column("updated_at", PortableTimestamp, nullable=False, server_default=func.now()),
+)
+
+# Auxiliary files belonging to a managed skill (references/, scripts/, …) — captured by
+# the install-from-prompt import for skills that ship more than a SKILL.md, and synced
+# alongside it. Paths are relative to the skill's directory; text content only.
+claude_skill_files = Table(
+    "claude_skill_files",
+    metadata,
+    Column("id", PortableBigInt, primary_key=True, autoincrement=True),
+    Column(
+        "skill_id",
+        BigInteger,
+        ForeignKey("claude_skills.id", ondelete="CASCADE"),
+        nullable=False,
+    ),
+    Column("path", String, nullable=False),
+    Column("content", String, nullable=False),
+    UniqueConstraint("skill_id", "path", name="uq_claude_skill_files_skill_path"),
 )
 
 # MCP servers ("connectors") agents may reach. Written per-launch as an --mcp-config

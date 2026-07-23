@@ -69,14 +69,23 @@ def _skills_root(home: str | None = None) -> str:
     return os.path.join(home or os.path.expanduser("~"), ".claude", "skills")
 
 
+def _safe_relpath(path: str) -> bool:
+    """True for a plain relative path with no escape hatch — what a skill's auxiliary
+    file may be named (the importer controls these, but never trust stored paths)."""
+    if not path or os.path.isabs(path):
+        return False
+    return ".." not in path.split("/") and ".." not in path.split(os.sep)
+
+
 def sync_user_skills(skills: list[dict], home: str | None = None) -> list[str]:
     """Sync the enabled web-managed skills into the user-level skills dir; return the
     written SKILL.md paths.
 
-    Only dirs carrying the ``.handler-managed`` marker are ever deleted, so hand-installed
-    skills survive; a managed skill disabled or deleted in the UI disappears on the next
-    sync. Front-matter ``name``/``description`` come from the row; the body is the
-    operator's markdown verbatim."""
+    A skill dir is rebuilt from scratch each sync (its row + auxiliary ``files`` map),
+    so files dropped from the DB disappear. Only dirs carrying the ``.handler-managed``
+    marker are ever deleted, so hand-installed skills survive; a managed skill disabled
+    or deleted in the UI disappears on the next sync. Front-matter ``name``/
+    ``description`` come from the row; the body is the operator's markdown verbatim."""
     root = _skills_root(home)
     os.makedirs(root, exist_ok=True)
 
@@ -89,6 +98,8 @@ def sync_user_skills(skills: list[dict], home: str | None = None) -> list[str]:
     written: list[str] = []
     for skill in skills:
         skill_dir = os.path.join(root, skill["name"])
+        if os.path.isfile(os.path.join(skill_dir, _MANAGED_MARKER)):
+            shutil.rmtree(skill_dir, ignore_errors=True)  # rebuild: stale files must go
         os.makedirs(skill_dir, exist_ok=True)
         description = (skill.get("description") or skill["name"]).replace("\n", " ")
         front = f"---\nname: {skill['name']}\ndescription: {description}\n---\n\n"
@@ -98,10 +109,30 @@ def sync_user_skills(skills: list[dict], home: str | None = None) -> list[str]:
         path = os.path.join(skill_dir, "SKILL.md")
         with open(path, "w") as fh:
             fh.write(front + body)
+        for rel, content in (skill.get("files") or {}).items():
+            if not _safe_relpath(rel) or os.path.basename(rel) == "SKILL.md":
+                continue
+            abs_path = os.path.join(skill_dir, rel)
+            os.makedirs(os.path.dirname(abs_path) or skill_dir, exist_ok=True)
+            with open(abs_path, "w") as fh:
+                fh.write(content)
         with open(os.path.join(skill_dir, _MANAGED_MARKER), "w") as fh:
             fh.write("managed by handler — edits here are overwritten at every launch\n")
         written.append(path)
     return written
+
+
+def _load_skills(conn: Connection) -> list[dict]:
+    skills = repo.list_claude_skills(conn, enabled_only=True)
+    return [
+        {
+            **s,
+            "files": {
+                f["path"]: f["content"] for f in repo.list_claude_skill_files(conn, s["id"])
+            },
+        }
+        for s in skills
+    ]
 
 
 def apply(working_dir: str, conn: Connection | None = None) -> dict:
@@ -109,10 +140,10 @@ def apply(working_dir: str, conn: Connection | None = None) -> dict:
     if conn is None:
         with connection() as c:
             connectors = repo.list_claude_connectors(c, enabled_only=True)
-            skills = repo.list_claude_skills(c, enabled_only=True)
+            skills = _load_skills(c)
     else:
         connectors = repo.list_claude_connectors(conn, enabled_only=True)
-        skills = repo.list_claude_skills(conn, enabled_only=True)
+        skills = _load_skills(conn)
     mcp_path = write_mcp_config(working_dir, connectors)
     written = sync_user_skills(skills)
     return {"mcp_config": mcp_path, "skills_written": len(written)}

@@ -148,6 +148,9 @@ export interface ClaudeSkill {
   description?: string | null;
   content: string;
   enabled: boolean;
+  /* Relative paths of auxiliary files captured by an install-from-prompt import
+   * (references/, scripts/, …); synced alongside SKILL.md, read-only here. */
+  files: string[];
   created_at: string;
   updated_at: string;
 }

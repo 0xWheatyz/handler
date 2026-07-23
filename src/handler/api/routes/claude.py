@@ -31,6 +31,8 @@ from ..schemas import (
     ClaudeSkillIn,
     ClaudeSkillOut,
     ClaudeSkillUpdateIn,
+    CommandOut,
+    SkillInstallIn,
 )
 
 router = APIRouter(prefix="/claude", tags=["claude"], dependencies=[Depends(require_auth)])
@@ -46,9 +48,16 @@ def _skill_or_404(conn: Connection, skill_id: int) -> dict:
     return skill
 
 
+def _skill_out(conn: Connection, row: dict) -> dict:
+    """A skill row shaped for responses: auxiliary file *paths* attached (content stays
+    server-side — it syncs to workers, the UI only lists what ships)."""
+    files = repo.list_claude_skill_files(conn, row["id"])
+    return {**row, "files": [f["path"] for f in files]}
+
+
 @router.get("/skills", response_model=list[ClaudeSkillOut])
 def list_skills(conn: Connection = Depends(db_conn)) -> list[dict]:
-    return repo.list_claude_skills(conn)
+    return [_skill_out(conn, s) for s in repo.list_claude_skills(conn)]
 
 
 @router.post(
@@ -62,6 +71,22 @@ def create_skill(body: ClaudeSkillIn, conn: Connection = Depends(db_conn)) -> di
         raise HTTPException(status.HTTP_409_CONFLICT, detail=f"skill '{body.name}' exists")
     return repo.create_claude_skill(
         conn, body.name, body.content, description=body.description, enabled=body.enabled
+    )
+
+
+@router.post(
+    "/skills/install",
+    response_model=CommandOut,
+    status_code=status.HTTP_202_ACCEPTED,
+    dependencies=[Depends(require_admin)],
+)
+def enqueue_skill_install(body: SkillInstallIn, conn: Connection = Depends(db_conn)) -> dict:
+    """Run a pasted marketplace install prompt on the worker (which has ``claude`` and
+    network) and import what it fetches as managed skills. The UI polls the returned
+    command like any other control action; its result carries the imported skill names
+    and claude's report of the defaults it chose."""
+    return repo.enqueue_command(
+        conn, "skill_install", payload={"prompt": body.prompt}, requested_by="operator:web"
     )
 
 
@@ -79,7 +104,7 @@ def update_skill(
             raise HTTPException(
                 status.HTTP_409_CONFLICT, detail=f"skill '{fields['name']}' exists"
             )
-    return repo.update_claude_skill(conn, skill_id, **fields)
+    return _skill_out(conn, repo.update_claude_skill(conn, skill_id, **fields))
 
 
 @router.delete("/skills/{skill_id}", dependencies=[Depends(require_admin)])

@@ -387,8 +387,21 @@ class ClaudeSkillOut(BaseModel):
     description: str | None = None
     content: str
     enabled: bool
+    # Relative paths of auxiliary files (references/, scripts/, …) captured by the
+    # install-from-prompt import; synced alongside SKILL.md, read-only over the API.
+    files: list[str] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime
+
+
+class SkillInstallIn(BaseModel):
+    """A marketplace "install prompt" (SkillsMP and friends), normally pasted into an
+    interactive claude. The worker runs it through a one-off headless claude in a staging
+    dir and imports what it fetched as managed skills — choices a human would be asked
+    (scope, options) are made non-interactively: user scope, sensible defaults, reported
+    back in the command result."""
+
+    prompt: str = Field(min_length=1, max_length=20_000)
 
 
 class ClaudeConnectorIn(BaseModel):
