@@ -1,4 +1,5 @@
-/* Claude Login — drive the bundled `claude /login` OAuth flow on the host from the web UI.
+/* Claude account login panel (the Account tab of the Claude page) — drives the bundled
+ * `claude /login` OAuth flow on the host from the web UI.
  *
  * Click "Log in to Claude" → a small OAuth-style popup window opens (like "Sign in with
  * Google") and the worker drives `claude /login` in the control container, selecting the
@@ -27,7 +28,7 @@ function openLoginPopup(url: string): Window | null {
   );
 }
 
-export function LoginSection() {
+export function ClaudeLoginPanel() {
   const s = useDashboard();
   const { status, url, message } = s.claudeLogin;
   const [code, setCode] = useState("");
@@ -66,16 +67,13 @@ export function LoginSection() {
 
   return (
     <>
-      <div className="section-head">
-        <div className="section-title">Claude Login</div>
-        <div className="section-desc">
-          Log Claude Code in on the host so agents can run. This drives{" "}
-          <span className="mono">claude /login</span> in the control container and picks the
-          Claude account with a subscription.
-        </div>
+      <div className="faint" style={{ fontSize: "var(--text-sm)" }}>
+        Log Claude Code in on the host so agents can run. This drives{" "}
+        <span className="mono">claude /login</span> in the control container and picks the
+        Claude account with a subscription.
       </div>
 
-      <div className="section-body" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 16, marginTop: 14 }}>
         {message && (
           <Callout tone={status === "error" ? "danger" : status === "done" ? "success" : "info"}>
             {message}

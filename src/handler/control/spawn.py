@@ -15,6 +15,7 @@ from ..config import get_settings
 from ..db import repository as repo
 from ..db.engine import connection
 from . import (
+    claude_gen,
     credentials,
     forge,
     gitops,
@@ -142,6 +143,9 @@ def spawn(
         )
 
     settings_path = settings_gen.write_settings(working_dir)
+    # Materialize the web-managed Claude config (MCP connectors + user-level skills)
+    # so this launch picks up what the operator configured in the dashboard.
+    claude_gen.apply(working_dir)
     env = _agent_env(project, agent, token, role=role, mise_init=mise_init)
 
     # Verify the pinned forge version, if one is configured. Non-fatal: a version drift
@@ -249,6 +253,7 @@ def resume(agent: dict, answer: str, worker_id: str | None = None) -> tuple[bool
 
     working_dir = agent["working_dir"]
     settings_path = settings_gen.write_settings(working_dir)
+    claude_gen.apply(working_dir)
     try:
         token = None
         with connection() as conn:

@@ -21,6 +21,10 @@ import {
   type ApiError,
   type Approval,
   type Checkmark,
+  type ClaudeConnector,
+  type ClaudePermissions,
+  type ClaudePlugin,
+  type ClaudeSkill,
   type Command,
   type Host,
   type LogEntry,
@@ -38,7 +42,7 @@ export type Section =
   | "servers"
   | "activity"
   | "shared"
-  | "login";
+  | "claude";
 
 /* The claude web-login flow, driven through the login_start / login_submit commands.
  *  idle → starting → awaiting (have URL) → submitting → done | error */
@@ -124,6 +128,53 @@ interface StoreValue {
   startClaudeLogin: () => Promise<void>;
   submitClaudeCode: (code: string) => Promise<boolean>;
   resetClaudeLogin: () => void;
+
+  // Claude management (skills / connectors / plugins / permissions)
+  claudeSkills: ClaudeSkill[];
+  claudeConnectors: ClaudeConnector[];
+  claudePlugins: ClaudePlugin[];
+  claudePermissions: ClaudePermissions | null;
+  createClaudeSkill: (b: SkillBody) => Promise<boolean>;
+  updateClaudeSkill: (id: number, b: Partial<SkillBody>) => Promise<boolean>;
+  deleteClaudeSkill: (id: number) => Promise<void>;
+  /* Run a pasted marketplace install prompt on the worker and import the result. */
+  installClaudeSkill: (prompt: string) => Promise<boolean>;
+  createClaudeConnector: (b: ConnectorBody) => Promise<boolean>;
+  updateClaudeConnector: (id: number, b: Partial<ConnectorBody>) => Promise<boolean>;
+  deleteClaudeConnector: (id: number) => Promise<void>;
+  createClaudePlugin: (b: PluginBody) => Promise<boolean>;
+  updateClaudePlugin: (id: number, b: Partial<PluginBody>) => Promise<boolean>;
+  deleteClaudePlugin: (id: number) => Promise<void>;
+  saveClaudePermissions: (b: PermissionsBody) => Promise<boolean>;
+}
+
+export interface SkillBody {
+  name: string;
+  description: string;
+  content: string;
+  enabled: boolean;
+}
+export interface ConnectorBody {
+  name: string;
+  transport: "stdio" | "http" | "sse";
+  command: string | null;
+  args: string[];
+  env: Record<string, string>;
+  url: string | null;
+  headers: Record<string, string>;
+  enabled: boolean;
+}
+export interface PluginBody {
+  name: string;
+  marketplace: string;
+  marketplace_repo: string;
+  enabled: boolean;
+}
+export interface PermissionsBody {
+  default_mode: string | null;
+  allow: string[];
+  deny: string[];
+  ask: string[];
 }
 
 export interface SpawnBody {
@@ -236,6 +287,10 @@ export function DashboardProvider({
     url: "",
     message: "",
   });
+  const [claudeSkills, setClaudeSkills] = useState<ClaudeSkill[]>([]);
+  const [claudeConnectors, setClaudeConnectors] = useState<ClaudeConnector[]>([]);
+  const [claudePlugins, setClaudePlugins] = useState<ClaudePlugin[]>([]);
+  const [claudePermissions, setClaudePermissions] = useState<ClaudePermissions | null>(null);
 
   // Keep polling loop reading fresh values without re-subscribing every render.
   const sectionRef = useRef(section);
@@ -374,6 +429,23 @@ export function DashboardProvider({
     }
   }, []);
 
+  const loadClaude = useCallback(async () => {
+    try {
+      const [skills, connectors, plugins, permissions] = await Promise.all([
+        clientRef.current.api<ClaudeSkill[]>("/claude/skills"),
+        clientRef.current.api<ClaudeConnector[]>("/claude/connectors"),
+        clientRef.current.api<ClaudePlugin[]>("/claude/plugins"),
+        clientRef.current.api<ClaudePermissions>("/claude/permissions"),
+      ]);
+      setClaudeSkills(skills);
+      setClaudeConnectors(connectors);
+      setClaudePlugins(plugins);
+      setClaudePermissions(permissions);
+    } catch (e) {
+      swallow(e);
+    }
+  }, []);
+
   /* One refresh cycle for whatever section is active (plus always-cheap projects/agents
    * so the nav counts and inbox stay live). */
   const tick = useCallback(async () => {
@@ -396,7 +468,8 @@ export function DashboardProvider({
     if (s === "activity") await loadCommands();
     if (s === "schedules") await loadSchedules();
     if (s === "shared") await loadShared();
-  }, [loadAgents, loadRun, loadApprovals, loadHosts, loadCommands, loadSchedules, loadShared]);
+    if (s === "claude") await loadClaude();
+  }, [loadAgents, loadRun, loadApprovals, loadHosts, loadCommands, loadSchedules, loadShared, loadClaude]);
 
   // Initial load + polling loop. The first tick populates projects *and* agents (and the
   // active section) up front, so the Runs inbox is filled without waiting a poll interval.
@@ -425,8 +498,9 @@ export function DashboardProvider({
       if (s === "activity") void loadCommands();
       if (s === "schedules") void loadSchedules();
       if (s === "shared") void loadShared();
+      if (s === "claude") void loadClaude();
     },
-    [loadApprovals, loadHosts, loadCommands, loadSchedules, loadShared],
+    [loadApprovals, loadHosts, loadCommands, loadSchedules, loadShared, loadClaude],
   );
 
   const selectProject = useCallback(
@@ -933,6 +1007,189 @@ export function DashboardProvider({
     setClaudeLogin({ status: "idle", url: "", message: "" });
   }, []);
 
+  // ---- claude management (skills / connectors / plugins / permissions) ----
+  // Plain DB writes (no worker round-trip); every change applies to the NEXT launch of
+  // every agent, which the success banners say explicitly.
+  const claudeWrite = useCallback(
+    async (fn: () => Promise<unknown>, okText: string): Promise<boolean> => {
+      try {
+        await fn();
+        setCmd({ text: okText, error: false, busy: false });
+        await loadClaude();
+        return true;
+      } catch (e) {
+        if (e instanceof AuthError) return false;
+        setCmd({ text: (e as Error).message, error: true, busy: false });
+        return false;
+      }
+    },
+    [loadClaude],
+  );
+
+  const createClaudeSkill = useCallback(
+    (b: SkillBody) =>
+      claudeWrite(
+        () =>
+          clientRef.current.api("/claude/skills", {
+            method: "POST",
+            body: {
+              name: b.name.trim(),
+              description: b.description.trim() || null,
+              content: b.content,
+              enabled: b.enabled,
+            },
+          }),
+        `skill '${b.name.trim()}' saved — applies to the next agent launch`,
+      ),
+    [claudeWrite],
+  );
+
+  const updateClaudeSkill = useCallback(
+    (id: number, b: Partial<SkillBody>) =>
+      claudeWrite(
+        () => clientRef.current.api(`/claude/skills/${id}`, { method: "PATCH", body: b }),
+        "skill updated — applies to the next agent launch",
+      ),
+    [claudeWrite],
+  );
+
+  const deleteClaudeSkill = useCallback(
+    async (id: number) => {
+      await claudeWrite(
+        () => clientRef.current.api(`/claude/skills/${id}`, { method: "DELETE" }),
+        "skill removed — gone from workers at the next launch",
+      );
+    },
+    [claudeWrite],
+  );
+
+  const installClaudeSkill = useCallback(
+    async (prompt: string): Promise<boolean> => {
+      // A worker-run command (the API has no claude), tracked like login/spawn. The
+      // worker-side run is budgeted at ~4 minutes; poll a little past that.
+      setCmd({
+        text: "skill install: running the marketplace prompt through headless claude on the worker…",
+        error: false,
+        busy: true,
+      });
+      try {
+        const command = await clientRef.current.api<Command>("/claude/skills/install", {
+          method: "POST",
+          body: { prompt },
+        });
+        const final = await clientRef.current.trackCommand(command.id, { attempts: 600 });
+        if (!final) {
+          setCmd({
+            text: "skill install: still running (see Activity). Is the control worker running?",
+            error: false,
+            busy: false,
+          });
+          return false;
+        }
+        if (final.status !== "done") {
+          setCmd({
+            text: `skill install failed — ${final.error ?? "unknown error"}`,
+            error: true,
+            busy: false,
+          });
+          return false;
+        }
+        const skills = (final.result?.skills ?? []) as { name: string; action: string }[];
+        const names = skills.map((s) => `${s.name} (${s.action})`).join(", ");
+        setCmd({
+          text: `skill install done: ${names || "no skills"} — review the import below; Claude's report of the choices it made is in Activity.`,
+          error: false,
+          busy: false,
+        });
+        await loadClaude();
+        return true;
+      } catch (e) {
+        if (e instanceof AuthError) return false;
+        setCmd({ text: `skill install failed: ${(e as Error).message}`, error: true, busy: false });
+        return false;
+      }
+    },
+    [loadClaude],
+  );
+
+  const createClaudeConnector = useCallback(
+    (b: ConnectorBody) =>
+      claudeWrite(
+        () =>
+          clientRef.current.api("/claude/connectors", {
+            method: "POST",
+            body: { ...b, name: b.name.trim() },
+          }),
+        `connector '${b.name.trim()}' saved — applies to the next agent launch`,
+      ),
+    [claudeWrite],
+  );
+
+  const updateClaudeConnector = useCallback(
+    (id: number, b: Partial<ConnectorBody>) =>
+      claudeWrite(
+        () => clientRef.current.api(`/claude/connectors/${id}`, { method: "PATCH", body: b }),
+        "connector updated — applies to the next agent launch",
+      ),
+    [claudeWrite],
+  );
+
+  const deleteClaudeConnector = useCallback(
+    async (id: number) => {
+      await claudeWrite(
+        () => clientRef.current.api(`/claude/connectors/${id}`, { method: "DELETE" }),
+        "connector removed — applies to the next agent launch",
+      );
+    },
+    [claudeWrite],
+  );
+
+  const createClaudePlugin = useCallback(
+    (b: PluginBody) =>
+      claudeWrite(
+        () =>
+          clientRef.current.api("/claude/plugins", {
+            method: "POST",
+            body: {
+              name: b.name.trim(),
+              marketplace: b.marketplace.trim(),
+              marketplace_repo: b.marketplace_repo.trim(),
+              enabled: b.enabled,
+            },
+          }),
+        `plugin '${b.name.trim()}' saved — installs on the next agent launch`,
+      ),
+    [claudeWrite],
+  );
+
+  const updateClaudePlugin = useCallback(
+    (id: number, b: Partial<PluginBody>) =>
+      claudeWrite(
+        () => clientRef.current.api(`/claude/plugins/${id}`, { method: "PATCH", body: b }),
+        "plugin updated — applies to the next agent launch",
+      ),
+    [claudeWrite],
+  );
+
+  const deleteClaudePlugin = useCallback(
+    async (id: number) => {
+      await claudeWrite(
+        () => clientRef.current.api(`/claude/plugins/${id}`, { method: "DELETE" }),
+        "plugin removed — applies to the next agent launch",
+      );
+    },
+    [claudeWrite],
+  );
+
+  const saveClaudePermissions = useCallback(
+    (b: PermissionsBody) =>
+      claudeWrite(
+        () => clientRef.current.api("/claude/permissions", { method: "PUT", body: b }),
+        "permissions saved — apply to the next agent launch",
+      ),
+    [claudeWrite],
+  );
+
   const setSharedKey = useCallback(
     async (key: string, value: string) => {
       try {
@@ -997,6 +1254,21 @@ export function DashboardProvider({
     startClaudeLogin,
     submitClaudeCode,
     resetClaudeLogin,
+    claudeSkills,
+    claudeConnectors,
+    claudePlugins,
+    claudePermissions,
+    createClaudeSkill,
+    updateClaudeSkill,
+    deleteClaudeSkill,
+    installClaudeSkill,
+    createClaudeConnector,
+    updateClaudeConnector,
+    deleteClaudeConnector,
+    createClaudePlugin,
+    updateClaudePlugin,
+    deleteClaudePlugin,
+    saveClaudePermissions,
   };
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

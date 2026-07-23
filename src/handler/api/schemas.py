@@ -351,6 +351,178 @@ class ResumeOut(BaseModel):
     detail: str
 
 
+# ---- Claude management (dashboard Claude page) -----------------------------------------
+
+# Names become filesystem dirnames (skills) and JSON object keys (connectors,
+# marketplaces), so keep them to a safe slug — no separators, no dot-prefix.
+_SLUG_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._-]*$"
+
+# settings.json permissions.defaultMode values claude accepts.
+PermissionMode = Literal["default", "acceptEdits", "plan", "bypassPermissions"]
+McpTransport = Literal["stdio", "http", "sse"]
+
+# "owner/repo" marketplaces resolve as GitHub sources; anything else must be a git URL.
+_GIT_URL_RE = re.compile(r"^(https?://|git@|ssh://)")
+
+
+class ClaudeSkillIn(BaseModel):
+    name: str = Field(min_length=1, max_length=64, pattern=_SLUG_PATTERN)
+    description: str | None = None
+    content: str = Field(min_length=1)
+    enabled: bool = True
+
+
+class ClaudeSkillUpdateIn(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=64, pattern=_SLUG_PATTERN)
+    description: str | None = None
+    content: str | None = Field(default=None, min_length=1)
+    enabled: bool | None = None
+
+
+class ClaudeSkillOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    name: str
+    description: str | None = None
+    content: str
+    enabled: bool
+    # Relative paths of auxiliary files (references/, scripts/, …) captured by the
+    # install-from-prompt import; synced alongside SKILL.md, read-only over the API.
+    files: list[str] = Field(default_factory=list)
+    created_at: datetime
+    updated_at: datetime
+
+
+class SkillInstallIn(BaseModel):
+    """A marketplace "install prompt" (SkillsMP and friends), normally pasted into an
+    interactive claude. The worker runs it through a one-off headless claude in a staging
+    dir and imports what it fetched as managed skills — choices a human would be asked
+    (scope, options) are made non-interactively: user scope, sensible defaults, reported
+    back in the command result."""
+
+    prompt: str = Field(min_length=1, max_length=20_000)
+
+
+class ClaudeConnectorIn(BaseModel):
+    """An MCP server agents may reach: ``stdio`` runs ``command`` in the control
+    container, ``http``/``sse`` point at ``url``. Written per-launch as the run's
+    ``--mcp-config`` file."""
+
+    name: str = Field(min_length=1, max_length=64, pattern=_SLUG_PATTERN)
+    transport: McpTransport = "stdio"
+    command: str | None = None
+    args: list[str] = Field(default_factory=list)
+    env: dict[str, str] = Field(default_factory=dict)
+    url: str | None = None
+    headers: dict[str, str] = Field(default_factory=dict)
+    enabled: bool = True
+
+    @model_validator(mode="after")
+    def _check_transport_fields(self) -> ClaudeConnectorIn:
+        if self.transport == "stdio":
+            if not (self.command or "").strip():
+                raise ValueError("a stdio connector needs a command")
+        elif not (self.url or "").strip() or not self.url.strip().startswith(
+            ("http://", "https://")
+        ):
+            raise ValueError(f"an {self.transport} connector needs an http(s) url")
+        return self
+
+
+class ClaudeConnectorUpdateIn(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=64, pattern=_SLUG_PATTERN)
+    transport: McpTransport | None = None
+    command: str | None = None
+    args: list[str] | None = None
+    env: dict[str, str] | None = None
+    url: str | None = None
+    headers: dict[str, str] | None = None
+    enabled: bool | None = None
+
+
+class ClaudeConnectorOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    name: str
+    transport: str
+    command: str | None = None
+    args: list[str] | None = None
+    env: dict[str, str] | None = None
+    url: str | None = None
+    headers: dict[str, str] | None = None
+    enabled: bool
+    created_at: datetime
+
+
+class ClaudePluginIn(BaseModel):
+    """A plugin pinned to the marketplace serving it. ``marketplace_repo`` is
+    ``owner/repo`` (GitHub) or a git URL; generated settings carry it as an extra known
+    marketplace with the plugin enabled, so headless runs install it on boot."""
+
+    name: str = Field(min_length=1, max_length=64, pattern=_SLUG_PATTERN)
+    marketplace: str = Field(min_length=1, max_length=64, pattern=_SLUG_PATTERN)
+    marketplace_repo: str = Field(min_length=1)
+    enabled: bool = True
+
+    @field_validator("marketplace_repo")
+    @classmethod
+    def _check_repo(cls, v: str) -> str:
+        v = v.strip()
+        if not (_REPO_RE.match(v) or _GIT_URL_RE.match(v)):
+            raise ValueError("marketplace_repo must be owner/repo or a git URL")
+        return v
+
+
+class ClaudePluginUpdateIn(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=64, pattern=_SLUG_PATTERN)
+    marketplace: str | None = Field(
+        default=None, min_length=1, max_length=64, pattern=_SLUG_PATTERN
+    )
+    marketplace_repo: str | None = Field(default=None, min_length=1)
+    enabled: bool | None = None
+
+    @field_validator("marketplace_repo")
+    @classmethod
+    def _check_repo(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        v = v.strip()
+        if not (_REPO_RE.match(v) or _GIT_URL_RE.match(v)):
+            raise ValueError("marketplace_repo must be owner/repo or a git URL")
+        return v
+
+
+class ClaudePluginOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    name: str
+    marketplace: str
+    marketplace_repo: str
+    enabled: bool
+    created_at: datetime
+
+
+class ClaudePermissionsIn(BaseModel):
+    """The operator's permission overrides, merged over the env-configured baseline at
+    launch: ``default_mode`` (null = keep the baseline) plus extra allow/deny/ask rules."""
+
+    default_mode: PermissionMode | None = None
+    allow: list[str] = Field(default_factory=list)
+    deny: list[str] = Field(default_factory=list)
+    ask: list[str] = Field(default_factory=list)
+
+
+class ClaudePermissionsOut(ClaudePermissionsIn):
+    """Stored overrides plus the env baseline they merge over, so the UI can show the
+    effective policy without guessing at server config."""
+
+    base_mode: str
+    base_allow: list[str] = Field(default_factory=list)
+
+
 class SharedContextIn(BaseModel):
     value: str
 

@@ -17,6 +17,7 @@ from ..config import get_settings
 from .routes import (
     agents,
     approvals,
+    claude,
     commands,
     hosts,
     interaction,
@@ -48,6 +49,7 @@ def create_app() -> FastAPI:
     app.include_router(approvals.router)
     app.include_router(commands.router)
     app.include_router(login.router)
+    app.include_router(claude.router)
     app.include_router(hosts.router)
     app.include_router(schedules.router)
     app.include_router(shared.router)

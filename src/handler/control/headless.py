@@ -34,6 +34,7 @@ from pathlib import Path
 from ..config import get_settings
 from ..db import repository as repo
 from ..db.engine import connection
+from . import claude_gen
 
 # Stream types we recognize from ``--output-format stream-json``; anything else (or an
 # unparseable line) is stored as-is so no output is ever dropped. ``worker`` is our own:
@@ -59,10 +60,13 @@ def session_dir(working_dir: str) -> Path:
     return Path(os.path.expanduser("~")) / ".claude" / "projects" / munged_project_dir(working_dir)
 
 
-def build_spawn_argv(task: str, settings_path: str, session_id: str) -> list[str]:
+def build_spawn_argv(
+    task: str, settings_path: str, session_id: str, mcp_config: str | None = None
+) -> list[str]:
     """The headless spawn invocation. ``--verbose`` is required with stream-json in
     print mode; ``--session-id`` pre-assigns the UUID so the session is addressable
-    (and archivable) from the first event."""
+    (and archivable) from the first event. ``mcp_config`` is the generated connectors
+    file (``control.claude_gen``), when the operator has any enabled."""
     s = get_settings()
     argv = [
         s.claude_bin, "-p", "--verbose",
@@ -70,13 +74,17 @@ def build_spawn_argv(task: str, settings_path: str, session_id: str) -> list[str
         "--session-id", session_id,
         "--settings", settings_path,
     ]
+    if mcp_config:
+        argv += ["--mcp-config", mcp_config]
     if s.run_budget_usd > 0:
         argv += ["--max-budget-usd", str(s.run_budget_usd)]
     argv += ["--", task]
     return argv
 
 
-def build_resume_argv(session_id: str, answer: str, settings_path: str) -> list[str]:
+def build_resume_argv(
+    session_id: str, answer: str, settings_path: str, mcp_config: str | None = None
+) -> list[str]:
     """The headless resume invocation — a brand-new process continuing ``session_id``."""
     s = get_settings()
     argv = [
@@ -85,6 +93,8 @@ def build_resume_argv(session_id: str, answer: str, settings_path: str) -> list[
         "--resume", session_id,
         "--settings", settings_path,
     ]
+    if mcp_config:
+        argv += ["--mcp-config", mcp_config]
     if s.run_budget_usd > 0:
         argv += ["--max-budget-usd", str(s.run_budget_usd)]
     argv += ["--", answer]
@@ -380,14 +390,19 @@ def launch(
     owns the process from here.
     """
     working_dir = agent["working_dir"]
+    # The generated connectors file (control.claude_gen) rides along when present; its
+    # presence on disk is the contract, so the launch seam's signature stays stable.
+    mcp_config = claude_gen.mcp_config_path(working_dir)
+    if not os.path.exists(mcp_config):
+        mcp_config = None
     if kind == "spawn":
         session_id = str(uuid.uuid4())
-        argv = build_spawn_argv(prompt, settings_path, session_id)
+        argv = build_spawn_argv(prompt, settings_path, session_id, mcp_config)
     else:
         session_id = agent.get("session_id")
         if not session_id:
             raise ValueError(f"agent '{agent['name']}' has no session to resume")
-        argv = build_resume_argv(session_id, prompt, settings_path)
+        argv = build_resume_argv(session_id, prompt, settings_path, mcp_config)
     with connection() as conn:
         run = repo.create_run(conn, agent["id"], session_id, worker_id, kind)
         repo.set_agent_session(conn, agent["id"], session_id, worker_id)

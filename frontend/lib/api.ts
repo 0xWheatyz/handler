@@ -140,6 +140,55 @@ export interface Schedule {
   created_at: string;
 }
 
+/* ---- Claude management (the dashboard's Claude page) ---- */
+
+export interface ClaudeSkill {
+  id: number;
+  name: string;
+  description?: string | null;
+  content: string;
+  enabled: boolean;
+  /* Relative paths of auxiliary files captured by an install-from-prompt import
+   * (references/, scripts/, …); synced alongside SKILL.md, read-only here. */
+  files: string[];
+  created_at: string;
+  updated_at: string;
+}
+
+export type McpTransport = "stdio" | "http" | "sse";
+
+export interface ClaudeConnector {
+  id: number;
+  name: string;
+  transport: McpTransport;
+  command?: string | null;
+  args?: string[] | null;
+  env?: Record<string, string> | null;
+  url?: string | null;
+  headers?: Record<string, string> | null;
+  enabled: boolean;
+  created_at: string;
+}
+
+export interface ClaudePlugin {
+  id: number;
+  name: string;
+  marketplace: string;
+  marketplace_repo: string;
+  enabled: boolean;
+  created_at: string;
+}
+
+/* Stored overrides + the env baseline they merge over at launch (read-only here). */
+export interface ClaudePermissions {
+  default_mode?: string | null;
+  allow: string[];
+  deny: string[];
+  ask: string[];
+  base_mode: string;
+  base_allow: string[];
+}
+
 export interface SharedContext {
   key: string;
   value: string;

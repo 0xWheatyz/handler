@@ -74,6 +74,12 @@ class Settings(BaseSettings):
     # Comma-separated permission allow rules added to generated settings for headless runs.
     headless_allowed_tools: str = "Bash(git *),Bash(mise *)"
 
+    # Wall-clock budget for the install-from-prompt one-off claude run (Claude page,
+    # Skills tab). Kept under worker_stale_after by default: the run blocks the worker's
+    # drain loop synchronously, and outliving the heartbeat window would get its live
+    # runs falsely reaped.
+    skill_install_timeout: float = 240.0
+
     # The pinned `forge` version (README 3.6 / Phase 2: pin, never float on @latest).
     # When set, spawn verifies the injected forge matches and records a mismatch; when
     # empty the check is skipped. Operators align this with what their base image installs.

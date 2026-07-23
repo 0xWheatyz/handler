@@ -1,5 +1,5 @@
 /* The Control Center shell: a left nav (Runs / Repositories / Agents / Approvals / Git
- * Servers / Activity / Shared / Claude Login) and the active route's page on the right,
+ * Servers / Activity / Shared / Claude) and the active route's page on the right,
  * matching the design's hub layout. Each nav item is a real route, so pages are modular
  * and independently loadable; this shell lives in the root layout and persists across
  * navigation, keeping the store, polling loop, and auth alive between pages. Command
@@ -29,8 +29,9 @@ const BADGES: Partial<Record<Section, { count: (s: Store) => number; accent?: (s
   servers: { count: (s) => s.hosts.length },
   activity: { count: (s) => s.commands.length },
   shared: { count: (s) => s.shared.context.length },
-  login: {
-    count: () => 0,
+  claude: {
+    // Everything managed on the page: skills + connectors + plugins.
+    count: (s) => s.claudeSkills.length + s.claudeConnectors.length + s.claudePlugins.length,
     // Draw the eye to it until Claude is logged in on the host this session.
     accent: (s) => s.claudeLogin.status !== "done",
   },
