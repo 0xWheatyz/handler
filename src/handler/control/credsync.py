@@ -106,10 +106,16 @@ def _merge_claude_json(path: str, incoming: str) -> None:
         for key in _ACCOUNT_KEYS:
             if key in new_data:
                 merged[key] = new_data[key]
+    _write_private(path, json.dumps(merged, indent=2))
+
+
+def _write_private(path: str, content: str) -> None:
+    """Atomic write with 0600 from the first byte — these files carry OAuth tokens."""
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     tmp = f"{path}.credsync.tmp"
-    with open(tmp, "w") as fh:
-        json.dump(merged, fh, indent=2)
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as fh:
+        fh.write(content)
     os.replace(tmp, path)
 
 
@@ -151,11 +157,7 @@ def refresh() -> str | None:
             if rel == ".claude.json":
                 _merge_claude_json(path, content)
             else:
-                os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-                tmp = f"{path}.credsync.tmp"
-                with open(tmp, "w") as fh:
-                    fh.write(content)
-                os.replace(tmp, path)
+                _write_private(path, content)
         _state.seen_updated_at = row["updated_at"]
         _state.last_fingerprint = fingerprint()
         return "materialized"

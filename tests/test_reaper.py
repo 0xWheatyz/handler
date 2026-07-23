@@ -36,7 +36,7 @@ def _hb(worker_id, age_seconds=0.0):
 
 def test_reaper_marks_stale_workers_runs_crashed(env):
     agent, run = _seed_run("w-dead")
-    _hb("w-dead", age_seconds=120)  # stale: default worker_stale_after is 60s
+    _hb("w-dead", age_seconds=600)  # stale: default worker_stale_after is 300s
 
     assert worker.reap_dead_workers() == 1
 
@@ -64,7 +64,7 @@ def test_reaper_preserves_paused_agent_status(env):
     """paused_for_input still accurately describes what the agent needs — only agents
     stuck in 'working' get flipped to crashed."""
     agent, run = _seed_run("w-dead2", agent_name="paused", agent_status="paused_for_input")
-    _hb("w-dead2", age_seconds=120)
+    _hb("w-dead2", age_seconds=600)
 
     assert worker.reap_dead_workers() == 1
     with get_engine().begin() as conn:
@@ -74,7 +74,7 @@ def test_reaper_preserves_paused_agent_status(env):
 
 def test_reaper_idempotent_against_races(env):
     agent, run = _seed_run("w-dead3", agent_name="raced")
-    _hb("w-dead3", age_seconds=120)
+    _hb("w-dead3", age_seconds=600)
     assert worker.reap_dead_workers() == 1
     # A second reaper (or the same one next pass) finds nothing left to settle.
     assert worker.reap_dead_workers() == 0
