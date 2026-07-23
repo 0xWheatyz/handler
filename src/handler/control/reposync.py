@@ -1,4 +1,4 @@
-"""Clone-or-pull a project's repository — the stateless "always pull" step.
+"""Clone-or-fetch a project's repository — the stateless "always pull" step.
 
 Where a clone lands on disk is Handler's concern, not the operator's: the API computes
 ``root_dir`` under ``PROJECTS_ROOT`` at registration, and this module makes the checkout
@@ -70,11 +70,16 @@ def ssh_env(git_remote: str | None, conn: Connection) -> dict[str, str]:
 
 
 def sync_project(project: dict, conn: Connection | None = None) -> dict:
-    """Clone the project's remote into ``root_dir``, or fast-forward an existing clone.
+    """Clone the project's remote into ``root_dir``, or refresh an existing clone.
 
     Idempotent by design — scheduled/stateless runs call this before every spawn so the
-    working tree always starts from the remote's latest state. Raises :class:`SyncError`
-    when the project has no remote or git fails.
+    working tree always starts from the remote's latest state. An existing clone is
+    ``git fetch``\\ ed rather than pulled: a pull only moves the branch the root happens
+    to have checked out, and an agent parked on a feature branch used to leave
+    ``origin/*`` (and therefore every branch cut for a new agent) hours stale. After
+    the fetch, ``origin/HEAD`` is re-pinned and the checkout is fast-forwarded only
+    when it is sitting on the default branch. Raises :class:`SyncError` when the
+    project has no remote or git fails.
     """
     remote = project.get("git_remote")
     root = project["root_dir"]
@@ -88,10 +93,22 @@ def sync_project(project: dict, conn: Connection | None = None) -> dict:
         env, config = _auth_context(project, conn)
 
     if gitops.is_repo(root):
-        ok, out = gitops.pull_ff(root, env=env)
+        ok, out = gitops.fetch(root, env=env)
         if not ok:
-            raise SyncError(f"pull failed in {root}: {out}")
-        return {"action": "pulled", "root_dir": root, "detail": out}
+            raise SyncError(f"fetch failed in {root}: {out}")
+        # Best-effort: worktree spawns cut new branches from origin/HEAD, so keep it
+        # pinned even for clones that predate it (or whose remote default changed).
+        gitops.set_default_head(root, env=env)
+        detail = out
+        default_ref = gitops.default_branch_ref(root)
+        if default_ref and gitops.current_branch(root) == default_ref.split("/", 1)[1]:
+            ok, ff_out = gitops.merge_ff(root, default_ref)
+            if not ok:
+                raise SyncError(
+                    f"fast-forward of {default_ref} failed in {root}: {ff_out}"
+                )
+            detail = ff_out or detail
+        return {"action": "pulled", "root_dir": root, "detail": detail}
 
     os.makedirs(os.path.dirname(root) or ".", exist_ok=True)
     ok, out = gitops.clone(remote, root, env=env, config=config)

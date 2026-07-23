@@ -150,7 +150,7 @@ def test_sync_endpoint_400_without_remote(client, auth, env, tmp_path):
 @pytest.fixture
 def fake_sync_gitops(monkeypatch):
     """Fake the clone/pull side of the gitops seam."""
-    state = {"clone": [], "pull": [], "config": [], "repos": set(), "ok": True, "out": ""}
+    state = {"clone": [], "fetch": [], "config": [], "repos": set(), "ok": True, "out": ""}
 
     def is_repo(path):
         return path in state["repos"]
@@ -162,9 +162,15 @@ def fake_sync_gitops(monkeypatch):
             state["repos"].add(dest)
         return state["ok"], state["out"]
 
-    def pull_ff(cwd, env=None):
-        state["pull"].append({"cwd": cwd, "env": env or {}})
+    def fetch(cwd, env=None):
+        state["fetch"].append({"cwd": cwd, "env": env or {}})
         return state["ok"], state["out"]
+
+    def set_default_head(cwd, env=None):
+        return True, ""
+
+    def default_branch_ref(cwd):
+        return None
 
     def config_local(cwd, key, value):
         state["config"].append({"cwd": cwd, "key": key, "value": value})
@@ -172,7 +178,9 @@ def fake_sync_gitops(monkeypatch):
 
     monkeypatch.setattr(gitops, "is_repo", is_repo)
     monkeypatch.setattr(gitops, "clone", clone)
-    monkeypatch.setattr(gitops, "pull_ff", pull_ff)
+    monkeypatch.setattr(gitops, "fetch", fetch)
+    monkeypatch.setattr(gitops, "set_default_head", set_default_head)
+    monkeypatch.setattr(gitops, "default_branch_ref", default_branch_ref)
     monkeypatch.setattr(gitops, "config_local", config_local)
     return state
 
@@ -192,7 +200,7 @@ def test_cmd_sync_clones_then_pulls(env, fake_sync_gitops):
 
     result = worker.execute_command(command)
     assert result["action"] == "pulled"
-    assert fake_sync_gitops["pull"][0]["cwd"] == "/tmp/r"
+    assert fake_sync_gitops["fetch"][0]["cwd"] == "/tmp/r"
 
 
 def test_cmd_sync_failure_is_command_error(env, fake_sync_gitops):

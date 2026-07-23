@@ -95,10 +95,12 @@ def spawn(
             raise SpawnError(f"agent '{name}' already exists in project '{project_id}'")
 
         # Stateless workflows: start every run from the remote's latest state. An
-        # existing clone is fast-forwarded (failure degrades to a note — a stale tree is
-        # usable, an offline forge shouldn't brick spawning); a missing/empty root is
-        # cloned, and that failing is fatal (there is nothing to run against). A
-        # non-empty root that isn't a git repo is left alone — it's manually managed.
+        # existing clone is fetched — refreshing origin/* even when the root checkout is
+        # parked on an agent's branch — and fast-forwarded when it sits on the default
+        # branch (failure degrades to a note — a stale tree is usable, an offline forge
+        # shouldn't brick spawning); a missing/empty root is cloned, and that failing is
+        # fatal (there is nothing to run against). A non-empty root that isn't a git
+        # repo is left alone — it's manually managed.
         root = project["root_dir"]
         if project.get("git_remote"):
             if gitops.is_repo(root):

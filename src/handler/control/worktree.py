@@ -35,6 +35,25 @@ def _slug(name: str) -> str:
     return slug or "agent"
 
 
+def _default_branch_start(project_root: str) -> str | None:
+    """The remote default branch ref (``origin/main``) when the clone knows it.
+
+    New agent branches are cut from here rather than the root's ``HEAD``: the root
+    checkout can legitimately be parked on some earlier agent's branch, and cutting
+    from it handed fresh agents history that was hours behind the remote.
+    """
+    result = subprocess.run(
+        ["git", "-C", project_root, "symbolic-ref", "--quiet",
+         "refs/remotes/origin/HEAD"],
+        capture_output=True,
+        text=True,
+    )
+    ref = result.stdout.strip()
+    if result.returncode != 0 or not ref.startswith("refs/remotes/"):
+        return None
+    return ref.removeprefix("refs/remotes/")
+
+
 def _branch_exists(project_root: str, branch: str) -> bool:
     return (
         subprocess.run(
@@ -69,13 +88,21 @@ def resolve_working_dir(
             raise IsolationError(f"{target} escapes project root {project_root}")
         # `git worktree add <path> <branch>` only checks out an *existing* ref; a fresh
         # feature branch won't exist yet (spawn starts from the remote's latest state), so
-        # create it with -b. An existing local branch is checked out as-is; if it exists
-        # only on a remote, git DWIMs a tracking branch from the bare `add`.
+        # create it with -b — from origin/HEAD when the clone has a remote, so the new
+        # branch starts at the remote default branch's tip regardless of where the root
+        # checkout is parked (--no-track: the branch must not adopt the default branch as
+        # its upstream, or the agent's plain `git push` would aim at it). An existing
+        # local branch is checked out as-is; if it exists only on a remote, git DWIMs a
+        # tracking branch from the bare `add`.
         cmd = ["git", "-C", project_root, "worktree", "add"]
         if _branch_exists(project_root, worktree_branch):
             cmd += [target, worktree_branch]
         else:
-            cmd += ["-b", worktree_branch, target]
+            start = _default_branch_start(project_root)
+            if start:
+                cmd += ["--no-track", "-b", worktree_branch, target, start]
+            else:
+                cmd += ["-b", worktree_branch, target]
         result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode != 0:
             raise WorktreeError(
