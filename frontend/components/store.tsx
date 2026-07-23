@@ -189,17 +189,22 @@ export function useDashboard(): StoreValue {
 export function DashboardProvider({
   token,
   onUnauthorized,
+  initialSection = "runs",
   children,
 }: {
   token: string;
   onUnauthorized: () => void;
+  /* Which section is on screen at mount, derived from the URL by the auth frame. The
+   * provider lives in the root layout and mounts once, so this only seeds the first
+   * poll; later navigation updates the section through setSection. */
+  initialSection?: Section;
   children: ReactNode;
 }) {
   const client = useMemo(() => createClient(token, onUnauthorized), [token, onUnauthorized]);
   const clientRef = useRef(client);
   clientRef.current = client;
 
-  const [section, setSectionRaw] = useState<Section>("runs");
+  const [section, setSectionRaw] = useState<Section>(initialSection);
   const [projects, setProjects] = useState<Project[]>([]);
   const [agents, setAgents] = useState<RunAgent[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<string>("");
