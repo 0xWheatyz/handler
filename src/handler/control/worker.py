@@ -413,6 +413,12 @@ def drain(worker_id: str, limit: int | None = None) -> int:
             break
         _run_one(command)
         processed += 1
+        # Heartbeat between commands: a long queue must not starve the proof-of-life
+        # (a peer's reaper would otherwise mark this worker's live runs crashed).
+        try:
+            heartbeat(worker_id)
+        except Exception:  # noqa: BLE001 - bookkeeping must not stop the drain
+            pass
     return processed
 
 

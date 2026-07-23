@@ -58,8 +58,10 @@ class Settings(BaseSettings):
     # start a run are left queued (for another worker) while all slots are busy.
     max_concurrent_runs: int = 4
     # Heartbeats older than this many seconds mark a worker dead; the reaper flips its
-    # running runs (and their agents) to ``crashed``.
-    worker_stale_after: float = 60.0
+    # running runs (and their agents) to ``crashed``. Generous by design: one slow
+    # synchronous command (a large clone, the interactive login flow) can hold a worker
+    # between heartbeats for a minute or more, and a false reap is worse than a slow one.
+    worker_stale_after: float = 300.0
     # Per-run spend cap passed as ``--max-budget-usd``. 0 disables the flag.
     run_budget_usd: float = 0.0
     # Refuse to upload a claude session archive larger than this (a runaway sidecar dir
