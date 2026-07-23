@@ -18,12 +18,15 @@ export const NAV_ROUTES: NavRoute[] = [
   { key: "servers", href: "/servers", label: "Git Servers" },
   { key: "activity", href: "/activity", label: "Activity" },
   { key: "shared", href: "/shared", label: "Shared" },
-  { key: "login", href: "/login", label: "Claude Login" },
+  { key: "claude", href: "/claude", label: "Claude" },
 ];
 
 /* Map a browser path back to its section key. Trailing slashes (Next emits them under
- * `trailingSlash: true`) are normalized away; anything unrecognized falls back to Runs. */
+ * `trailingSlash: true`) are normalized away; anything unrecognized falls back to Runs.
+ * "/login" still maps to the Claude page — the login flow moved into it, and the old
+ * route redirects there. */
 export function sectionFromPath(pathname: string): Section {
   const clean = pathname.replace(/\/+$/, "") || "/";
+  if (clean === "/login") return "claude";
   return NAV_ROUTES.find((r) => r.href === clean)?.key ?? "runs";
 }

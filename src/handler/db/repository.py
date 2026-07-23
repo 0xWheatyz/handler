@@ -27,6 +27,10 @@ from .tables import (
     agents,
     approvals,
     checkmarks,
+    claude_config,
+    claude_connectors,
+    claude_plugins,
+    claude_skills,
     commands,
     forge_hosts,
     log_entries,
@@ -925,6 +929,205 @@ def upsert_runtime_secret(conn: Connection, key: str, value_enc: str) -> None:
 def get_runtime_secret(conn: Connection, key: str) -> dict | None:
     row = conn.execute(select(runtime_secrets).where(runtime_secrets.c.key == key)).first()
     return _row_to_dict(row)
+
+
+# --------------------------------------------------- claude management (web-managed)
+
+
+def list_claude_skills(conn: Connection, enabled_only: bool = False) -> list[dict]:
+    stmt = select(claude_skills)
+    if enabled_only:
+        stmt = stmt.where(claude_skills.c.enabled.is_(True))
+    rows = conn.execute(stmt.order_by(claude_skills.c.name)).all()
+    return [dict(r._mapping) for r in rows]
+
+
+def get_claude_skill(conn: Connection, skill_id: int) -> dict | None:
+    row = conn.execute(select(claude_skills).where(claude_skills.c.id == skill_id)).first()
+    return _row_to_dict(row)
+
+
+def get_claude_skill_by_name(conn: Connection, name: str) -> dict | None:
+    row = conn.execute(select(claude_skills).where(claude_skills.c.name == name)).first()
+    return _row_to_dict(row)
+
+
+def create_claude_skill(
+    conn: Connection,
+    name: str,
+    content: str,
+    description: str | None = None,
+    enabled: bool = True,
+) -> dict:
+    now = _now()
+    result = conn.execute(
+        claude_skills.insert().values(
+            name=name,
+            description=description,
+            content=content,
+            enabled=enabled,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    return get_claude_skill(conn, result.inserted_primary_key[0])
+
+
+def update_claude_skill(conn: Connection, skill_id: int, **fields: Any) -> dict | None:
+    allowed = {"name", "description", "content", "enabled"}
+    values = {k: v for k, v in fields.items() if k in allowed}
+    if values:
+        values["updated_at"] = _now()
+        conn.execute(
+            claude_skills.update().where(claude_skills.c.id == skill_id).values(**values)
+        )
+    return get_claude_skill(conn, skill_id)
+
+
+def delete_claude_skill(conn: Connection, skill_id: int) -> bool:
+    result = conn.execute(claude_skills.delete().where(claude_skills.c.id == skill_id))
+    return result.rowcount > 0
+
+
+def list_claude_connectors(conn: Connection, enabled_only: bool = False) -> list[dict]:
+    stmt = select(claude_connectors)
+    if enabled_only:
+        stmt = stmt.where(claude_connectors.c.enabled.is_(True))
+    rows = conn.execute(stmt.order_by(claude_connectors.c.name)).all()
+    return [dict(r._mapping) for r in rows]
+
+
+def get_claude_connector(conn: Connection, connector_id: int) -> dict | None:
+    row = conn.execute(
+        select(claude_connectors).where(claude_connectors.c.id == connector_id)
+    ).first()
+    return _row_to_dict(row)
+
+
+def get_claude_connector_by_name(conn: Connection, name: str) -> dict | None:
+    row = conn.execute(
+        select(claude_connectors).where(claude_connectors.c.name == name)
+    ).first()
+    return _row_to_dict(row)
+
+
+def create_claude_connector(
+    conn: Connection,
+    name: str,
+    transport: str,
+    command: str | None = None,
+    args: list | None = None,
+    env: dict | None = None,
+    url: str | None = None,
+    headers: dict | None = None,
+    enabled: bool = True,
+) -> dict:
+    result = conn.execute(
+        claude_connectors.insert().values(
+            name=name,
+            transport=transport,
+            command=command,
+            args=args,
+            env=env,
+            url=url,
+            headers=headers,
+            enabled=enabled,
+            created_at=_now(),
+        )
+    )
+    return get_claude_connector(conn, result.inserted_primary_key[0])
+
+
+def update_claude_connector(conn: Connection, connector_id: int, **fields: Any) -> dict | None:
+    allowed = {"name", "transport", "command", "args", "env", "url", "headers", "enabled"}
+    values = {k: v for k, v in fields.items() if k in allowed}
+    if values:
+        conn.execute(
+            claude_connectors.update()
+            .where(claude_connectors.c.id == connector_id)
+            .values(**values)
+        )
+    return get_claude_connector(conn, connector_id)
+
+
+def delete_claude_connector(conn: Connection, connector_id: int) -> bool:
+    result = conn.execute(
+        claude_connectors.delete().where(claude_connectors.c.id == connector_id)
+    )
+    return result.rowcount > 0
+
+
+def list_claude_plugins(conn: Connection, enabled_only: bool = False) -> list[dict]:
+    stmt = select(claude_plugins)
+    if enabled_only:
+        stmt = stmt.where(claude_plugins.c.enabled.is_(True))
+    rows = conn.execute(
+        stmt.order_by(claude_plugins.c.marketplace, claude_plugins.c.name)
+    ).all()
+    return [dict(r._mapping) for r in rows]
+
+
+def get_claude_plugin(conn: Connection, plugin_id: int) -> dict | None:
+    row = conn.execute(select(claude_plugins).where(claude_plugins.c.id == plugin_id)).first()
+    return _row_to_dict(row)
+
+
+def get_claude_plugin_by_key(conn: Connection, name: str, marketplace: str) -> dict | None:
+    row = conn.execute(
+        select(claude_plugins).where(
+            claude_plugins.c.name == name, claude_plugins.c.marketplace == marketplace
+        )
+    ).first()
+    return _row_to_dict(row)
+
+
+def create_claude_plugin(
+    conn: Connection,
+    name: str,
+    marketplace: str,
+    marketplace_repo: str,
+    enabled: bool = True,
+) -> dict:
+    result = conn.execute(
+        claude_plugins.insert().values(
+            name=name,
+            marketplace=marketplace,
+            marketplace_repo=marketplace_repo,
+            enabled=enabled,
+            created_at=_now(),
+        )
+    )
+    return get_claude_plugin(conn, result.inserted_primary_key[0])
+
+
+def update_claude_plugin(conn: Connection, plugin_id: int, **fields: Any) -> dict | None:
+    allowed = {"name", "marketplace", "marketplace_repo", "enabled"}
+    values = {k: v for k, v in fields.items() if k in allowed}
+    if values:
+        conn.execute(
+            claude_plugins.update().where(claude_plugins.c.id == plugin_id).values(**values)
+        )
+    return get_claude_plugin(conn, plugin_id)
+
+
+def delete_claude_plugin(conn: Connection, plugin_id: int) -> bool:
+    result = conn.execute(claude_plugins.delete().where(claude_plugins.c.id == plugin_id))
+    return result.rowcount > 0
+
+
+def get_claude_config(conn: Connection, key: str) -> Any | None:
+    """The stored JSON value for a claude_config key, or None when unset."""
+    row = conn.execute(select(claude_config).where(claude_config.c.key == key)).first()
+    return row._mapping["value"] if row is not None else None
+
+
+def set_claude_config(conn: Connection, key: str, value: Any) -> None:
+    now = _now()
+    result = conn.execute(
+        claude_config.update().where(claude_config.c.key == key).values(value=value, updated_at=now)
+    )
+    if result.rowcount == 0:
+        conn.execute(claude_config.insert().values(key=key, value=value, updated_at=now))
 
 
 def get_latest_claimed_command(conn: Connection, type: str) -> dict | None:

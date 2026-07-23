@@ -252,22 +252,30 @@ What the dashboard can now do (all state-changing actions require `ADMIN_TOKEN`)
 - **Activity** — every enqueued command with its status (queued → running → done/failed) —
   the audit log of what the dashboard triggered. The UI polls `GET /commands/{id}` for
   live status.
-- **Claude Login** — log Claude Code in on the host from the browser (see below), so agents
-  spawn against a real authenticated `claude` with no shell access to the container.
+- **Claude** — the management page for the Claude Code install agents run on. The account
+  login lives here (see below), plus web-managed **skills**, **MCP connectors**,
+  **plugins**, and **permission overrides**. These are plain DB rows the control container
+  applies at every launch: skills sync to each worker's user-level `~/.claude/skills`
+  (marker-file managed, so hand-installed skills survive), enabled connectors become the
+  run's `--mcp-config` file (nothing lands in the repo tree), and plugins/permissions fold
+  into the generated per-agent `settings.json` — so a change in the UI reaches the next
+  launch of every agent, no redeploy.
 
 The command queue is exposed over HTTP as `POST …/agents/spawn`, `POST …/agents/{n}/kill`,
 `POST …/approvals`, `POST …/forge-init`, `POST …/poll-ci`, `POST …/sync`,
 `POST /login/start`, `POST /login/submit`, and `GET /commands[/{id}]`; hosts as `/hosts`;
 schedules as `/schedules` + `/projects/{id}/schedules`; project mutation as
-`PATCH`/`DELETE /projects/{id}`. Run the worker with `handler worker` (the control image's
-default command).
+`PATCH`/`DELETE /projects/{id}`; Claude management as `/claude/skills`,
+`/claude/connectors`, `/claude/plugins` (CRUD), and `GET`/`PUT /claude/permissions`
+(reads with the normal token, writes admin-gated). Run the worker with `handler worker`
+(the control image's default command).
 
 ### Claude login from the web UI
 
 Agents *are* `claude` processes, so the control container needs a logged-in Claude Code.
-Because that container has no interactive shell in normal operation, the **Claude Login**
-pane logs it in from the browser — the same command-queue handoff every other control
-action uses:
+Because that container has no interactive shell in normal operation, the **Claude** page's
+Account tab logs it in from the browser — the same command-queue handoff every other
+control action uses:
 
 1. **Log in to Claude** enqueues a `login_start` command. The worker opens `claude` in a
    dedicated (wide) tmux session in the control container, navigates whatever onboarding a

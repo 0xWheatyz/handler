@@ -328,6 +328,71 @@ session_archives = Table(
     Column("updated_at", PortableTimestamp, nullable=False, server_default=func.now()),
 )
 
+# ---- Claude management (web-managed). What the operator configures in the dashboard's
+# Claude page; the control container applies it to every launch — skills sync to the
+# worker's user-level ~/.claude/skills, connectors become the --mcp-config file, and
+# plugins/permissions fold into the generated per-agent settings.json (settings_gen).
+# Transports an MCP connector can use, mirroring claude's .mcp.json server types.
+MCP_TRANSPORTS = ("stdio", "http", "sse")
+
+# Operator-authored Claude Code skills (SKILL.md bodies). Distinct from the forge role
+# skills (skills_gen), which are committed into managed repos; these are user-level and
+# synced to every worker at launch.
+claude_skills = Table(
+    "claude_skills",
+    metadata,
+    Column("id", PortableBigInt, primary_key=True, autoincrement=True),
+    Column("name", String, nullable=False, unique=True),  # slug; becomes the skill dirname
+    Column("description", String),
+    Column("content", String, nullable=False),  # markdown body below the front-matter
+    Column("enabled", Boolean, nullable=False, server_default="1"),
+    Column("created_at", PortableTimestamp, nullable=False, server_default=func.now()),
+    Column("updated_at", PortableTimestamp, nullable=False, server_default=func.now()),
+)
+
+# MCP servers ("connectors") agents may reach. Written per-launch as an --mcp-config
+# file, so nothing lands in the managed repo's tree.
+claude_connectors = Table(
+    "claude_connectors",
+    metadata,
+    Column("id", PortableBigInt, primary_key=True, autoincrement=True),
+    Column("name", String, nullable=False, unique=True),  # the mcpServers key
+    Column("transport", String, nullable=False),
+    Column("command", String),  # stdio: the executable
+    Column("args", PortableJSON),  # stdio: argv list
+    Column("env", PortableJSON),  # stdio: environment map
+    Column("url", String),  # http/sse: the endpoint
+    Column("headers", PortableJSON),  # http/sse: header map (may carry auth)
+    Column("enabled", Boolean, nullable=False, server_default="1"),
+    Column("created_at", PortableTimestamp, nullable=False, server_default=func.now()),
+    CheckConstraint(_in("transport", MCP_TRANSPORTS), name="ck_claude_connectors_transport"),
+)
+
+# Claude Code plugins, pinned to the marketplace that serves them. Folded into generated
+# settings as extraKnownMarketplaces + enabledPlugins so headless runs auto-install them.
+claude_plugins = Table(
+    "claude_plugins",
+    metadata,
+    Column("id", PortableBigInt, primary_key=True, autoincrement=True),
+    Column("name", String, nullable=False),  # the plugin's name within its marketplace
+    Column("marketplace", String, nullable=False),  # marketplace key, e.g. "acme-tools"
+    Column("marketplace_repo", String, nullable=False),  # "owner/repo" or a git URL
+    Column("enabled", Boolean, nullable=False, server_default="1"),
+    Column("created_at", PortableTimestamp, nullable=False, server_default=func.now()),
+    UniqueConstraint("name", "marketplace", name="uq_claude_plugins_name_marketplace"),
+)
+
+# Small JSON key/value store for the remaining Claude management state; first key is
+# "permissions" — the operator's defaultMode override and extra allow/deny/ask rules,
+# merged over the env-configured baseline by settings_gen at launch.
+claude_config = Table(
+    "claude_config",
+    metadata,
+    Column("key", String, primary_key=True),
+    Column("value", PortableJSON, nullable=False),
+    Column("updated_at", PortableTimestamp, nullable=False, server_default=func.now()),
+)
+
 # Recurring agent spawns. The worker checks for due rows on every loop pass and enqueues
 # an ordinary ``spawn`` command per firing (so scheduled runs show up in the Activity
 # audit trail like any other control action). Agent names must be unique per project, so

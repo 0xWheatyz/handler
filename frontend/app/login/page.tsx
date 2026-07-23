@@ -1,13 +1,14 @@
-/* Claude Login page. The shell (sidebar, banners, store) comes from the root layout; this
- * route contributes only its section, in the shared scroll frame. */
+/* The old Claude Login route. The login flow now lives on the Claude management page
+ * (/claude, Account tab); this stub only redirects old bookmarks there. */
 "use client";
 
-import { LoginSection } from "@/components/sections/LoginSection";
+import { useEffect } from "react";
+import { useRouter } from "next/navigation";
 
-export default function LoginPage() {
-  return (
-    <div className="main-scroll">
-      <LoginSection />
-    </div>
-  );
+export default function LoginRedirect() {
+  const router = useRouter();
+  useEffect(() => {
+    router.replace("/claude");
+  }, [router]);
+  return null;
 }
