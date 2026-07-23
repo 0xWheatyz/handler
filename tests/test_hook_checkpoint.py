@@ -20,13 +20,22 @@ def _fake_mise_state(monkeypatch, *, has_test, clean, ahead):
     monkeypatch.setattr(gitops, "ahead_count", lambda cwd: ahead)
 
 
+def _fake_git_state(monkeypatch, *, is_repo=True, clean=True, unpushed=0, has_origin=True):
+    monkeypatch.setattr(gitops, "head_sha", lambda cwd: "abc123" if is_repo else None)
+    monkeypatch.setattr(gitops, "is_clean", lambda cwd: clean)
+    monkeypatch.setattr(gitops, "has_origin", lambda cwd: has_origin)
+    monkeypatch.setattr(gitops, "unpushed_count", lambda cwd: unpushed)
+
+
 def test_stop_blocks_on_failing_tests(conn, monkeypatch):
     ident = _seed(conn)
     monkeypatch.setattr(verify, "run_test", lambda cwd: (False, "1 failed"))
+    _fake_git_state(monkeypatch)
 
     result = checkpoint.handle_stop(conn, ident, HookInput({"session_id": "s1"}, "stop"))
     assert result["decision"] == "block"
-    assert "test gate failed" in result["reason"]
+    assert "test suite is failing" in result["reason"]
+    assert "1 failed" in result["reason"]
 
     cm = repo.get_checkmark(conn, ident.agent_id)
     assert cm["tests_status"] == "fail"
@@ -35,9 +44,59 @@ def test_stop_blocks_on_failing_tests(conn, monkeypatch):
     assert repo.get_agent_by_name(conn, "p", "a")["status"] == "blocked"
 
 
-def test_stop_allows_done_on_passing_tests(conn, monkeypatch):
+def test_stop_blocks_on_uncommitted_changes_even_with_green_tests(conn, monkeypatch):
     ident = _seed(conn)
     monkeypatch.setattr(verify, "run_test", lambda cwd: (True, "ok"))
+    _fake_git_state(monkeypatch, clean=False)
+
+    result = checkpoint.handle_stop(conn, ident, HookInput({"session_id": "s1"}, "stop"))
+    assert result["decision"] == "block"
+    assert "uncommitted" in result["reason"]
+
+    cm = repo.get_checkmark(conn, ident.agent_id)
+    assert cm["tests_status"] == "pass"  # tests still recorded honestly
+    assert cm["status"] == "blocked"
+    assert repo.get_agent_by_name(conn, "p", "a")["status"] == "blocked"
+
+
+def test_stop_blocks_on_unpushed_commits(conn, monkeypatch):
+    ident = _seed(conn)
+    monkeypatch.setattr(verify, "run_test", lambda cwd: (True, "ok"))
+    _fake_git_state(monkeypatch, unpushed=3)
+
+    result = checkpoint.handle_stop(conn, ident, HookInput({"session_id": "s1"}, "stop"))
+    assert result["decision"] == "block"
+    assert "3 commit(s) exist only locally" in result["reason"]
+    assert repo.get_agent_by_name(conn, "p", "a")["status"] == "blocked"
+
+
+def test_stop_reports_every_blocker_at_once(conn, monkeypatch):
+    ident = _seed(conn)
+    monkeypatch.setattr(verify, "run_test", lambda cwd: (False, "boom"))
+    _fake_git_state(monkeypatch, clean=False, unpushed=1)
+
+    result = checkpoint.handle_stop(conn, ident, HookInput({"session_id": "s1"}, "stop"))
+    assert "test suite is failing" in result["reason"]
+    assert "uncommitted" in result["reason"]
+    assert "exist only locally" in result["reason"]
+
+
+def test_stop_skips_push_gate_without_an_origin_remote(conn, monkeypatch):
+    ident = _seed(conn)
+    monkeypatch.setattr(verify, "run_test", lambda cwd: (True, "ok"))
+    # Local-only project: commits exist that no remote has, but there is no origin
+    # to push them to — the push gate must not deadlock the agent.
+    _fake_git_state(monkeypatch, unpushed=5, has_origin=False)
+
+    result = checkpoint.handle_stop(conn, ident, HookInput({"session_id": "s1"}, "stop"))
+    assert result == {}
+    assert repo.get_checkmark(conn, ident.agent_id)["status"] == "done"
+
+
+def test_stop_allows_done_when_tests_pass_and_tree_is_settled(conn, monkeypatch):
+    ident = _seed(conn)
+    monkeypatch.setattr(verify, "run_test", lambda cwd: (True, "ok"))
+    _fake_git_state(monkeypatch)
 
     result = checkpoint.handle_stop(conn, ident, HookInput({"session_id": "s1"}, "stop"))
     assert result == {}  # no block
@@ -48,9 +107,60 @@ def test_stop_allows_done_on_passing_tests(conn, monkeypatch):
     assert cm["log_entry_id"] is not None
 
 
+def test_stop_allows_done_when_working_dir_is_not_a_repo(conn, monkeypatch):
+    # A manually managed root has nothing to gate beyond its tests.
+    ident = _seed(conn)
+    monkeypatch.setattr(verify, "run_test", lambda cwd: (True, "ok"))
+    _fake_git_state(monkeypatch, is_repo=False, clean=False, unpushed=9)
+
+    result = checkpoint.handle_stop(conn, ident, HookInput({"session_id": "s1"}, "stop"))
+    assert result == {}
+    assert repo.get_checkmark(conn, ident.agent_id)["status"] == "done"
+
+
+def test_stop_captures_final_message_as_checkpoint(conn, monkeypatch, tmp_path):
+    ident = _seed(conn)
+    monkeypatch.setattr(verify, "run_test", lambda cwd: (True, "ok"))
+    _fake_git_state(monkeypatch)
+    transcript = tmp_path / "session.jsonl"
+    transcript.write_text(
+        '{"type": "user", "message": {"content": "do the thing"}}\n'
+        "this line is not json\n"
+        '{"type": "assistant", "message": {"content": [{"type": "text", '
+        '"text": "Working on it."}]}}\n'
+        '{"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "x"},'
+        ' {"type": "text", "text": "Shipped the fix in abc123; tests green."}]}}\n'
+    )
+
+    hi = HookInput({"session_id": "s1", "transcript_path": str(transcript)}, "stop")
+    result = checkpoint.handle_stop(conn, ident, hi)
+    assert result == {}
+    cm = repo.get_checkmark(conn, ident.agent_id)
+    # The webui checkpoint carries the agent's own closing message, captured
+    # deterministically from the transcript — not left to the agent's discretion.
+    assert cm["where_it_stopped"] == "Shipped the fix in abc123; tests green."
+
+
+def test_blocked_stop_shows_blockers_not_narrative(conn, monkeypatch, tmp_path):
+    ident = _seed(conn)
+    monkeypatch.setattr(verify, "run_test", lambda cwd: (True, "ok"))
+    _fake_git_state(monkeypatch, clean=False)
+    transcript = tmp_path / "session.jsonl"
+    transcript.write_text(
+        '{"type": "assistant", "message": {"content": [{"type": "text", '
+        '"text": "All done!"}]}}\n'
+    )
+
+    hi = HookInput({"session_id": "s1", "transcript_path": str(transcript)}, "stop")
+    checkpoint.handle_stop(conn, ident, hi)
+    cm = repo.get_checkmark(conn, ident.agent_id)
+    assert "uncommitted" in cm["where_it_stopped"]
+
+
 def test_stop_does_not_reblock_when_already_active(conn, monkeypatch):
     ident = _seed(conn)
     monkeypatch.setattr(verify, "run_test", lambda cwd: (False, "still failing"))
+    _fake_git_state(monkeypatch)
     hi = HookInput({"session_id": "s1", "stop_hook_active": True}, "stop")
     result = checkpoint.handle_stop(conn, ident, hi)
     assert result == {}  # recorded, but not an infinite block

@@ -342,9 +342,14 @@ All routes require `Authorization: Bearer <AUTH_TOKEN>`. `GET /health` is unauth
 
 Wired into each agent as `python -m handler.hooks <event>`:
 
-- **`Stop` / `SessionEnd`** — checkpoint. On `Stop`, run `mise run test`; on failure,
-  return `decision: "block"` with the output so the turn cannot end on red. Records
-  `tests_status` / `tested_at`; `status = 'done'` only ever accompanies a pass.
+- **`Stop` / `SessionEnd`** — checkpoint + completion gate. On `Stop`, run
+  `mise run test` and check the tree deterministically: failing tests, uncommitted
+  changes, or commits that exist only locally each return `decision: "block"` with the
+  full blocker list, so a turn cannot end on red or walk away from unshipped work.
+  Records `tests_status` / `tested_at`; `status = 'done'` only ever accompanies a
+  passing gate (tests green, tree clean, everything pushed). The agent's final message
+  is captured from the session transcript onto the checkmark, so the dashboard always
+  shows a real checkpoint whether or not the agent thought to leave one.
 - **`PreToolUse`** — two jobs. An `AskUserQuestion` is *deferred*: the question is
   persisted, the checkmark set to `paused_for_input`, and the tool call denied so control
   hands off to the async answer/resume flow. A `Bash` command running `git push` triggers

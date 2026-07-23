@@ -82,6 +82,29 @@ def ahead_count(cwd: str) -> int | None:
         return None
 
 
+def has_origin(cwd: str) -> bool:
+    """Whether the repo has an ``origin`` remote configured."""
+    ok, out = _run(["remote"], cwd)
+    return ok and "origin" in out.split()
+
+
+def unpushed_count(cwd: str) -> int | None:
+    """Commits reachable from HEAD that no ``origin/*`` ref contains.
+
+    0 means everything on the current line of history has been pushed *somewhere* on
+    origin. Works with or without an upstream — worktree branches are created with
+    ``--no-track``, so an ``@{upstream}``-based count would come up empty for them.
+    ``None`` when the count cannot be computed.
+    """
+    ok, out = _run(["rev-list", "--count", "HEAD", "--not", "--remotes=origin"], cwd)
+    if not ok:
+        return None
+    try:
+        return int(out.strip())
+    except ValueError:
+        return None
+
+
 def add(cwd: str, paths: list[str]) -> tuple[bool, str]:
     return _run(["add", *paths], cwd)
 
