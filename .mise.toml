@@ -14,3 +14,20 @@ run = "ruff check ."
 [tasks.verify]
 description = "Lint then test"
 depends = ["lint", "test"]
+
+[tasks.expo]
+description = "Start the Expo Go dev server for the mobile app; set EXPO_ENDPOINT to the public URL of your reverse proxy"
+dir = "app"
+run = """
+#!/usr/bin/env bash
+set -euo pipefail
+if [ -z "${EXPO_ENDPOINT:-}" ]; then
+  echo "EXPO_ENDPOINT is not set." >&2
+  echo "Set it to the public URL your reverse proxy exposes, e.g.:" >&2
+  echo "  EXPO_ENDPOINT=https://expo.example.com mise run expo" >&2
+  exit 1
+fi
+# Expo CLI uses EXPO_PACKAGER_PROXY_URL in place of the LAN/localhost URL when
+# building manifest and QR-code URLs, so Expo Go connects through the proxy.
+EXPO_PACKAGER_PROXY_URL="$EXPO_ENDPOINT" npx expo start
+"""
