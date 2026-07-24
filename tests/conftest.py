@@ -33,6 +33,12 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setenv("SHARED_CONTEXT_WRITE_TOKEN", "shared-token")
     monkeypatch.setenv("PROJECTS_ROOT", str(tmp_path / "projects"))
     monkeypatch.delenv("WEBHOOK_URL", raising=False)
+    # Keep the fixture hermetic: when the suite runs inside a Handler-managed container
+    # (dogfooding), these are set in the ambient env and would leak into tests that assert
+    # the *unset* behavior — e.g. secretstore refusing without a key, or login using the
+    # default `claude` binary. Clear them so behavior is driven by each test, not the host.
+    monkeypatch.delenv("HANDLER_SECRET_KEY", raising=False)
+    monkeypatch.delenv("CLAUDE_BIN", raising=False)
     _reset_caches()
 
     cfg = Config(str(REPO_ROOT / "alembic.ini"))

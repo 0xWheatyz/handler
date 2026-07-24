@@ -1,0 +1,31 @@
+name: test
+
+# Runs the linter and the full pytest suite for visibility on every push and PR.
+# Dogfoods the repo's own mise tasks: `mise run verify` == lint (ruff) then test (pytest),
+# the same `verify` task the control layer's Stop hook enforces on managed projects.
+
+on:
+  push:
+    branches: ["**"]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Installs the toolchain pinned in .mise.toml (Python 3.11).
+      - name: Set up mise
+        uses: jdx/mise-action@v2
+
+      # Dev extras carry pytest + respx + ruff; the package itself is installed editable so
+      # `pythonpath = ["src"]` in pyproject resolves the `handler` package under test.
+      - name: Install dependencies
+        run: pip install -e '.[dev]'
+
+      - name: Lint and test
+        run: mise run verify
