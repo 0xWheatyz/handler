@@ -220,3 +220,9 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 .omc/
+
+# Claude Code per-agent settings — Handler injects .claude/settings.json into every
+# managed project's working dir at spawn time (see control/settings_gen.py). It's
+# regenerated per spawn and points at container-specific paths, so it's runtime
+# scaffolding, not source to track.
+.claude/
