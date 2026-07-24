@@ -1,0 +1,9 @@
+# Config for the daemonless `mise run build-image` pre-push gate (see .mise.toml).
+# Only genuine Dockerfile errors (bad syntax / invalid instructions) should block a push;
+# the deliberate, commented choices in the Dockerfiles are not defects:
+#   DL3008 — apt packages are intentionally unpinned (rolling base image).
+#   DL3016 — `npm install -g @anthropic-ai/claude-code` tracks the latest Claude Code CLI.
+#   DL3062 — `go install ...@latest` is deliberate (forge tracks its latest release).
+#   DL4006 — the piped NodeSource/mise setup runs under the default shell on purpose.
+# The authoritative end-to-end multi-arch build runs in CI (.github/workflows/docker*.yml).
+failure-threshold: error

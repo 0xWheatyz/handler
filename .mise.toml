@@ -1,7 +1,10 @@
-# Handler dogfoods its own gate: this repo defines the canonical `test` task the
-# control layer's Stop hook enforces. Any project Handler manages carries one of these.
+# Handler dogfoods its own gate: this repo defines the canonical `test` and `build-image`
+# tasks the control layer enforces (the Stop hook runs `test`; the git-push gate runs
+# `test` then `build-image`). Any project Handler manages carries these.
 [tools]
 python = "3.11"
+# Backs the daemonless `build-image` gate below (see that task).
+hadolint = "2.14.0"
 
 [tasks.test]
 description = "Run the test suite"
@@ -14,3 +17,13 @@ run = "ruff check ."
 [tasks.verify]
 description = "Lint then test"
 depends = ["lint", "test"]
+
+# The pre-push gate (handler.hooks.gate -> verify.run_build) shells `mise run build-image`
+# to prove the Dockerfiles are sound before a push. The agent sandbox and control image
+# ship no container daemon/builder (by design — no Docker socket, no --privileged), so this
+# is a daemonless soundness check via hadolint rather than a real image build. The
+# authoritative end-to-end multi-arch build-and-push runs in CI (.github/workflows/docker*.yml)
+# on every PR to main. Failure threshold is pinned to errors in .hadolint.yaml.
+[tasks.build-image]
+description = "Validate the Dockerfiles are sound (daemonless pre-push gate)"
+run = "hadolint Dockerfile Dockerfile.control"
