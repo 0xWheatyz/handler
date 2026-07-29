@@ -21,6 +21,7 @@ from . import (
     gitops,
     headless,
     mise,
+    models,
     reposync,
     settings_gen,
     worktree,
@@ -70,6 +71,7 @@ def spawn(
     worktree_branch: str | None = None,
     task: str | None = None,
     role: str | None = None,
+    model_id: int | None = None,
     require_tests: bool = True,
     mise_init: bool = False,
     worker_id: str | None = None,
@@ -80,8 +82,10 @@ def spawn(
     it off, because a project with no ``.mise.toml`` yet is exactly what it exists to fix.
     ``mise_init`` marks the launched agent (via ``HANDLER_MISE_INIT``) so its hooks enforce
     the bootstrap contract — create the test task, commit, and push — instead of the normal
-    test gate. ``worker_id`` identifies the calling worker container (headless runs record
-    it on the run row; the CLI defaults to a pid-scoped id).
+    test gate. ``model_id`` pins the agent to a registered model backend (``claude_models``)
+    instead of the worker's Claude subscription — same binary, same hooks/skills/gates,
+    different ``ANTHROPIC_*`` env. ``worker_id`` identifies the calling worker container
+    (headless runs record it on the run row; the CLI defaults to a pid-scoped id).
     """
     if not task:
         # ``claude -p`` has no idle-REPL mode — an empty prompt would exit immediately
@@ -132,6 +136,12 @@ def spawn(
             token = credentials.resolve_for_project(project, conn)
         except credentials.CredentialError as exc:
             raise SpawnError(str(exc)) from exc
+        # Same fail-fast contract as credentials: a selected model backend that is
+        # missing, disabled, or undecryptable refuses the spawn before any row exists.
+        try:
+            models.resolve_model_env(conn, model_id, require_enabled=True)
+        except models.ModelError as exc:
+            raise SpawnError(str(exc)) from exc
 
         agent = repo.create_agent(
             conn,
@@ -140,6 +150,7 @@ def spawn(
             working_dir=working_dir,
             status="working",
             role=role,
+            model_id=model_id,
         )
 
     settings_path = settings_gen.write_settings(working_dir)
@@ -191,6 +202,13 @@ def _agent_env(
     # A short read connection lets credential/host resolution consult the forge_hosts
     # registry (falling back to the built-in host map when a host has no row).
     with connection() as conn:
+        # Agent pinned to a model backend: point the claude binary at it. Resumes are a
+        # brand-new process, so this is what keeps an agent on the backend it started on
+        # (a since-disabled backend may still finish; a deleted one fails loudly).
+        try:
+            env.update(models.resolve_model_env(conn, agent.get("model_id")))
+        except models.ModelError as exc:
+            raise SpawnError(str(exc)) from exc
         env.update(credentials.credential_env(token, project.get("git_remote"), conn))
         if token:
             _install_git_credentials(agent["working_dir"], project.get("git_remote"), conn)

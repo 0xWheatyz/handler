@@ -29,6 +29,7 @@ from .tables import (
     checkmarks,
     claude_config,
     claude_connectors,
+    claude_models,
     claude_plugins,
     claude_skill_files,
     claude_skills,
@@ -209,6 +210,7 @@ def create_agent(
     working_dir: str,
     status: str = "working",
     role: str | None = None,
+    model_id: int | None = None,
 ) -> dict:
     result = conn.execute(
         agents.insert().values(
@@ -217,6 +219,7 @@ def create_agent(
             working_dir=working_dir,
             status=status,
             role=role,
+            model_id=model_id,
             created_at=_now(),
         )
     )
@@ -1134,6 +1137,64 @@ def update_claude_plugin(conn: Connection, plugin_id: int, **fields: Any) -> dic
 
 def delete_claude_plugin(conn: Connection, plugin_id: int) -> bool:
     result = conn.execute(claude_plugins.delete().where(claude_plugins.c.id == plugin_id))
+    return result.rowcount > 0
+
+
+def list_claude_models(conn: Connection, enabled_only: bool = False) -> list[dict]:
+    stmt = select(claude_models)
+    if enabled_only:
+        stmt = stmt.where(claude_models.c.enabled.is_(True))
+    rows = conn.execute(stmt.order_by(claude_models.c.name)).all()
+    return [dict(r._mapping) for r in rows]
+
+
+def get_claude_model(conn: Connection, model_id: int) -> dict | None:
+    row = conn.execute(select(claude_models).where(claude_models.c.id == model_id)).first()
+    return _row_to_dict(row)
+
+
+def get_claude_model_by_name(conn: Connection, name: str) -> dict | None:
+    row = conn.execute(select(claude_models).where(claude_models.c.name == name)).first()
+    return _row_to_dict(row)
+
+
+def create_claude_model(
+    conn: Connection,
+    name: str,
+    base_url: str,
+    model: str,
+    api_key_enc: str | None = None,
+    small_fast_model: str | None = None,
+    env: dict | None = None,
+    enabled: bool = True,
+) -> dict:
+    result = conn.execute(
+        claude_models.insert().values(
+            name=name,
+            base_url=base_url,
+            api_key_enc=api_key_enc,
+            model=model,
+            small_fast_model=small_fast_model,
+            env=env,
+            enabled=enabled,
+            created_at=_now(),
+        )
+    )
+    return get_claude_model(conn, result.inserted_primary_key[0])
+
+
+def update_claude_model(conn: Connection, model_id: int, **fields: Any) -> dict | None:
+    allowed = {"name", "base_url", "api_key_enc", "model", "small_fast_model", "env", "enabled"}
+    values = {k: v for k, v in fields.items() if k in allowed}
+    if values:
+        conn.execute(
+            claude_models.update().where(claude_models.c.id == model_id).values(**values)
+        )
+    return get_claude_model(conn, model_id)
+
+
+def delete_claude_model(conn: Connection, model_id: int) -> bool:
+    result = conn.execute(claude_models.delete().where(claude_models.c.id == model_id))
     return result.rowcount > 0
 
 

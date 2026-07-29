@@ -16,6 +16,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import Connection
 
+from ... import secretstore
 from ...config import get_settings
 from ...db import repository as repo
 from ..deps import db_conn, require_admin, require_auth
@@ -23,6 +24,9 @@ from ..schemas import (
     ClaudeConnectorIn,
     ClaudeConnectorOut,
     ClaudeConnectorUpdateIn,
+    ClaudeModelIn,
+    ClaudeModelOut,
+    ClaudeModelUpdateIn,
     ClaudePermissionsIn,
     ClaudePermissionsOut,
     ClaudePluginIn,
@@ -248,6 +252,93 @@ def delete_plugin(plugin_id: int, conn: Connection = Depends(db_conn)) -> dict:
     plugin = _plugin_or_404(conn, plugin_id)
     repo.delete_claude_plugin(conn, plugin_id)
     return {"deleted": f"{plugin['name']}@{plugin['marketplace']}"}
+
+
+# ---- model backends -------------------------------------------------------------------
+# Anthropic-API-compatible endpoints (a local model behind LiteLLM / claude-code-router,
+# an LLM gateway) the spawn dropdown offers next to the Claude subscription. The control
+# layer turns the selected row into that one agent's ANTHROPIC_* env at launch; the API
+# key is encrypted at rest (HANDLER_SECRET_KEY) and never returned.
+
+
+def _model_or_404(conn: Connection, model_id: int) -> dict:
+    row = repo.get_claude_model(conn, model_id)
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail=f"model {model_id} not found")
+    return row
+
+
+def _model_out(row: dict) -> dict:
+    return {**row, "has_api_key": bool(row.get("api_key_enc"))}
+
+
+def _encrypt_key_or_400(value: str) -> str:
+    try:
+        return secretstore.encrypt(value)
+    except secretstore.SecretStoreError as exc:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, detail=f"cannot store the API key: {exc}"
+        ) from exc
+
+
+@router.get("/models", response_model=list[ClaudeModelOut])
+def list_models(conn: Connection = Depends(db_conn)) -> list[dict]:
+    return [_model_out(m) for m in repo.list_claude_models(conn)]
+
+
+@router.post(
+    "/models",
+    response_model=ClaudeModelOut,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_admin)],
+)
+def create_model(body: ClaudeModelIn, conn: Connection = Depends(db_conn)) -> dict:
+    if repo.get_claude_model_by_name(conn, body.name) is not None:
+        raise HTTPException(status.HTTP_409_CONFLICT, detail=f"model '{body.name}' exists")
+    api_key_enc = _encrypt_key_or_400(body.api_key) if body.api_key else None
+    return _model_out(
+        repo.create_claude_model(
+            conn,
+            body.name,
+            body.base_url,
+            body.model,
+            api_key_enc=api_key_enc,
+            small_fast_model=body.small_fast_model,
+            env=body.env,
+            enabled=body.enabled,
+        )
+    )
+
+
+@router.patch(
+    "/models/{model_id}", response_model=ClaudeModelOut, dependencies=[Depends(require_admin)]
+)
+def update_model(
+    model_id: int, body: ClaudeModelUpdateIn, conn: Connection = Depends(db_conn)
+) -> dict:
+    _model_or_404(conn, model_id)
+    fields = body.model_dump(exclude_unset=True)
+    if "name" in fields:
+        clash = repo.get_claude_model_by_name(conn, fields["name"])
+        if clash is not None and clash["id"] != model_id:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT, detail=f"model '{fields['name']}' exists"
+            )
+    # api_key / clear_api_key are write-only verbs, translated to the encrypted column.
+    api_key = fields.pop("api_key", None)
+    clear = fields.pop("clear_api_key", False)
+    if api_key:
+        fields["api_key_enc"] = _encrypt_key_or_400(api_key)
+    elif clear:
+        fields["api_key_enc"] = None
+    return _model_out(repo.update_claude_model(conn, model_id, **fields))
+
+
+@router.delete("/models/{model_id}", dependencies=[Depends(require_admin)])
+def delete_model(model_id: int, conn: Connection = Depends(db_conn)) -> dict:
+    row = _model_or_404(conn, model_id)
+    repo.delete_claude_model(conn, model_id)
+    return {"deleted": row["name"]}
 
 
 # ---- permissions ----------------------------------------------------------------------

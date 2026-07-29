@@ -57,6 +57,7 @@ def _cmd_spawn(command: dict) -> dict:
         worktree_branch=p.get("worktree"),
         task=p.get("task"),
         role=p.get("role"),
+        model_id=p.get("model_id"),
         worker_id=command.get("claimed_by"),
     )
     result = {

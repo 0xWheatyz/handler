@@ -120,7 +120,7 @@ class AgentIn(BaseModel):
 
 
 class AgentOut(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes=True, protected_namespaces=())
 
     id: int
     project_id: str
@@ -128,6 +128,8 @@ class AgentOut(BaseModel):
     working_dir: str
     status: str
     role: Role | None = None
+    # The model backend this agent is pinned to (null = the Claude subscription).
+    model_id: int | None = None
     # Latest output snapshot so the UI can show what a running agent is doing: the tmux
     # pane tail for legacy agents, the latest assistant text for headless runs.
     last_output: str | None = None
@@ -141,13 +143,19 @@ class AgentOut(BaseModel):
 
 class SpawnIn(BaseModel):
     """Enqueue a spawn: the worker creates the agent row + tmux process in the control
-    container. ``worktree`` and ``subdir`` are mutually exclusive (worktree wins if both)."""
+    container. ``worktree`` and ``subdir`` are mutually exclusive (worktree wins if both).
+    ``model_id`` selects a registered model backend (``/claude/models``); omit it to run
+    on the worker's logged-in Claude subscription."""
+
+    # ``model_id`` trips pydantic's ``model_`` protected-namespace warning; clear it.
+    model_config = ConfigDict(protected_namespaces=())
 
     name: str
     role: Role | None = None
     worktree: str | None = None
     subdir: str | None = None
     task: str | None = None
+    model_id: int | None = None
 
 
 class CommandOut(BaseModel):
@@ -502,6 +510,66 @@ class ClaudePluginOut(BaseModel):
     marketplace: str
     marketplace_repo: str
     enabled: bool
+    created_at: datetime
+
+
+class ClaudeModelIn(BaseModel):
+    """A registered model backend: an **Anthropic-API-compatible** endpoint (a local
+    model behind LiteLLM / claude-code-router, an LLM gateway, …) the same ``claude``
+    binary can run against. ``api_key`` is write-only — encrypted at rest, never echoed
+    back. A plain OpenAI-compatible server won't do tool calling; see
+    ``docs/local-models.md``."""
+
+    name: str = Field(min_length=1, max_length=64, pattern=_SLUG_PATTERN)
+    base_url: str = Field(min_length=1)
+    model: str = Field(min_length=1)
+    small_fast_model: str | None = None
+    api_key: str | None = None
+    env: dict[str, str] = Field(default_factory=dict)
+    enabled: bool = True
+
+    @field_validator("base_url")
+    @classmethod
+    def _check_base_url(cls, v: str) -> str:
+        v = v.strip().rstrip("/")
+        if not v.startswith(("http://", "https://")):
+            raise ValueError("base_url must be an http(s) URL")
+        return v
+
+
+class ClaudeModelUpdateIn(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=64, pattern=_SLUG_PATTERN)
+    base_url: str | None = None
+    model: str | None = Field(default=None, min_length=1)
+    small_fast_model: str | None = None
+    api_key: str | None = None
+    clear_api_key: bool = False
+    env: dict[str, str] | None = None
+    enabled: bool | None = None
+
+    @field_validator("base_url")
+    @classmethod
+    def _check_base_url(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        v = v.strip().rstrip("/")
+        if not v.startswith(("http://", "https://")):
+            raise ValueError("base_url must be an http(s) URL")
+        return v
+
+
+class ClaudeModelOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    name: str
+    base_url: str
+    model: str
+    small_fast_model: str | None = None
+    env: dict[str, str] | None = None
+    enabled: bool
+    # The key never leaves the server; this says whether one is stored.
+    has_api_key: bool = False
     created_at: datetime
 
 

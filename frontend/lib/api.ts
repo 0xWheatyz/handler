@@ -30,6 +30,9 @@ export interface Agent {
   working_dir: string;
   status: string;
   role?: string | null;
+  /* Model backend the agent is pinned to (see ClaudeModel); null = the Claude
+   * subscription the worker is logged in to. */
+  model_id?: number | null;
   /* Latest output snapshot from the worker: the tmux pane tail for legacy agents, the
    * latest assistant text for headless runs. For a crashed agent this is the evidence
    * frame — the last thing the process said. */
@@ -176,6 +179,21 @@ export interface ClaudePlugin {
   marketplace: string;
   marketplace_repo: string;
   enabled: boolean;
+  created_at: string;
+}
+
+/* A registered model backend: an Anthropic-API-compatible endpoint (a local model
+ * behind LiteLLM / claude-code-router, an LLM gateway) the spawn dropdown offers next
+ * to the Claude subscription. The API key is write-only server-side (has_api_key only). */
+export interface ClaudeModel {
+  id: number;
+  name: string;
+  base_url: string;
+  model: string;
+  small_fast_model?: string | null;
+  env?: Record<string, string> | null;
+  enabled: boolean;
+  has_api_key: boolean;
   created_at: string;
 }
 

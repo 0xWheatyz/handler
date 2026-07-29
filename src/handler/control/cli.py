@@ -20,6 +20,15 @@ from . import poller, reposync, skills_gen, spawn, worker
 
 
 def _cmd_spawn(args: argparse.Namespace) -> int:
+    model_id = None
+    if args.model:
+        # --model takes the backend's *name* (what the dropdown shows); resolve to its id.
+        with connection() as conn:
+            row = repo.get_claude_model_by_name(conn, args.model)
+        if row is None:
+            print(f"error: model backend '{args.model}' not registered", file=sys.stderr)
+            return 1
+        model_id = row["id"]
     try:
         agent = spawn.spawn(
             args.project,
@@ -28,6 +37,7 @@ def _cmd_spawn(args: argparse.Namespace) -> int:
             worktree_branch=args.worktree,
             task=args.task,
             role=args.role,
+            model_id=model_id,
         )
     except spawn.SpawnError as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -36,6 +46,8 @@ def _cmd_spawn(args: argparse.Namespace) -> int:
     print(f"  working_dir: {agent['working_dir']}")
     if args.role:
         print(f"  role: {args.role}")
+    if args.model:
+        print(f"  model: {args.model}")
     if agent.get("forge_note"):
         print(f"  warning: {agent['forge_note']}", file=sys.stderr)
     return 0
@@ -217,6 +229,11 @@ def build_parser() -> argparse.ArgumentParser:
     group.add_argument("--worktree", metavar="BRANCH", help="git worktree on BRANCH")
     group.add_argument("--dir", metavar="SUBDIR", help="subdirectory under project root")
     p_spawn.add_argument("--task", help="initial task/prompt for the agent")
+    p_spawn.add_argument(
+        "--model",
+        metavar="NAME",
+        help="run on a registered model backend instead of the Claude subscription",
+    )
     p_spawn.set_defaults(func=_cmd_spawn)
 
     p_list = sub.add_parser("list", help="list agents")

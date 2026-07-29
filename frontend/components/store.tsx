@@ -22,6 +22,7 @@ import {
   type Approval,
   type Checkmark,
   type ClaudeConnector,
+  type ClaudeModel,
   type ClaudePermissions,
   type ClaudePlugin,
   type ClaudeSkill,
@@ -146,6 +147,12 @@ interface StoreValue {
   updateClaudePlugin: (id: number, b: Partial<PluginBody>) => Promise<boolean>;
   deleteClaudePlugin: (id: number) => Promise<void>;
   saveClaudePermissions: (b: PermissionsBody) => Promise<boolean>;
+
+  /* Model backends (Claude page Models tab + the spawn form's model dropdown). */
+  claudeModels: ClaudeModel[];
+  createClaudeModel: (b: ModelBody) => Promise<boolean>;
+  updateClaudeModel: (id: number, b: Partial<ModelBody>) => Promise<boolean>;
+  deleteClaudeModel: (id: number) => Promise<void>;
 }
 
 export interface SkillBody {
@@ -177,6 +184,18 @@ export interface PermissionsBody {
   ask: string[];
 }
 
+export interface ModelBody {
+  name: string;
+  base_url: string;
+  model: string;
+  small_fast_model: string | null;
+  /* Write-only: encrypted at rest server-side, never echoed back. Null = no change. */
+  api_key: string | null;
+  clear_api_key?: boolean;
+  env: Record<string, string>;
+  enabled: boolean;
+}
+
 export interface SpawnBody {
   name: string;
   role: string;
@@ -184,6 +203,8 @@ export interface SpawnBody {
   worktree: string;
   subdir: string;
   task: string;
+  /* Model backend id as a select value; "" = the Claude subscription. */
+  model_id: string;
 }
 export interface ProjectBody {
   id: string;
@@ -291,6 +312,7 @@ export function DashboardProvider({
   const [claudeConnectors, setClaudeConnectors] = useState<ClaudeConnector[]>([]);
   const [claudePlugins, setClaudePlugins] = useState<ClaudePlugin[]>([]);
   const [claudePermissions, setClaudePermissions] = useState<ClaudePermissions | null>(null);
+  const [claudeModels, setClaudeModels] = useState<ClaudeModel[]>([]);
 
   // Keep polling loop reading fresh values without re-subscribing every render.
   const sectionRef = useRef(section);
@@ -429,6 +451,16 @@ export function DashboardProvider({
     }
   }, []);
 
+  /* Models load separately from the rest of the Claude page: the Agents section's spawn
+   * dropdown needs them too, without dragging skills/connectors along. */
+  const loadClaudeModels = useCallback(async () => {
+    try {
+      setClaudeModels(await clientRef.current.api<ClaudeModel[]>("/claude/models"));
+    } catch (e) {
+      swallow(e);
+    }
+  }, []);
+
   const loadClaude = useCallback(async () => {
     try {
       const [skills, connectors, plugins, permissions] = await Promise.all([
@@ -441,10 +473,11 @@ export function DashboardProvider({
       setClaudeConnectors(connectors);
       setClaudePlugins(plugins);
       setClaudePermissions(permissions);
+      await loadClaudeModels();
     } catch (e) {
       swallow(e);
     }
-  }, []);
+  }, [loadClaudeModels]);
 
   /* One refresh cycle for whatever section is active (plus always-cheap projects/agents
    * so the nav counts and inbox stay live). */
@@ -463,13 +496,14 @@ export function DashboardProvider({
     const s = sectionRef.current;
     const run = selectedRunRef.current;
     if (run) await loadRun(run.projectId, run.name);
+    if (s === "agents") await loadClaudeModels(); // the spawn form's model dropdown
     if (s === "approvals") await loadApprovals(selectedProjectRef.current);
     if (s === "servers") await loadHosts();
     if (s === "activity") await loadCommands();
     if (s === "schedules") await loadSchedules();
     if (s === "shared") await loadShared();
     if (s === "claude") await loadClaude();
-  }, [loadAgents, loadRun, loadApprovals, loadHosts, loadCommands, loadSchedules, loadShared, loadClaude]);
+  }, [loadAgents, loadRun, loadApprovals, loadHosts, loadCommands, loadSchedules, loadShared, loadClaude, loadClaudeModels]);
 
   // Initial load + polling loop. The first tick populates projects *and* agents (and the
   // active section) up front, so the Runs inbox is filled without waiting a poll interval.
@@ -493,6 +527,7 @@ export function DashboardProvider({
     (s: Section) => {
       setSectionRaw(s);
       setCmd({ text: "", error: false, busy: false });
+      if (s === "agents") void loadClaudeModels();
       if (s === "approvals") void loadApprovals(selectedProjectRef.current);
       if (s === "servers") void loadHosts();
       if (s === "activity") void loadCommands();
@@ -500,7 +535,7 @@ export function DashboardProvider({
       if (s === "shared") void loadShared();
       if (s === "claude") void loadClaude();
     },
-    [loadApprovals, loadHosts, loadCommands, loadSchedules, loadShared, loadClaude],
+    [loadApprovals, loadHosts, loadCommands, loadSchedules, loadShared, loadClaude, loadClaudeModels],
   );
 
   const selectProject = useCallback(
@@ -584,6 +619,7 @@ export function DashboardProvider({
       };
       if (f.placement === "worktree" && f.worktree.trim()) body.worktree = f.worktree.trim();
       if (f.placement === "subdir" && f.subdir.trim()) body.subdir = f.subdir.trim();
+      if (f.model_id) body.model_id = Number(f.model_id);
       const p = encodeURIComponent(selectedProjectRef.current);
       const final = await enqueueAndTrack(`/projects/${p}/agents/spawn`, body, `spawn ${body.name}`);
       await loadAgents(projects);
@@ -1190,6 +1226,38 @@ export function DashboardProvider({
     [claudeWrite],
   );
 
+  const createClaudeModel = useCallback(
+    (b: ModelBody) =>
+      claudeWrite(
+        () =>
+          clientRef.current.api("/claude/models", {
+            method: "POST",
+            body: { ...b, name: b.name.trim() },
+          }),
+        `model '${b.name.trim()}' saved — pick it from the spawn dropdown`,
+      ),
+    [claudeWrite],
+  );
+
+  const updateClaudeModel = useCallback(
+    (id: number, b: Partial<ModelBody>) =>
+      claudeWrite(
+        () => clientRef.current.api(`/claude/models/${id}`, { method: "PATCH", body: b }),
+        "model updated — applies to the next agent launch",
+      ),
+    [claudeWrite],
+  );
+
+  const deleteClaudeModel = useCallback(
+    async (id: number) => {
+      await claudeWrite(
+        () => clientRef.current.api(`/claude/models/${id}`, { method: "DELETE" }),
+        "model removed — agents pinned to it can no longer resume",
+      );
+    },
+    [claudeWrite],
+  );
+
   const setSharedKey = useCallback(
     async (key: string, value: string) => {
       try {
@@ -1269,6 +1337,10 @@ export function DashboardProvider({
     updateClaudePlugin,
     deleteClaudePlugin,
     saveClaudePermissions,
+    claudeModels,
+    createClaudeModel,
+    updateClaudeModel,
+    deleteClaudeModel,
   };
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

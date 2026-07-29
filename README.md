@@ -253,8 +253,16 @@ What the dashboard can now do (all state-changing actions require `ADMIN_TOKEN`)
   the audit log of what the dashboard triggered. The UI polls `GET /commands/{id}` for
   live status.
 - **Claude** — the management page for the Claude Code install agents run on. The account
-  login lives here (see below), plus web-managed **skills**, **MCP connectors**,
-  **plugins**, and **permission overrides**. These are plain DB rows the control container
+  login lives here (see below), plus web-managed **model backends**, **skills**,
+  **MCP connectors**, **plugins**, and **permission overrides**. Model backends are
+  Anthropic-API-compatible endpoints (a local Qwen/Llama behind LiteLLM or
+  claude-code-router, an LLM gateway) offered in the spawn form's **Model** dropdown next
+  to the Claude subscription: the same `claude` binary is pointed at the endpoint via
+  `ANTHROPIC_BASE_URL`/`ANTHROPIC_MODEL` env at launch, so hooks, skills, connectors, and
+  gates apply unchanged, and the agent stays pinned to its backend across resumes. API
+  keys are stored encrypted (`HANDLER_SECRET_KEY`) and never returned. See
+  [`docs/local-models.md`](docs/local-models.md) for working local stacks (and why bare
+  OpenAI-compatible servers break tool calling). These are plain DB rows the control container
   applies at every launch: skills sync to each worker's user-level `~/.claude/skills`
   (marker-file managed, so hand-installed skills survive), enabled connectors become the
   run's `--mcp-config` file (nothing lands in the repo tree), and plugins/permissions fold
@@ -271,7 +279,7 @@ The command queue is exposed over HTTP as `POST …/agents/spawn`, `POST …/age
 `POST …/approvals`, `POST …/forge-init`, `POST …/poll-ci`, `POST …/sync`,
 `POST /login/start`, `POST /login/submit`, and `GET /commands[/{id}]`; hosts as `/hosts`;
 schedules as `/schedules` + `/projects/{id}/schedules`; project mutation as
-`PATCH`/`DELETE /projects/{id}`; Claude management as `/claude/skills`,
+`PATCH`/`DELETE /projects/{id}`; Claude management as `/claude/models`, `/claude/skills`,
 `/claude/connectors`, `/claude/plugins` (CRUD), and `GET`/`PUT /claude/permissions`
 (reads with the normal token, writes admin-gated). Run the worker with `handler worker`
 (the control image's default command).
@@ -310,6 +318,7 @@ operators at a shell):
 
 ```bash
 handler spawn  --project leeworks-api --name junior --role junior --worktree feat/auth --task "add login"
+#              [--model qwen3-coder]  # run on a registered model backend (Claude page → Models)
 handler list   [--project leeworks-api]
 handler attach --project leeworks-api --name junior
 handler kill   --project leeworks-api --name junior
