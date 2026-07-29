@@ -627,6 +627,7 @@ def create_schedule(
     role: str | None = None,
     worktree: str | None = None,
     subdir: str | None = None,
+    model_id: int | None = None,
     enabled: bool = True,
 ) -> dict:
     result = conn.execute(
@@ -637,6 +638,7 @@ def create_schedule(
             role=role,
             worktree=worktree,
             subdir=subdir,
+            model_id=model_id,
             interval_seconds=interval_seconds,
             enabled=enabled,
             next_run_at=next_run_at,
@@ -653,6 +655,7 @@ def update_schedule(conn: Connection, schedule_id: int, **fields: Any) -> dict |
         "role",
         "worktree",
         "subdir",
+        "model_id",
         "interval_seconds",
         "enabled",
         "next_run_at",

@@ -323,6 +323,59 @@ def test_spawn_route_and_worker_pass_model_through(client, auth, env, fake_launc
     assert r.json()[0]["model_id"] == row["id"]
 
 
+def test_schedule_model_validated_stored_and_fired(client, auth, env, fake_launch):
+    root = env["tmp"] / "proj"
+    _write_mise(root)
+    _register_project(root)
+    with get_engine().begin() as conn:
+        row = repo.create_claude_model(conn, "qwen3-coder", "http://llm.local:4000", "qwen")
+        off = repo.create_claude_model(conn, "off", "http://x", "m", enabled=False)
+
+    # Fail-fast at create/update time, mirroring the spawn route.
+    r = client.post(
+        "/projects/proj/schedules",
+        json={"name_prefix": "nightly", "task": "t", "interval_seconds": 60, "model_id": 999},
+        headers=auth,
+    )
+    assert r.status_code == 400 and "not found" in r.json()["detail"]
+    r = client.post(
+        "/projects/proj/schedules",
+        json={"name_prefix": "nightly", "task": "t", "interval_seconds": 60,
+              "model_id": off["id"]},
+        headers=auth,
+    )
+    assert r.status_code == 400 and "disabled" in r.json()["detail"]
+
+    r = client.post(
+        "/projects/proj/schedules",
+        json={"name_prefix": "nightly", "task": "do it", "interval_seconds": 60,
+              "model_id": row["id"]},
+        headers=auth,
+    )
+    assert r.status_code == 201
+    sched = r.json()
+    assert sched["model_id"] == row["id"]
+
+    assert (
+        client.patch(f"/schedules/{sched['id']}", json={"model_id": 999}, headers=auth).status_code
+        == 400
+    )
+    # Clearing back to the subscription is an explicit null.
+    r = client.patch(f"/schedules/{sched['id']}", json={"model_id": None}, headers=auth)
+    assert r.status_code == 200 and r.json()["model_id"] is None
+    r = client.patch(f"/schedules/{sched['id']}", json={"model_id": row["id"]}, headers=auth)
+    assert r.status_code == 200 and r.json()["model_id"] == row["id"]
+
+    # The firing carries the pin into the spawn payload, and the launched agent gets it.
+    assert worker.fire_due_schedules() == 1
+    with connection() as conn:
+        command = repo.claim_next_command(conn, "w1")
+    assert command["payload"]["model_id"] == row["id"]
+    worker.execute_command(command)
+    assert fake_launch[0]["env"]["ANTHROPIC_MODEL"] == "qwen"
+    assert fake_launch[0]["agent"]["model_id"] == row["id"]
+
+
 def test_cli_spawn_resolves_model_by_name(env, fake_launch, capsys):
     root = env["tmp"] / "proj"
     _write_mise(root)

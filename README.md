@@ -236,7 +236,9 @@ What the dashboard can now do (all state-changing actions require `ADMIN_TOKEN`)
   enqueues a `sync` command so the worker clones it. Manual mode (existing `root_dir`)
   still works; every project with a remote gets a **Pull now** button, and spawn always
   pulls first.
-- **Schedules** — recurring agent spawns: a name prefix, a prompt, and an interval. The
+- **Schedules** — recurring agent spawns: a name prefix, a prompt, an interval, and
+  optionally a **model backend** (the same dropdown the spawn form has — every fired run
+  spawns on it). The
   worker fires each due schedule as a normal queued `spawn` with a timestamped agent name
   (`nightly-20260710-090000`), so runs are fresh, stateless agents and show up in
   Activity. The canonical prompt keeps its state in the repo: *"Read @notes.md, continue

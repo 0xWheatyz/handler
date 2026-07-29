@@ -221,7 +221,10 @@ class HostOut(BaseModel):
 class ScheduleIn(BaseModel):
     """A recurring agent spawn: every ``interval_seconds``, run ``task`` as a fresh
     agent named ``<name_prefix>-<timestamp>``. The first run fires on the worker's next
-    pass (``next_run_at`` starts at now)."""
+    pass (``next_run_at`` starts at now). ``model_id`` picks a registered model backend
+    (``/claude/models``) for every fired run; omit it for the Claude subscription."""
+
+    model_config = ConfigDict(protected_namespaces=())
 
     name_prefix: str = Field(min_length=1)
     task: str = Field(min_length=1)
@@ -229,21 +232,25 @@ class ScheduleIn(BaseModel):
     role: Role | None = None
     worktree: str | None = None
     subdir: str | None = None
+    model_id: int | None = None
     enabled: bool = True
 
 
 class ScheduleUpdateIn(BaseModel):
+    model_config = ConfigDict(protected_namespaces=())
+
     name_prefix: str | None = Field(default=None, min_length=1)
     task: str | None = Field(default=None, min_length=1)
     interval_seconds: int | None = Field(default=None, ge=10)
     role: Role | None = None
     worktree: str | None = None
     subdir: str | None = None
+    model_id: int | None = None
     enabled: bool | None = None
 
 
 class ScheduleOut(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes=True, protected_namespaces=())
 
     id: int
     project_id: str
@@ -252,6 +259,7 @@ class ScheduleOut(BaseModel):
     role: Role | None = None
     worktree: str | None = None
     subdir: str | None = None
+    model_id: int | None = None
     interval_seconds: int
     enabled: bool
     next_run_at: datetime

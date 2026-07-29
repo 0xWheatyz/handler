@@ -452,6 +452,10 @@ schedules = Table(
     Column("name_prefix", String, nullable=False),  # runs are named <prefix>-<timestamp>
     Column("task", String, nullable=False),  # the prompt each run starts with
     Column("role", String),
+    # Model backend (claude_models row) every fired run spawns on; null = the Claude
+    # subscription. No FK, same rationale as agents.model_id: a deleted backend makes the
+    # fired spawn fail visibly in Activity instead of breaking the schedule row.
+    Column("model_id", BigInteger),
     Column("worktree", String),  # optional branch for a per-run git worktree
     Column("subdir", String),  # optional subdir under the project root
     Column("interval_seconds", BigInteger, nullable=False),

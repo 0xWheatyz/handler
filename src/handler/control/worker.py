@@ -387,7 +387,7 @@ def fire_due_schedules(now: datetime | None = None) -> int:
     for sched in due:
         name = f"{sched['name_prefix']}-{now.strftime('%Y%m%d-%H%M%S')}"
         payload: dict = {"task": sched["task"]}
-        for key in ("role", "worktree", "subdir"):
+        for key in ("role", "worktree", "subdir", "model_id"):
             if sched.get(key):
                 payload[key] = sched[key]
         with connection() as conn:

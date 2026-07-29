@@ -231,6 +231,8 @@ export interface ScheduleBody {
   task: string;
   interval_seconds: number;
   role: string;
+  /* Model backend id as a select value; "" = the Claude subscription. */
+  model_id: string;
 }
 export interface ApprovalBody {
   branch: string;
@@ -496,7 +498,8 @@ export function DashboardProvider({
     const s = sectionRef.current;
     const run = selectedRunRef.current;
     if (run) await loadRun(run.projectId, run.name);
-    if (s === "agents") await loadClaudeModels(); // the spawn form's model dropdown
+    // The spawn/schedule forms' model dropdowns.
+    if (s === "agents" || s === "schedules") await loadClaudeModels();
     if (s === "approvals") await loadApprovals(selectedProjectRef.current);
     if (s === "servers") await loadHosts();
     if (s === "activity") await loadCommands();
@@ -527,7 +530,7 @@ export function DashboardProvider({
     (s: Section) => {
       setSectionRaw(s);
       setCmd({ text: "", error: false, busy: false });
-      if (s === "agents") void loadClaudeModels();
+      if (s === "agents" || s === "schedules") void loadClaudeModels();
       if (s === "approvals") void loadApprovals(selectedProjectRef.current);
       if (s === "servers") void loadHosts();
       if (s === "activity") void loadCommands();
@@ -894,6 +897,7 @@ export function DashboardProvider({
             task: b.task.trim(),
             interval_seconds: b.interval_seconds,
             role: b.role || null,
+            model_id: b.model_id ? Number(b.model_id) : null,
           },
         });
         setCmd({

@@ -135,6 +135,8 @@ export interface Schedule {
   role?: string | null;
   worktree?: string | null;
   subdir?: string | null;
+  /* Model backend every fired run spawns on (see ClaudeModel); null = subscription. */
+  model_id?: number | null;
   interval_seconds: number;
   enabled: boolean;
   next_run_at: string;

@@ -14,7 +14,8 @@ thing a **model backend** changes is the environment of that one agent's process
 | `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` | `1` (skip sidecar calls a local endpoint won't serve; override via the row's env map) |
 
 Register backends on the dashboard's **Claude → Models** tab (or `POST /claude/models`),
-then pick one from the **Model** dropdown when spawning an agent. No selection = the
+then pick one from the **Model** dropdown when spawning an agent — or on a **Schedule**,
+so every fired run spawns on that backend. No selection = the
 worker's logged-in Claude subscription, exactly as before. The agent is *pinned* to its
 backend: resumes come back up on the same one, and deleting a backend makes resumes of
 its agents fail loudly rather than silently falling back to the subscription.

@@ -33,6 +33,20 @@ def _schedule_or_404(conn: Connection, schedule_id: int) -> dict:
     return schedule
 
 
+def _check_model(conn: Connection, model_id: int | None) -> None:
+    """Fail-fast for the model dropdown, mirroring the spawn route: a stale or disabled
+    selection bounces now instead of every firing failing asynchronously in Activity."""
+    if model_id is None:
+        return
+    model = repo.get_claude_model(conn, model_id)
+    if model is None:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=f"model {model_id} not found")
+    if not model["enabled"]:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, detail=f"model backend '{model['name']}' is disabled"
+        )
+
+
 @router.get("/schedules", response_model=list[ScheduleOut])
 def list_all_schedules(conn: Connection = Depends(db_conn)) -> list[dict]:
     return repo.list_schedules(conn)
@@ -56,6 +70,7 @@ def create_schedule(
         raise HTTPException(
             status.HTTP_404_NOT_FOUND, detail=f"project '{project_id}' not found"
         )
+    _check_model(conn, body.model_id)
     # next_run_at starts at now, so the first run fires on the worker's next pass — the
     # operator sees the schedule work immediately instead of waiting a full interval.
     return repo.create_schedule(
@@ -68,6 +83,7 @@ def create_schedule(
         role=body.role,
         worktree=body.worktree,
         subdir=body.subdir,
+        model_id=body.model_id,
         enabled=body.enabled,
     )
 
@@ -82,6 +98,8 @@ def update_schedule(
 ) -> dict:
     _schedule_or_404(conn, schedule_id)
     fields = body.model_dump(exclude_unset=True)
+    if fields.get("model_id") is not None:
+        _check_model(conn, fields["model_id"])
     return repo.update_schedule(conn, schedule_id, **fields)
 
 
