@@ -86,6 +86,19 @@ def enqueue_spawn(project: str, body: SpawnIn, conn: Connection = Depends(db_con
             status.HTTP_400_BAD_REQUEST,
             detail="a task is required: the headless runner has no idle-REPL mode",
         )
+    if body.model_id is not None:
+        # Same fail-fast idea for the model dropdown: the worker re-checks at launch,
+        # but a stale/disabled selection should bounce now, not fail asynchronously.
+        model = repo.get_claude_model(conn, body.model_id)
+        if model is None:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST, detail=f"model {body.model_id} not found"
+            )
+        if not model["enabled"]:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                detail=f"model backend '{model['name']}' is disabled",
+            )
     payload = body.model_dump(exclude={"name"}, exclude_none=True)
     return repo.enqueue_command(
         conn,

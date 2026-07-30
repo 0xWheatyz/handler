@@ -94,6 +94,11 @@ agents = Table(
     # Optional workflow role (junior | senior | deploy) — informational, drives which
     # forge skill an agent follows; the approval gate keys on identity, not role.
     Column("role", String),
+    # Which model backend (claude_models row) this agent runs on; null = the worker's
+    # logged-in Claude subscription. Recorded at spawn so resumes — a brand-new process —
+    # come back up on the same backend. Deliberately no FK: deleting a backend must not
+    # orphan agent history (resume then fails with a clear message instead).
+    Column("model_id", BigInteger),
     # A periodic snapshot of the agent's live tmux pane tail (last ~40 lines), refreshed by
     # the control worker's poll loop. The tmux socket lives only in the control container,
     # so this DB column is how the API/UI see what a running — or wedged — agent is doing.
@@ -403,6 +408,27 @@ claude_plugins = Table(
     UniqueConstraint("name", "marketplace", name="uq_claude_plugins_name_marketplace"),
 )
 
+# Alternative model backends the same ``claude`` binary can run against — an
+# Anthropic-API-compatible endpoint (a local Qwen/Llama behind LiteLLM or
+# claude-code-router, an LLM gateway, …). Selected per-spawn from a dashboard dropdown;
+# the control layer injects the row as ``ANTHROPIC_BASE_URL`` / ``ANTHROPIC_MODEL`` /
+# ``ANTHROPIC_AUTH_TOKEN`` env into that one agent's process, so hooks, skills,
+# connectors, plugins, and permissions all apply unchanged. No row selected = the
+# worker's logged-in Claude subscription, untouched.
+claude_models = Table(
+    "claude_models",
+    metadata,
+    Column("id", PortableBigInt, primary_key=True, autoincrement=True),
+    Column("name", String, nullable=False, unique=True),  # dropdown label, e.g. "qwen3-coder"
+    Column("base_url", String, nullable=False),  # ANTHROPIC_BASE_URL — must speak /v1/messages
+    Column("api_key_enc", String),  # encrypted (HANDLER_SECRET_KEY); never returned by the API
+    Column("model", String, nullable=False),  # ANTHROPIC_MODEL — the id the endpoint serves
+    Column("small_fast_model", String),  # ANTHROPIC_SMALL_FAST_MODEL; falls back to ``model``
+    Column("env", PortableJSON),  # extra env overrides (timeouts, max tokens, …), merged last
+    Column("enabled", Boolean, nullable=False, server_default="1"),
+    Column("created_at", PortableTimestamp, nullable=False, server_default=func.now()),
+)
+
 # Small JSON key/value store for the remaining Claude management state; first key is
 # "permissions" — the operator's defaultMode override and extra allow/deny/ask rules,
 # merged over the env-configured baseline by settings_gen at launch.
@@ -426,6 +452,10 @@ schedules = Table(
     Column("name_prefix", String, nullable=False),  # runs are named <prefix>-<timestamp>
     Column("task", String, nullable=False),  # the prompt each run starts with
     Column("role", String),
+    # Model backend (claude_models row) every fired run spawns on; null = the Claude
+    # subscription. No FK, same rationale as agents.model_id: a deleted backend makes the
+    # fired spawn fail visibly in Activity instead of breaking the schedule row.
+    Column("model_id", BigInteger),
     Column("worktree", String),  # optional branch for a per-run git worktree
     Column("subdir", String),  # optional subdir under the project root
     Column("interval_seconds", BigInteger, nullable=False),

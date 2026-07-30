@@ -36,7 +36,7 @@ function intervalLabel(seconds: number): string {
   return `every ${seconds}s`;
 }
 
-const emptyForm = { name_prefix: "", task: "", interval: "3600", role: "" };
+const emptyForm = { name_prefix: "", task: "", interval: "3600", role: "", model_id: "" };
 
 export function SchedulesSection() {
   const s = useDashboard();
@@ -46,6 +46,21 @@ export function SchedulesSection() {
     () => s.projects.map((p) => ({ value: p.id, label: p.id })),
     [s.projects],
   );
+  /* Same choice the spawn form offers: Claude subscription by default, plus every
+   * enabled backend from the Claude page's Models tab. Every fired run spawns on it. */
+  const modelOpts = useMemo(
+    () => [
+      { value: "", label: "Claude (subscription)" },
+      ...s.claudeModels
+        .filter((m) => m.enabled)
+        .map((m) => ({ value: String(m.id), label: `${m.name} (${m.model})` })),
+    ],
+    [s.claudeModels],
+  );
+  const modelName = useMemo(() => {
+    const byId = new Map(s.claudeModels.map((m) => [m.id, m.name]));
+    return (id: number | null | undefined) => (id == null ? null : byId.get(id) ?? `#${id}`);
+  }, [s.claudeModels]);
 
   const create = async () => {
     const ok = await s.createSchedule(s.selectedProjectId, {
@@ -53,6 +68,7 @@ export function SchedulesSection() {
       task: form.task,
       interval_seconds: Number(form.interval),
       role: form.role,
+      model_id: form.model_id,
     });
     if (ok) setForm(emptyForm);
   };
@@ -106,6 +122,12 @@ export function SchedulesSection() {
                   value={form.role}
                   onChange={(v) => setForm({ ...form, role: v })}
                   options={ROLE_OPTS}
+                />
+                <Select
+                  label="Model"
+                  value={form.model_id}
+                  onChange={(v) => setForm({ ...form, model_id: v })}
+                  options={modelOpts}
                 />
               </div>
               <div className="mt14">
@@ -165,6 +187,12 @@ export function SchedulesSection() {
                             <>
                               {" "}
                               <Badge tone="info">{sc.role}</Badge>
+                            </>
+                          ) : null}
+                          {sc.model_id != null ? (
+                            <>
+                              {" "}
+                              <Badge tone="warning">{modelName(sc.model_id)}</Badge>
                             </>
                           ) : null}
                         </td>

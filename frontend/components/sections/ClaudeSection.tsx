@@ -8,9 +8,9 @@
 
 import { useState } from "react";
 import { useDashboard } from "@/components/store";
-import type { ConnectorBody, PluginBody, SkillBody } from "@/components/store";
+import type { ConnectorBody, ModelBody, PluginBody, SkillBody } from "@/components/store";
 import { Badge, Button, Card, Input, Select, Tabs, Textarea, Toggle } from "@/components/ui";
-import type { ClaudeConnector, ClaudePlugin, ClaudeSkill } from "@/lib/api";
+import type { ClaudeConnector, ClaudeModel, ClaudePlugin, ClaudeSkill } from "@/lib/api";
 import { ClaudeLoginPanel } from "@/components/sections/LoginSection";
 
 /* KEY=VALUE-per-line <-> map helpers for connector env/headers. */
@@ -499,6 +499,165 @@ function PluginsPanel() {
   );
 }
 
+/* ---- Model backends ---------------------------------------------------------------- */
+
+const emptyModel = {
+  name: "",
+  base_url: "",
+  model: "",
+  small_fast_model: "",
+  api_key: "",
+  env: "",
+  enabled: true,
+};
+
+function ModelsPanel() {
+  const s = useDashboard();
+  const [form, setForm] = useState(emptyModel);
+  const [editingId, setEditingId] = useState<number | null>(null);
+
+  const reset = () => {
+    setForm(emptyModel);
+    setEditingId(null);
+  };
+
+  const save = async () => {
+    const body: ModelBody = {
+      name: form.name,
+      base_url: form.base_url.trim(),
+      model: form.model.trim(),
+      small_fast_model: form.small_fast_model.trim() || null,
+      api_key: form.api_key.trim() || null,
+      env: parseKeyValues(form.env),
+      enabled: form.enabled,
+    };
+    const ok =
+      editingId != null
+        ? await s.updateClaudeModel(editingId, body)
+        : await s.createClaudeModel(body);
+    if (ok) reset();
+  };
+
+  const edit = (m: ClaudeModel) => {
+    setForm({
+      name: m.name,
+      base_url: m.base_url,
+      model: m.model,
+      small_fast_model: m.small_fast_model ?? "",
+      api_key: "", // write-only; blank = keep the stored key
+      env: formatKeyValues(m.env),
+      enabled: m.enabled,
+    });
+    setEditingId(m.id);
+  };
+
+  return (
+    <>
+      <div className="faint" style={{ fontSize: "var(--text-sm)", marginBottom: 14 }}>
+        Alternative model backends the spawn dropdown offers next to the Claude
+        subscription — the same <span className="mono">claude</span> binary pointed at a
+        different endpoint via <span className="mono">ANTHROPIC_BASE_URL</span>, so
+        skills, connectors, hooks, and gates apply unchanged. The endpoint must speak the{" "}
+        <b>Anthropic Messages API including tool use</b> — a bare OpenAI-compatible
+        server (Ollama, llama.cpp, LM Studio) breaks tool calling; front it with LiteLLM
+        or claude-code-router and enable the backend&apos;s native tool parser. See{" "}
+        <span className="mono">docs/local-models.md</span> for working Qwen-Coder stacks.
+      </div>
+      <Card>
+        <div className="card-head" style={{ marginBottom: 14 }}>
+          <span className="card-title" style={{ fontSize: "var(--text-md)", color: "var(--text-heading)" }}>
+            {editingId != null ? `Edit model · ${form.name}` : "Add a model backend"}
+          </span>
+        </div>
+        <div className="form-grid">
+          <Input
+            label="Name (what the spawn dropdown shows)"
+            value={form.name}
+            onChange={(v) => setForm({ ...form, name: v })}
+            placeholder="qwen3-coder"
+          />
+          <Input
+            label="Base URL (Anthropic-compatible /v1/messages endpoint)"
+            value={form.base_url}
+            onChange={(v) => setForm({ ...form, base_url: v })}
+            placeholder="http://llm.lan:4000"
+          />
+          <Input
+            label="Model id (as the endpoint serves it)"
+            value={form.model}
+            onChange={(v) => setForm({ ...form, model: v })}
+            placeholder="qwen3-coder-30b"
+          />
+          <Input
+            label="Small/fast model id (optional — defaults to the main model)"
+            value={form.small_fast_model}
+            onChange={(v) => setForm({ ...form, small_fast_model: v })}
+            placeholder="qwen3-1.7b"
+          />
+          <Input
+            label={editingId != null ? "API key (blank = keep stored key)" : "API key (optional)"}
+            value={form.api_key}
+            onChange={(v) => setForm({ ...form, api_key: v })}
+            placeholder="sk-…  (encrypted at rest, never shown again)"
+          />
+          <Textarea
+            label="Extra env overrides (KEY=VALUE per line, optional)"
+            value={form.env}
+            onChange={(v) => setForm({ ...form, env: v })}
+            rows={3}
+            placeholder={"API_TIMEOUT_MS=600000\nCLAUDE_CODE_MAX_OUTPUT_TOKENS=8192"}
+          />
+        </div>
+        <div className="hstack mt14">
+          <Button
+            variant="primary"
+            disabled={!form.name.trim() || !form.base_url.trim() || !form.model.trim()}
+            onClick={save}
+          >
+            {editingId != null ? "Save changes" : "Add model"}
+          </Button>
+          {editingId != null && (
+            <Button variant="ghost" onClick={reset}>
+              Cancel
+            </Button>
+          )}
+        </div>
+      </Card>
+
+      {s.claudeModels.length === 0 && (
+        <div className="empty">No model backends yet — agents run on the Claude subscription.</div>
+      )}
+
+      {s.claudeModels.map((m) => (
+        <Card key={m.id}>
+          <div className="card-head">
+            <span className="mono" style={{ fontWeight: "var(--fw-bold)", fontSize: "var(--text-lg)", color: "var(--text-heading)" }}>
+              {m.name}
+            </span>
+            <div className="hstack">
+              {m.has_api_key && <Badge tone="info">key stored</Badge>}
+              <Badge tone={m.enabled ? "success" : "neutral"}>
+                {m.enabled ? "enabled" : "disabled"}
+              </Badge>
+              <Toggle on={m.enabled} onClick={() => s.updateClaudeModel(m.id, { enabled: !m.enabled })} />
+              <Button size="sm" variant="secondary" onClick={() => edit(m)}>
+                Edit
+              </Button>
+              <Button size="sm" variant="danger" onClick={() => s.deleteClaudeModel(m.id)}>
+                Remove
+              </Button>
+            </div>
+          </div>
+          <div className="mono faint" style={{ fontSize: "var(--text-xs)", marginTop: 8 }}>
+            {m.model}
+            {m.small_fast_model ? ` (fast: ${m.small_fast_model})` : ""} @ {m.base_url}
+          </div>
+        </Card>
+      ))}
+    </>
+  );
+}
+
 /* ---- Permissions ------------------------------------------------------------------- */
 
 const MODE_OPTS = [
@@ -594,6 +753,7 @@ function PermissionsPanel() {
 
 const TABS = [
   { value: "account", label: "Account" },
+  { value: "models", label: "Models" },
   { value: "skills", label: "Skills" },
   { value: "connectors", label: "Connectors" },
   { value: "plugins", label: "Plugins" },
@@ -608,9 +768,9 @@ export function ClaudeSection() {
       <div className="section-head">
         <div className="section-title">Claude</div>
         <div className="section-desc">
-          Manage the Claude Code install agents run on: the account login, plus skills,
-          MCP connectors, plugins, and permissions. Changes apply to the next launch of
-          every agent.
+          Manage the Claude Code install agents run on: the account login, alternative
+          model backends, plus skills, MCP connectors, plugins, and permissions. Changes
+          apply to the next launch of every agent.
         </div>
       </div>
       <div className="section-body">
@@ -618,6 +778,7 @@ export function ClaudeSection() {
           <Tabs tabs={TABS} value={tab} onChange={setTab} />
         </div>
         {tab === "account" && <ClaudeLoginPanel />}
+        {tab === "models" && <ModelsPanel />}
         {tab === "skills" && <SkillsPanel />}
         {tab === "connectors" && <ConnectorsPanel />}
         {tab === "plugins" && <PluginsPanel />}

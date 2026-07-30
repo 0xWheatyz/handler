@@ -25,6 +25,7 @@ const emptySpawn = {
   worktree: "",
   subdir: "",
   task: "",
+  model_id: "",
 };
 
 export function AgentsSection() {
@@ -35,6 +36,22 @@ export function AgentsSection() {
     () => s.projects.map((p) => ({ value: p.id, label: p.id })),
     [s.projects],
   );
+  /* The seamless switch: Claude subscription by default, plus every enabled backend
+   * registered on the Claude page's Models tab. Same binary, hooks, and skills either
+   * way — only the ANTHROPIC_* env of the launched process differs. */
+  const modelOpts = useMemo(
+    () => [
+      { value: "", label: "Claude (subscription)" },
+      ...s.claudeModels
+        .filter((m) => m.enabled)
+        .map((m) => ({ value: String(m.id), label: `${m.name} (${m.model})` })),
+    ],
+    [s.claudeModels],
+  );
+  const modelName = useMemo(() => {
+    const byId = new Map(s.claudeModels.map((m) => [m.id, m.name]));
+    return (id: number | null | undefined) => (id == null ? null : byId.get(id) ?? `#${id}`);
+  }, [s.claudeModels]);
   const agents = useMemo(
     () => s.agents.filter((a) => a.project_id === s.selectedProjectId),
     [s.agents, s.selectedProjectId],
@@ -87,6 +104,12 @@ export function AgentsSection() {
                 ) : (
                   <Input label="Subdir" value={form.subdir} onChange={(v) => setForm({ ...form, subdir: v })} placeholder="api" />
                 )}
+                <Select
+                  label="Model"
+                  value={form.model_id}
+                  onChange={(v) => setForm({ ...form, model_id: v })}
+                  options={modelOpts}
+                />
               </div>
               <div className="mt14">
                 <Textarea
@@ -113,6 +136,7 @@ export function AgentsSection() {
                     <tr>
                       <th>Name</th>
                       <th>Role</th>
+                      <th>Model</th>
                       <th>Status</th>
                       <th>Working dir</th>
                       <th>Created</th>
@@ -125,6 +149,13 @@ export function AgentsSection() {
                         <tr>
                           <td className="mono">{a.name}</td>
                           <td>{a.role ? <Badge tone="info">{a.role}</Badge> : "—"}</td>
+                          <td>
+                            {a.model_id != null ? (
+                              <Badge tone="warning">{modelName(a.model_id)}</Badge>
+                            ) : (
+                              <Badge tone="neutral">claude</Badge>
+                            )}
+                          </td>
                           <td>
                             <StatusBadge status={a.status} />
                           </td>
@@ -146,7 +177,7 @@ export function AgentsSection() {
                         </tr>
                         {(a.status === "working" || a.status === "crashed") && a.last_output?.trim() && (
                           <tr>
-                            <td colSpan={6} style={{ paddingTop: 0 }}>
+                            <td colSpan={7} style={{ paddingTop: 0 }}>
                               <div className="faint" style={{ fontSize: "var(--text-xs)", marginBottom: 4 }}>
                                 {a.status === "crashed" ? "last output before crash" : "live output"}
                                 {a.output_at ? ` · ${timeAgo(a.output_at)}` : ""}
