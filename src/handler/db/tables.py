@@ -440,6 +440,57 @@ claude_config = Table(
     Column("updated_at", PortableTimestamp, nullable=False, server_default=func.now()),
 )
 
+# ---- Agent memory (the distilled, linked layer over the raw transcript/log history).
+# Notes are the durable knowledge agents and operators leave behind — facts, decisions,
+# gotchas, runbooks — scoped to a project or global, written by agents through the
+# bundled handler-memory MCP server (or by the operator from the dashboard) and read
+# back at the next launch. Links make the notes a graph the /memory page can draw.
+NOTE_KINDS = ("fact", "decision", "gotcha", "runbook")
+
+memory_notes = Table(
+    "memory_notes",
+    metadata,
+    Column("id", PortableBigInt, primary_key=True, autoincrement=True),
+    Column("project_id", String, ForeignKey("projects.id")),  # null = global note
+    # The authoring agent, when an agent wrote it; null = the operator (dashboard).
+    # Nulled (not cascaded) when the agent is deleted — memory outlives its author.
+    Column("agent_id", BigInteger, ForeignKey("agents.id")),
+    Column("title", String, nullable=False),
+    Column("body", String, nullable=False),
+    Column("kind", String, nullable=False, server_default="fact"),
+    Column("tags", PortableJSON),  # list of strings, for lightweight filtering
+    Column("created_at", PortableTimestamp, nullable=False, server_default=func.now()),
+    Column("updated_at", PortableTimestamp, nullable=False, server_default=func.now()),
+    CheckConstraint(_in("kind", NOTE_KINDS), name="ck_memory_notes_kind"),
+    Index("ix_memory_notes_project_id", "project_id", "id"),
+)
+
+# Note-to-note edges. ``relation`` is a free label ("relates_to", "supersedes",
+# "caused_by", …) — kept as TEXT, not a vocabulary, because agents coin them.
+memory_links = Table(
+    "memory_links",
+    metadata,
+    Column("id", PortableBigInt, primary_key=True, autoincrement=True),
+    Column(
+        "src_note_id",
+        BigInteger,
+        ForeignKey("memory_notes.id", ondelete="CASCADE"),
+        nullable=False,
+    ),
+    Column(
+        "dst_note_id",
+        BigInteger,
+        ForeignKey("memory_notes.id", ondelete="CASCADE"),
+        nullable=False,
+    ),
+    Column("relation", String, nullable=False, server_default="relates_to"),
+    Column("created_by_agent_id", BigInteger, ForeignKey("agents.id")),
+    Column("created_at", PortableTimestamp, nullable=False, server_default=func.now()),
+    UniqueConstraint("src_note_id", "dst_note_id", "relation", name="uq_memory_links_edge"),
+    Index("ix_memory_links_src", "src_note_id"),
+    Index("ix_memory_links_dst", "dst_note_id"),
+)
+
 # Recurring agent spawns. The worker checks for due rows on every loop pass and enqueues
 # an ordinary ``spawn`` command per firing (so scheduled runs show up in the Activity
 # audit trail like any other control action). Agent names must be unique per project, so

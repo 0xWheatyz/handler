@@ -48,6 +48,11 @@ def build_settings(conn: Connection | None = None) -> dict:
             "SessionEnd": [
                 {"hooks": [{"type": "command", "command": _hook_command("session_end")}]}
             ],
+            # Memory recall: injects the project's recent memory notes as context at
+            # session start, so knowledge from earlier runs arrives without being asked.
+            "SessionStart": [
+                {"hooks": [{"type": "command", "command": _hook_command("session_start")}]}
+            ],
             "PreToolUse": [
                 {
                     "matcher": "AskUserQuestion|Bash",
@@ -77,6 +82,10 @@ def build_settings(conn: Connection | None = None) -> dict:
         deny = list(stored.get("deny", []))
         ask = list(stored.get("ask", []))
         plugins = repo.list_claude_plugins(conn, enabled_only=True)
+    # The bundled memory MCP server's tools are always usable — memory is only worth
+    # anything if agents can actually reach it under auto-deny.
+    if "mcp__handler-memory" not in allow:
+        allow.append("mcp__handler-memory")
     permissions: dict = {"defaultMode": mode, "allow": allow}
     if deny:
         permissions["deny"] = deny

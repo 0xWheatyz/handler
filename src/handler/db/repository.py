@@ -36,6 +36,8 @@ from .tables import (
     commands,
     forge_hosts,
     log_entries,
+    memory_links,
+    memory_notes,
     projects,
     runtime_secrets,
     schedules,
@@ -383,6 +385,18 @@ def _purge_agent_dependents(conn: Connection, agent_ids: list[int]) -> None:
         .where(shared_context.c.set_by_agent_id.in_(agent_ids))
         .values(set_by_agent_id=None)
     )
+    # Memory outlives its authors (that's the point) — null the attribution like
+    # shared_context, never delete the notes.
+    conn.execute(
+        memory_notes.update()
+        .where(memory_notes.c.agent_id.in_(agent_ids))
+        .values(agent_id=None)
+    )
+    conn.execute(
+        memory_links.update()
+        .where(memory_links.c.created_by_agent_id.in_(agent_ids))
+        .values(created_by_agent_id=None)
+    )
     conn.execute(approvals.delete().where(approvals.c.approved_by_agent_id.in_(agent_ids)))
     conn.execute(checkmarks.delete().where(checkmarks.c.agent_id.in_(agent_ids)))
     conn.execute(log_entries.delete().where(log_entries.c.agent_id.in_(agent_ids)))
@@ -409,6 +423,22 @@ def delete_project(conn: Connection, project_id: str) -> bool:
         ).all()
     ]
     _purge_agent_dependents(conn, agent_ids)
+    # Project-scoped memory goes with the project (links first — SQLite doesn't always
+    # enforce the ON DELETE CASCADE, so clear them explicitly). Global notes stay.
+    note_ids = [
+        row[0]
+        for row in conn.execute(
+            select(memory_notes.c.id).where(memory_notes.c.project_id == project_id)
+        ).all()
+    ]
+    if note_ids:
+        conn.execute(
+            memory_links.delete().where(
+                memory_links.c.src_note_id.in_(note_ids)
+                | memory_links.c.dst_note_id.in_(note_ids)
+            )
+        )
+        conn.execute(memory_notes.delete().where(memory_notes.c.id.in_(note_ids)))
     conn.execute(schedules.delete().where(schedules.c.project_id == project_id))
     conn.execute(approvals.delete().where(approvals.c.project_id == project_id))
     conn.execute(commands.delete().where(commands.c.project_id == project_id))
@@ -1227,3 +1257,175 @@ def get_latest_claimed_command(conn: Connection, type: str) -> dict | None:
         .limit(1)
     ).first()
     return _row_to_dict(row)
+
+# ------------------------------------------------------------------ agent memory (notes)
+
+
+def list_memory_notes(
+    conn: Connection,
+    project_id: str | None = None,
+    include_global: bool = True,
+    limit: int = 200,
+    offset: int = 0,
+) -> list[dict]:
+    """Notes in scope, newest first. ``project_id=None`` means everything (the dashboard
+    graph); a project id narrows to that project — plus the global notes unless told not
+    to (the MCP server's read scope: my project + what everyone shares)."""
+    stmt = select(memory_notes)
+    if project_id is not None:
+        scope = memory_notes.c.project_id == project_id
+        if include_global:
+            scope = scope | memory_notes.c.project_id.is_(None)
+        stmt = stmt.where(scope)
+    rows = conn.execute(
+        stmt.order_by(memory_notes.c.id.desc()).limit(limit).offset(offset)
+    ).all()
+    return [dict(r._mapping) for r in rows]
+
+
+def get_memory_note(conn: Connection, note_id: int) -> dict | None:
+    row = conn.execute(select(memory_notes).where(memory_notes.c.id == note_id)).first()
+    return _row_to_dict(row)
+
+
+def search_memory_notes(
+    conn: Connection,
+    query: str,
+    project_id: str | None = None,
+    include_global: bool = True,
+    limit: int = 20,
+) -> list[dict]:
+    """Case-insensitive substring search over title/body/kind, every term required.
+
+    Deliberately plain LIKE, not FTS: it renders identically on Postgres and SQLite and
+    is comfortably fast at the scale of a distilled note store. An empty query returns
+    the most recent notes in scope — 'what's new' is a real question agents ask.
+    """
+    terms = [t for t in query.split() if t]
+    stmt = select(memory_notes)
+    if project_id is not None:
+        scope = memory_notes.c.project_id == project_id
+        if include_global:
+            scope = scope | memory_notes.c.project_id.is_(None)
+        stmt = stmt.where(scope)
+    for term in terms:
+        pattern = f"%{term}%"
+        stmt = stmt.where(
+            memory_notes.c.title.ilike(pattern)
+            | memory_notes.c.body.ilike(pattern)
+            | memory_notes.c.kind.ilike(pattern)
+        )
+    rows = conn.execute(stmt.order_by(memory_notes.c.id.desc()).limit(limit)).all()
+    return [dict(r._mapping) for r in rows]
+
+
+def create_memory_note(
+    conn: Connection,
+    title: str,
+    body: str,
+    kind: str = "fact",
+    project_id: str | None = None,
+    agent_id: int | None = None,
+    tags: list[str] | None = None,
+) -> dict:
+    now = _now()
+    result = conn.execute(
+        memory_notes.insert().values(
+            project_id=project_id,
+            agent_id=agent_id,
+            title=title,
+            body=body,
+            kind=kind,
+            tags=tags,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    return get_memory_note(conn, result.inserted_primary_key[0])
+
+
+def update_memory_note(conn: Connection, note_id: int, **fields: Any) -> dict | None:
+    allowed = {"title", "body", "kind", "tags", "project_id"}
+    values = {k: v for k, v in fields.items() if k in allowed}
+    if values:
+        values["updated_at"] = _now()
+        conn.execute(memory_notes.update().where(memory_notes.c.id == note_id).values(**values))
+    return get_memory_note(conn, note_id)
+
+
+def delete_memory_note(conn: Connection, note_id: int) -> bool:
+    """Remove a note and its edges (both directions — explicit, not trusting CASCADE
+    on SQLite)."""
+    conn.execute(
+        memory_links.delete().where(
+            (memory_links.c.src_note_id == note_id) | (memory_links.c.dst_note_id == note_id)
+        )
+    )
+    result = conn.execute(memory_notes.delete().where(memory_notes.c.id == note_id))
+    return result.rowcount > 0
+
+
+def list_memory_links(conn: Connection, note_ids: list[int] | None = None) -> list[dict]:
+    """All edges, or only those touching the given notes (either endpoint)."""
+    stmt = select(memory_links)
+    if note_ids is not None:
+        if not note_ids:
+            return []
+        stmt = stmt.where(
+            memory_links.c.src_note_id.in_(note_ids) | memory_links.c.dst_note_id.in_(note_ids)
+        )
+    rows = conn.execute(stmt.order_by(memory_links.c.id)).all()
+    return [dict(r._mapping) for r in rows]
+
+
+def get_memory_link(conn: Connection, link_id: int) -> dict | None:
+    row = conn.execute(select(memory_links).where(memory_links.c.id == link_id)).first()
+    return _row_to_dict(row)
+
+
+def create_memory_link(
+    conn: Connection,
+    src_note_id: int,
+    dst_note_id: int,
+    relation: str = "relates_to",
+    agent_id: int | None = None,
+) -> dict:
+    """Create an edge; saying the same thing twice returns the existing edge instead of
+    erroring — agents re-assert connections and that must stay cheap and idempotent."""
+    existing = conn.execute(
+        select(memory_links).where(
+            memory_links.c.src_note_id == src_note_id,
+            memory_links.c.dst_note_id == dst_note_id,
+            memory_links.c.relation == relation,
+        )
+    ).first()
+    if existing is not None:
+        return dict(existing._mapping)
+    result = conn.execute(
+        memory_links.insert().values(
+            src_note_id=src_note_id,
+            dst_note_id=dst_note_id,
+            relation=relation,
+            created_by_agent_id=agent_id,
+            created_at=_now(),
+        )
+    )
+    return get_memory_link(conn, result.inserted_primary_key[0])
+
+
+def delete_memory_link(conn: Connection, link_id: int) -> bool:
+    result = conn.execute(memory_links.delete().where(memory_links.c.id == link_id))
+    return result.rowcount > 0
+
+
+def memory_graph(conn: Connection, project_id: str | None = None) -> dict:
+    """The whole graph in one read — what the /memory page draws. Scoping to a project
+    keeps its notes plus the global ones, and only edges with both endpoints in scope."""
+    notes = list_memory_notes(conn, project_id=project_id, limit=1000)
+    ids = [n["id"] for n in notes]
+    links = list_memory_links(conn, note_ids=ids)
+    in_scope = set(ids)
+    links = [
+        ln for ln in links if ln["src_note_id"] in in_scope and ln["dst_note_id"] in in_scope
+    ]
+    return {"notes": notes, "links": links}

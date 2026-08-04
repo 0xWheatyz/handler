@@ -79,11 +79,17 @@ def test_spawn_creates_agent_settings_and_run(env, fake_launch):
     with get_engine().begin() as conn:
         assert repo.get_agent_by_name(conn, "proj", "api")["id"] == agent["id"]
 
-    # settings.json wires all four hook events AND the headless permission allowlist
+    # settings.json wires all five hook events AND the headless permission allowlist
     # (claude -p auto-denies anything that would prompt; the allowlist is what lets
     # normal work proceed — the hooks stay the hard gate).
     settings = json.loads((root / ".claude" / "settings.json").read_text())
-    assert set(settings["hooks"]) == {"Stop", "SessionEnd", "PreToolUse", "Notification"}
+    assert set(settings["hooks"]) == {
+        "Stop",
+        "SessionEnd",
+        "SessionStart",
+        "PreToolUse",
+        "Notification",
+    }
     pre = settings["hooks"]["PreToolUse"][0]
     assert pre["matcher"] == "AskUserQuestion|Bash"
     assert "handler.hooks pre_tool_use" in pre["hooks"][0]["command"]

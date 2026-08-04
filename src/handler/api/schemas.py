@@ -610,3 +610,64 @@ class SharedContextOut(BaseModel):
     value: str
     set_by_agent_id: int | None = None
     updated_at: datetime
+
+
+# ---- agent memory (the /memory page + the handler-memory MCP server's store) ----
+
+NoteKind = Literal["fact", "decision", "gotcha", "runbook"]
+
+
+class MemoryNoteIn(BaseModel):
+    title: str = Field(min_length=1, max_length=500)
+    body: str = Field(min_length=1)
+    kind: NoteKind = "fact"
+    project_id: str | None = None  # null = global note
+    tags: list[str] | None = None
+
+
+class MemoryNoteUpdateIn(BaseModel):
+    """Editable note columns; omit a field to leave it unchanged."""
+
+    title: str | None = Field(default=None, min_length=1, max_length=500)
+    body: str | None = Field(default=None, min_length=1)
+    kind: NoteKind | None = None
+    project_id: str | None = None
+    tags: list[str] | None = None
+
+
+class MemoryNoteOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    project_id: str | None = None
+    agent_id: int | None = None
+    title: str
+    body: str
+    kind: str
+    tags: list[str] | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class MemoryLinkIn(BaseModel):
+    src_note_id: int
+    dst_note_id: int
+    relation: str = Field(default="relates_to", min_length=1, max_length=100)
+
+
+class MemoryLinkOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    src_note_id: int
+    dst_note_id: int
+    relation: str
+    created_by_agent_id: int | None = None
+    created_at: datetime
+
+
+class MemoryGraphOut(BaseModel):
+    """Everything the graph view draws, in one response."""
+
+    notes: list[MemoryNoteOut]
+    links: list[MemoryLinkOut]
