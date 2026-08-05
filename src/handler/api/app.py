@@ -22,6 +22,7 @@ from .routes import (
     hosts,
     interaction,
     login,
+    memory,
     projects,
     schedules,
     shared,
@@ -53,6 +54,7 @@ def create_app() -> FastAPI:
     app.include_router(hosts.router)
     app.include_router(schedules.router)
     app.include_router(shared.router)
+    app.include_router(memory.router)
 
     # Optional CORS, only for operators who host the UI on a different origin than the
     # API. Empty CORS_ORIGINS => middleware never added => behaviour identical to headless.

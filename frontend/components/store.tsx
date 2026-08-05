@@ -29,6 +29,8 @@ import {
   type Command,
   type Host,
   type LogEntry,
+  type MemoryGraph,
+  type NoteKind,
   type Project,
   type Schedule,
   type SharedContext,
@@ -43,6 +45,7 @@ export type Section =
   | "servers"
   | "activity"
   | "shared"
+  | "memory"
   | "claude";
 
 /* The claude web-login flow, driven through the login_start / login_submit commands.
@@ -98,6 +101,8 @@ interface StoreValue {
   commands: Command[];
   schedules: Schedule[];
   shared: { log: LogEntry[]; context: SharedContext[] };
+  /* The whole note graph (scoped client-side by the Memory section's project filter). */
+  memory: MemoryGraph;
 
   cmd: CmdState;
   lastError: string;
@@ -123,6 +128,13 @@ interface StoreValue {
   deleteSchedule: (id: number) => Promise<void>;
   pollCi: () => Promise<void>;
   setSharedKey: (key: string, value: string) => Promise<boolean>;
+
+  // Memory (notes + links; direct writes like the Claude management pages)
+  createMemoryNote: (b: MemoryNoteBody) => Promise<boolean>;
+  updateMemoryNote: (id: number, b: Partial<MemoryNoteBody>) => Promise<boolean>;
+  deleteMemoryNote: (id: number) => Promise<void>;
+  createMemoryLink: (src: number, dst: number, relation: string) => Promise<boolean>;
+  deleteMemoryLink: (id: number) => Promise<void>;
 
   // Claude web-login
   claudeLogin: ClaudeLoginState;
@@ -252,6 +264,15 @@ export interface HostBody {
   generate_ssh_key: boolean;
 }
 
+export interface MemoryNoteBody {
+  title: string;
+  body: string;
+  kind: NoteKind;
+  /* Project scope as a select value; "" = a global note. */
+  project_id: string;
+  tags: string[];
+}
+
 const Ctx = createContext<StoreValue | null>(null);
 
 export function useDashboard(): StoreValue {
@@ -302,6 +323,7 @@ export function DashboardProvider({
     log: [],
     context: [],
   });
+  const [memory, setMemory] = useState<MemoryGraph>({ notes: [], links: [] });
   const [cmd, setCmd] = useState<CmdState>({ text: "", error: false, busy: false });
   const [lastError, setLastError] = useState("");
   const [loading, setLoading] = useState(true);
@@ -453,6 +475,14 @@ export function DashboardProvider({
     }
   }, []);
 
+  const loadMemory = useCallback(async () => {
+    try {
+      setMemory(await clientRef.current.api<MemoryGraph>("/memory/graph"));
+    } catch (e) {
+      swallow(e);
+    }
+  }, []);
+
   /* Models load separately from the rest of the Claude page: the Agents section's spawn
    * dropdown needs them too, without dragging skills/connectors along. */
   const loadClaudeModels = useCallback(async () => {
@@ -505,8 +535,9 @@ export function DashboardProvider({
     if (s === "activity") await loadCommands();
     if (s === "schedules") await loadSchedules();
     if (s === "shared") await loadShared();
+    if (s === "memory") await loadMemory();
     if (s === "claude") await loadClaude();
-  }, [loadAgents, loadRun, loadApprovals, loadHosts, loadCommands, loadSchedules, loadShared, loadClaude, loadClaudeModels]);
+  }, [loadAgents, loadRun, loadApprovals, loadHosts, loadCommands, loadSchedules, loadShared, loadMemory, loadClaude, loadClaudeModels]);
 
   // Initial load + polling loop. The first tick populates projects *and* agents (and the
   // active section) up front, so the Runs inbox is filled without waiting a poll interval.
@@ -536,9 +567,10 @@ export function DashboardProvider({
       if (s === "activity") void loadCommands();
       if (s === "schedules") void loadSchedules();
       if (s === "shared") void loadShared();
+      if (s === "memory") void loadMemory();
       if (s === "claude") void loadClaude();
     },
-    [loadApprovals, loadHosts, loadCommands, loadSchedules, loadShared, loadClaude, loadClaudeModels],
+    [loadApprovals, loadHosts, loadCommands, loadSchedules, loadShared, loadMemory, loadClaude, loadClaudeModels],
   );
 
   const selectProject = useCallback(
@@ -1281,6 +1313,92 @@ export function DashboardProvider({
     [loadShared],
   );
 
+  // ---- memory actions (direct writes, admin token; mirror the shared/claude style) ----
+  const memoryWrite = useCallback(
+    async (fn: () => Promise<unknown>, okText: string) => {
+      try {
+        await fn();
+        setCmd({ text: okText, error: false, busy: false });
+        await loadMemory();
+        return true;
+      } catch (e) {
+        if (e instanceof AuthError) return false;
+        setCmd({ text: (e as Error).message, error: true, busy: false });
+        return false;
+      }
+    },
+    [loadMemory],
+  );
+
+  const createMemoryNote = useCallback(
+    (b: MemoryNoteBody) =>
+      memoryWrite(
+        () =>
+          clientRef.current.api("/memory/notes", {
+            body: {
+              title: b.title,
+              body: b.body,
+              kind: b.kind,
+              project_id: b.project_id || null,
+              tags: b.tags.length ? b.tags : null,
+            },
+          }),
+        "note saved",
+      ),
+    [memoryWrite],
+  );
+
+  const updateMemoryNote = useCallback(
+    (id: number, b: Partial<MemoryNoteBody>) =>
+      memoryWrite(
+        () =>
+          clientRef.current.api(`/memory/notes/${id}`, {
+            method: "PATCH",
+            body: {
+              ...(b.title !== undefined ? { title: b.title } : {}),
+              ...(b.body !== undefined ? { body: b.body } : {}),
+              ...(b.kind !== undefined ? { kind: b.kind } : {}),
+              ...(b.project_id !== undefined ? { project_id: b.project_id || null } : {}),
+              ...(b.tags !== undefined ? { tags: b.tags.length ? b.tags : null } : {}),
+            },
+          }),
+        "note updated",
+      ),
+    [memoryWrite],
+  );
+
+  const deleteMemoryNote = useCallback(
+    async (id: number) => {
+      await memoryWrite(
+        () => clientRef.current.api(`/memory/notes/${id}`, { method: "DELETE" }),
+        "note deleted",
+      );
+    },
+    [memoryWrite],
+  );
+
+  const createMemoryLink = useCallback(
+    (src: number, dst: number, relation: string) =>
+      memoryWrite(
+        () =>
+          clientRef.current.api("/memory/links", {
+            body: { src_note_id: src, dst_note_id: dst, relation: relation || "relates_to" },
+          }),
+        "notes linked",
+      ),
+    [memoryWrite],
+  );
+
+  const deleteMemoryLink = useCallback(
+    async (id: number) => {
+      await memoryWrite(
+        () => clientRef.current.api(`/memory/links/${id}`, { method: "DELETE" }),
+        "link removed",
+      );
+    },
+    [memoryWrite],
+  );
+
   const value: StoreValue = {
     section,
     setSection,
@@ -1301,6 +1419,7 @@ export function DashboardProvider({
     commands,
     schedules,
     shared,
+    memory,
     cmd,
     lastError,
     loading,
@@ -1322,6 +1441,11 @@ export function DashboardProvider({
     deleteSchedule,
     pollCi,
     setSharedKey,
+    createMemoryNote,
+    updateMemoryNote,
+    deleteMemoryNote,
+    createMemoryLink,
+    deleteMemoryLink,
     claudeLogin,
     startClaudeLogin,
     submitClaudeCode,

@@ -209,6 +209,37 @@ export interface ClaudePermissions {
   base_allow: string[];
 }
 
+/* ---- agent memory (the Memory page's note graph) ---- */
+
+export type NoteKind = "fact" | "decision" | "gotcha" | "runbook";
+
+export interface MemoryNote {
+  id: number;
+  project_id?: string | null; // null = global note
+  agent_id?: number | null; // authoring agent; null = operator-authored
+  title: string;
+  body: string;
+  kind: string;
+  tags?: string[] | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MemoryLink {
+  id: number;
+  src_note_id: number;
+  dst_note_id: number;
+  relation: string;
+  created_by_agent_id?: number | null;
+  created_at: string;
+}
+
+/* Everything the graph view draws, in one response (GET /memory/graph). */
+export interface MemoryGraph {
+  notes: MemoryNote[];
+  links: MemoryLink[];
+}
+
 export interface SharedContext {
   key: string;
   value: string;

@@ -1,6 +1,7 @@
 """Hook dispatch: ``python -m handler.hooks <event>``.
 
-Events: ``stop``, ``session_end``, ``pre_tool_use``, ``notification``. Reads the event
+Events: ``stop``, ``session_end``, ``session_start``, ``pre_tool_use``,
+``notification``. Reads the event
 JSON on stdin, resolves the acting agent, dispatches, and exits 0. A resolution failure
 or unexpected error exits nonzero with a stderr message but never crashes the agent's
 turn in a way that loses data.
@@ -11,10 +12,10 @@ from __future__ import annotations
 import sys
 
 from ..db.engine import connection
-from . import checkpoint, gate, notify
+from . import checkpoint, gate, memory_ctx, notify
 from .context import read_input, resolve_identity
 
-_EVENTS = {"stop", "session_end", "pre_tool_use", "notification"}
+_EVENTS = {"stop", "session_end", "session_start", "pre_tool_use", "notification"}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -34,6 +35,8 @@ def main(argv: list[str] | None = None) -> int:
 
         if event in ("stop", "session_end"):
             checkpoint.handle(conn, ident, hook_input)
+        elif event == "session_start":
+            memory_ctx.handle(conn, ident, hook_input)
         elif event == "pre_tool_use":
             gate.handle(conn, ident, hook_input)
         elif event == "notification":

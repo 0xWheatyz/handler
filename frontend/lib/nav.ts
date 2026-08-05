@@ -18,6 +18,7 @@ export const NAV_ROUTES: NavRoute[] = [
   { key: "servers", href: "/servers", label: "Git Servers" },
   { key: "activity", href: "/activity", label: "Activity" },
   { key: "shared", href: "/shared", label: "Shared" },
+  { key: "memory", href: "/memory", label: "Memory" },
   { key: "claude", href: "/claude", label: "Claude" },
 ];
 

@@ -362,6 +362,21 @@ All routes require `Authorization: Bearer <AUTH_TOKEN>`. `GET /health` is unauth
 | `GET /shared/log` | Cross-project feed of entries explicitly marked `global` |
 | `GET /shared/context` · `GET /shared/context/:key` | Read shared key/value facts |
 | `PUT /shared/context/:key` | Write a shared fact — requires the shared-write token |
+| `GET /memory/notes` · `GET /memory/notes/:id` | Memory notes (`?project_id=` scopes, `?q=` searches) |
+| `GET /memory/graph` | The whole note graph (notes + links) in one read |
+| `POST`/`PATCH`/`DELETE /memory/notes…` · `POST`/`DELETE /memory/links…` | Author notes/links — requires the admin token |
+
+## Agent memory
+
+The distilled, linked knowledge layer over the raw log/transcript history: **notes**
+(facts, decisions, gotchas, runbooks) scoped to a project or global, connected by
+**links** into a graph the dashboard's Memory page draws. Every launch gets the bundled
+`handler-memory` MCP server (injected into `--mcp-config` as
+`python -m handler.mcpserver`, no operator setup), exposing `memory_search`,
+`memory_get`, `memory_save`, and `memory_link`; a `SessionStart` hook injects the most
+recent notes in scope, so knowledge from earlier runs arrives without being asked.
+Notes live only in the database — like everything else, they survive disposable
+workers by construction — and deleting an agent never deletes what it learned.
 
 ## Hooks
 
@@ -382,6 +397,9 @@ Wired into each agent as `python -m handler.hooks <event>`:
   is denied on the first failure.
 - **`Notification`** — POSTs a small JSON payload to `WEBHOOK_URL` (no-op when unset).
   Never blocks the agent on delivery failure.
+- **`SessionStart`** — memory recall: injects the most recent memory notes in the
+  agent's scope (its project + global) as additional context, plus a pointer at the
+  handler-memory MCP tools. Best-effort; never blocks the session.
 
 Hook identity travels via environment variables injected at spawn (`HANDLER_AGENT_ID`,
 `HANDLER_PROJECT_ID`, `HANDLER_AGENT_NAME`, `HANDLER_AGENT_ROLE`, `DATABASE_URL`), since

@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import sys
 
 from sqlalchemy import Connection
 
@@ -63,6 +64,20 @@ def write_mcp_config(working_dir: str, connectors: list[dict]) -> str | None:
     with open(path, "w") as fh:
         json.dump(config, fh, indent=2)
     return path
+
+
+def memory_server_connector() -> dict:
+    """The built-in handler-memory MCP server, shaped like a connector row so it flows
+    through ``write_mcp_config`` unchanged. Runs under the worker's own interpreter (the
+    subprocess inherits the agent's spawn env, so identity + DATABASE_URL arrive the
+    same way they do for hooks). Injected ahead of the DB connectors — an operator row
+    named ``handler-memory`` deliberately overrides it."""
+    return {
+        "name": "handler-memory",
+        "transport": "stdio",
+        "command": sys.executable,
+        "args": ["-m", "handler.mcpserver"],
+    }
 
 
 def _skills_root(home: str | None = None) -> str:
@@ -144,6 +159,6 @@ def apply(working_dir: str, conn: Connection | None = None) -> dict:
     else:
         connectors = repo.list_claude_connectors(conn, enabled_only=True)
         skills = _load_skills(conn)
-    mcp_path = write_mcp_config(working_dir, connectors)
+    mcp_path = write_mcp_config(working_dir, [memory_server_connector()] + connectors)
     written = sync_user_skills(skills)
     return {"mcp_config": mcp_path, "skills_written": len(written)}

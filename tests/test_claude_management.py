@@ -434,9 +434,11 @@ def test_spawn_applies_managed_config(env, fake_launch):
     agent = spawn.spawn("proj", "api", task="do it")
     wd = agent["working_dir"]
 
-    # Disabled connectors are excluded from the generated --mcp-config file.
+    # Disabled connectors are excluded from the generated --mcp-config file; the
+    # built-in handler-memory server is always injected ahead of the DB connectors.
     mcp = json.loads(open(claude_gen.mcp_config_path(wd)).read())
-    assert list(mcp["mcpServers"]) == ["github"]
+    assert list(mcp["mcpServers"]) == ["handler-memory", "github"]
+    assert mcp["mcpServers"]["handler-memory"]["args"] == ["-m", "handler.mcpserver"]
     # Skills synced to the (test-scoped) user-level dir.
     skill = os.path.join(str(env["tmp"]), ".claude", "skills", "deploy", "SKILL.md")
     assert os.path.exists(skill)
