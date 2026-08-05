@@ -32,9 +32,15 @@ dev = [
 handler = "handler.control.cli:main"
 
 [tool.hatch.build.targets.wheel]
-# The bundled web UI (src/handler/api/static/*) ships automatically: it lives inside the
-# packaged `src/handler` tree, and hatchling includes non-.py files there by default.
+# The web UI ships whenever src/handler/api/static/ exists at build time: hatchling
+# includes non-.py files in the packaged `src/handler` tree by default. The export is a
+# generated artifact (gitignored) — `npm run export` produces it for source installs,
+# and the Docker image's ui stage builds it before pip install. Absent the directory,
+# the API simply runs headless (it only mounts static/ when present).
 packages = ["src/handler"]
+# Hatchling skips VCS-ignored files; `artifacts` re-includes the (gitignored) export so
+# a build that has one still ships it.
+artifacts = ["/src/handler/api/static"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
