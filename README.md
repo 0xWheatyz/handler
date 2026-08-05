@@ -498,9 +498,17 @@ the API (same contract as `curl`): the browser prompts for the token once, store
 `localStorage`, and attaches it to every call. All API values render as React text
 (never `dangerouslySetInnerHTML`) so agent-authored strings can't inject markup.
 
-The build output is committed to `src/handler/api/static/` so the Python wheel ships it and
-FastAPI serves it same-origin — there is no separate frontend server and no node step in the
-Docker image. Rebuild after changing the UI:
+The build output lands in `src/handler/api/static/`, which FastAPI serves same-origin —
+there is no separate frontend server. The export is a **generated artifact and is
+gitignored**, not committed: tracked builds guaranteed merge conflicts (Next's
+content-hashed chunk names churn on every build) and let the served UI drift from its
+source. It gets built in one of two places:
+
+- **Docker** (the normal path): the [`Dockerfile`](Dockerfile)'s `ui` stage runs
+  `npm ci && npm run build` and copies the export into the packaged tree, so the image
+  published by [`docker.yml`](.github/workflows/docker.yml) always carries a UI built
+  from exactly the source in that commit.
+- **Source installs**: build it yourself before (or after) `pip install`:
 
 ```bash
 cd frontend
@@ -508,6 +516,9 @@ npm install
 npm run build            # static export → frontend/out/
 npm run export           # build, then sync frontend/out/ → src/handler/api/static/
 ```
+
+Without that step a source install still works — the API only mounts `static/` when the
+directory exists, so it just runs headless (API-only).
 
 `npm run dev` runs the UI against a live API on another origin — set
 `NEXT_PUBLIC_API_BASE=http://127.0.0.1:8000` and enable `CORS_ORIGINS` on the API.
@@ -523,7 +534,7 @@ src/handler/
                        # forge/gitops seams, credentials, skills_gen, CI poller
   hooks/               # Stop/SessionEnd, PreToolUse gate (push + approval), Notification
   migrations/          # Alembic env + versions
-  api/static/          # built Next.js export (generated — see frontend/)
+  api/static/          # built Next.js export (generated + gitignored — see frontend/)
 frontend/              # Next.js dashboard source (builds to api/static/)
 tests/                 # DB, API, hook, and control tests (SQLite)
 docs/PLAN.md           # full design + phased roadmap (the original plan of action)

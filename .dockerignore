@@ -1,5 +1,6 @@
 # Keep the build context to what the image actually needs: pyproject.toml,
-# README.md (referenced by pyproject), src/, alembic.ini, docker-entrypoint.sh.
+# README.md (referenced by pyproject), src/, frontend/ (source only — the ui stage
+# builds it), alembic.ini, docker-entrypoint.sh.
 .git
 .github
 .venv
@@ -19,3 +20,10 @@ Dockerfile.control
 docker-compose.yml
 .dockerignore
 .mise.toml
+# Frontend artifacts: the ui stage runs npm ci / npm run build itself, and a stale
+# local export must never leak in — COPY into src/handler/api/static merges, so any
+# checkout copy would ship alongside the fresh build.
+frontend/node_modules
+frontend/out
+frontend/.next
+src/handler/api/static

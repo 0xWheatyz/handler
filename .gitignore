@@ -223,3 +223,9 @@ __marimo__/
 
 # Handler runtime artifacts
 /handler.db
+
+# Built web UI — a generated artifact, never committed. Local/manual installs produce it
+# with `npm run export` (see README "Frontend"); the Docker image builds it in its own
+# node stage. Tracking it caused guaranteed merge conflicts: Next's content-hashed chunk
+# names churn on every build, so any two branches touching frontend/ collided here.
+/src/handler/api/static/

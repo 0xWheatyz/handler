@@ -1,5 +1,17 @@
 # syntax=docker/dockerfile:1
 
+# ---- ui stage: build the dashboard's static export ----
+# The export is a generated artifact (gitignored), so the image builds it here rather
+# than trusting the checkout to carry it. package*.json is copied alone first so the
+# npm ci layer caches until the lockfile actually changes.
+FROM node:20-slim AS ui
+
+WORKDIR /ui
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci --no-audit --no-fund
+COPY frontend ./
+RUN npm run build
+
 # ---- build stage: install the package + deps into an isolated venv ----
 FROM python:3.11-slim AS builder
 
@@ -12,6 +24,10 @@ ENV PATH="/opt/venv/bin:$PATH"
 WORKDIR /build
 COPY pyproject.toml README.md ./
 COPY src ./src
+# Drop the built UI into the packaged tree before pip install: hatchling ships every
+# non-.py file under src/handler, so the wheel carries the export and FastAPI serves it
+# same-origin — exactly what committing src/handler/api/static used to provide.
+COPY --from=ui /ui/out ./src/handler/api/static
 RUN pip install .
 
 # ---- runtime stage ----
