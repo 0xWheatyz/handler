@@ -134,7 +134,9 @@ completion gate never sees generated files:
   `PI_CONTEXT_WINDOW`, and `PI_MAX_TOKENS` tune it; everything else in the env map
   passes through to the process.
 - **`extensions/handler-bridge.ts`** — the bundled bridge extension that adapts pi's
-  events to the same `python -m handler.hooks` contract claude uses. The gates are the
+  events to the same `python -m handler.hooks` contract claude uses. It also activates
+  pi's full built-in tool set — `read`, `write`, `edit`, `bash`, plus `grep`, `find`,
+  and `ls`, which pi leaves off by default — alongside the handler tools it registers. The gates are the
   *same tested Python code*: the Stop/completion gate re-prompts pi with the blockers,
   `git push` runs the test + image-build + protected-branch approval gates and denies on
   failure, and questions go through an `ask_operator` tool that pauses the agent for the

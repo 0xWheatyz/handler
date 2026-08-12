@@ -84,6 +84,14 @@ export default function (pi: ExtensionAPI) {
 	let stopRounds = 0;
 	let lastAssistantText = "";
 
+	// Tool parity with the claude harness: pi ships read/write/edit/bash active and
+	// leaves grep/find/ls off by default. Enable everything registered — the built-ins
+	// plus this bridge's own tools. (The --tools flag can't do this: it is a strict
+	// allowlist that would drop extension tools.)
+	pi.on("session_start", async () => {
+		pi.setActiveTools(pi.getAllTools().map((t) => t.name));
+	});
+
 	// ---- memory recall at session start (claude's SessionStart hook) ----------------
 	pi.on("before_agent_start", async () => {
 		if (contextInjected) return;

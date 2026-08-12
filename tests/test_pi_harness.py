@@ -106,6 +106,9 @@ def test_write_config_renders_provider_and_bridge(pi_env, tmp_path):
     assert "handler.hooks" in text
     assert "handler.mcpserver" in text
     assert "ask_operator" in text
+    # Tool parity: the bridge activates pi's full built-in set (grep/find/ls are off
+    # by default) alongside its own tools.
+    assert "setActiveTools" in text
     assert (base / "APPEND_SYSTEM.md").read_text().strip()
 
 
