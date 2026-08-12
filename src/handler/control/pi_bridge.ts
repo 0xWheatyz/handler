@@ -19,7 +19,8 @@
  * It also registers the memory tools (memory_search/get/save/link) that claude agents
  * reach over MCP, by shelling to `python -m handler.mcpserver --call <tool>` — pi has
  * no MCP by design, and a subprocess inheriting the agent env is the same trust model
- * the MCP server used anyway.
+ * the MCP server used anyway — plus web_search/web_fetch (`python -m handler.webtool`),
+ * because pi ships no web tools and claude's live server-side at Anthropic.
  *
  * Identity and configuration arrive via the spawn environment, exactly like hooks:
  * HANDLER_AGENT_ID / HANDLER_PROJECT_ID / HANDLER_AGENT_NAME / DATABASE_URL, plus
@@ -57,17 +58,25 @@ function runHook(event: string, payload: Record<string, unknown>, timeoutMs = HO
 	}
 }
 
-function callMemory(tool: string, args: Record<string, unknown>): string {
-	const res = spawnSync(PYTHON, ["-m", "handler.mcpserver", "--call", tool], {
+function callPython(moduleArgs: string[], toolName: string, args: Record<string, unknown>): string {
+	const res = spawnSync(PYTHON, moduleArgs, {
 		input: JSON.stringify(args ?? {}),
 		encoding: "utf8",
 		timeout: 60_000,
 	});
 	if (res.error || res.status !== 0) {
 		const detail = res.error ? String(res.error) : (res.stderr || "").slice(-2000);
-		throw new Error(`${tool} failed: ${detail}`);
+		throw new Error(`${toolName} failed: ${detail}`);
 	}
 	return (res.stdout || "").trim() || "{}";
+}
+
+function callMemory(tool: string, args: Record<string, unknown>): string {
+	return callPython(["-m", "handler.mcpserver", "--call", tool], tool, args);
+}
+
+function callWeb(tool: string, args: Record<string, unknown>): string {
+	return callPython(["-m", "handler.webtool", tool], tool, args);
 }
 
 function permissionDeny(out: any): string | null {
@@ -250,6 +259,44 @@ export default function (pi: ExtensionAPI) {
 			...tool,
 			async execute(_toolCallId: string, params: Record<string, unknown>) {
 				const text = callMemory(tool.name, params ?? {});
+				return { content: [{ type: "text", text }], details: {} };
+			},
+		});
+	}
+
+	// ---- web tools (handler.webtool — pi ships none, claude's are Anthropic-server-side)
+	const webTools: Array<{ name: string; label: string; description: string; parameters: any }> = [
+		{
+			name: "web_search",
+			label: "Web search",
+			description:
+				"Search the web. Returns titles, URLs, and snippets; follow up with web_fetch " +
+				"to read a promising result in full. Provider is operator-configured " +
+				"(SearXNG / Brave / DuckDuckGo fallback).",
+			parameters: Type.Object({
+				query: Type.String({ description: "The search query" }),
+				limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 10 })),
+			}),
+		},
+		{
+			name: "web_fetch",
+			label: "Web fetch",
+			description:
+				"Fetch a URL and return its readable text (HTML is stripped; other content " +
+				"types come back as-is, truncated). Use for docs, changelogs, issues, articles.",
+			parameters: Type.Object({
+				url: Type.String({ description: "The http(s) URL to fetch" }),
+				max_chars: Type.Optional(
+					Type.Integer({ minimum: 1000, maximum: 100000, description: "Text cap (default 20000)" }),
+				),
+			}),
+		},
+	];
+	for (const tool of webTools) {
+		pi.registerTool({
+			...tool,
+			async execute(_toolCallId: string, params: Record<string, unknown>) {
+				const text = callWeb(tool.name, params ?? {});
 				return { content: [{ type: "text", text }], details: {} };
 			},
 		});

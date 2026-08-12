@@ -143,6 +143,10 @@ completion gate never sees generated files:
   normal answer/resume flow. Memory recall is injected at session start, and the memory
   tools (`memory_search/get/save/link`) are registered directly — pi has no MCP by
   design, so the bridge shells to `python -m handler.mcpserver --call <tool>` instead.
+  The bridge also registers **`web_search` / `web_fetch`** (`python -m handler.webtool`):
+  pi ships no web tools and claude's live server-side at Anthropic, so these are
+  handler-owned — fetch is plain HTTP + HTML-to-text with no provider needed, and search
+  resolves `SEARXNG_URL` → `BRAVE_SEARCH_API_KEY` → a zero-config DuckDuckGo fallback.
 - **`APPEND_SYSTEM.md`** — the handler conventions (completion contract, ask_operator,
   memory usage) appended to pi's system prompt.
 
@@ -158,8 +162,8 @@ whichever worker claims the resume, continued by launching pi again on the same 
 ### What differs from the claude harness
 
 - **MCP connectors and plugins don't apply** — pi has no MCP client or plugin system.
-  The bundled memory server is bridged as native tools; other connectors are
-  claude-harness-only for now.
+  The bundled memory server and the web tools are bridged as native tools; other
+  connectors are claude-harness-only for now.
 - **Permission modes don't apply** — pi has no permission system. The hard gates
   (PreToolUse-equivalent blocking, Stop gate) are enforced by the bridge, which is the
   layer handler actually relies on for claude too.

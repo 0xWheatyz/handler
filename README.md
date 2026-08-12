@@ -130,6 +130,7 @@ Configuration is entirely environment-driven (see [`.env.example`](.env.example)
 | `SHARED_CONTEXT_WRITE_TOKEN` | Higher-trust token gating `PUT /shared/context/:key` | falls back to `AUTH_TOKEN` |
 | `ADMIN_TOKEN` | Gates the web control surface (enqueue commands, project/host CRUD, credential edits) | falls back to `AUTH_TOKEN` |
 | `WEBHOOK_URL` | Generic target for the `Notification` hook (ntfy, Slack, …) | unset → no-op |
+| `SEARXNG_URL` / `BRAVE_SEARCH_API_KEY` | Provider for the agents' `web_search` tool (pi harness) | unset → DuckDuckGo fallback |
 | `HANDLER_SECRET_KEY` | Fernet key encrypting git-server tokens + SSH keys at rest (set the same value on API and control) | unset → secret store disabled |
 | `PROJECTS_ROOT` | Base dir for per-project roots / worktrees / auto-clones | `./projects` |
 | `CLAUDE_BIN` / `PI_BIN` / `MISE_BIN` / `TMUX_BIN` / `FORGE_BIN` / `GIT_BIN` | Binary overrides | `claude` / `pi` / `mise` / `tmux` / `forge` / `git` |
