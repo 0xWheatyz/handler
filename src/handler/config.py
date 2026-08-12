@@ -46,6 +46,7 @@ class Settings(BaseSettings):
 
     # Binary overrides so tests/CI can point at fakes.
     claude_bin: str = "claude"
+    pi_bin: str = "pi"
     mise_bin: str = "mise"
     tmux_bin: str = "tmux"
     forge_bin: str = "forge"

@@ -22,6 +22,7 @@ from . import (
     headless,
     mise,
     models,
+    pi_harness,
     reposync,
     settings_gen,
     worktree,
@@ -139,7 +140,7 @@ def spawn(
         # Same fail-fast contract as credentials: a selected model backend that is
         # missing, disabled, or undecryptable refuses the spawn before any row exists.
         try:
-            models.resolve_model_env(conn, model_id, require_enabled=True)
+            models.resolve_model(conn, model_id, require_enabled=True)
         except models.ModelError as exc:
             raise SpawnError(str(exc)) from exc
 
@@ -155,9 +156,10 @@ def spawn(
 
     settings_path = settings_gen.write_settings(working_dir)
     # Materialize the web-managed Claude config (MCP connectors + user-level skills)
-    # so this launch picks up what the operator configured in the dashboard.
+    # so this launch picks up what the operator configured in the dashboard. The skills
+    # half also feeds pi-harness agents (their settings.json points at the same dir).
     claude_gen.apply(working_dir)
-    env = _agent_env(project, agent, token, role=role, mise_init=mise_init)
+    env, harness = _agent_env(project, agent, token, role=role, mise_init=mise_init)
 
     # Verify the pinned forge version, if one is configured. Non-fatal: a version drift
     # is recorded as a warning rather than blocking the spawn, since not every agent
@@ -171,6 +173,7 @@ def spawn(
         settings_path=settings_path,
         env=env,
         worker_id=worker_id or f"cli-{os.getpid()}",
+        harness=harness,
     )
     agent = {**agent, "forge_note": forge_note, "sync_note": sync_note}
     return agent
@@ -183,10 +186,11 @@ def _agent_env(
     *,
     role: str | None = None,
     mise_init: bool = False,
-) -> dict[str, str]:
-    """The environment an agent process (and therefore its hooks) runs with: identity,
-    ``DATABASE_URL``, and resolved forge/git credentials. Shared by spawn and the
-    headless resume path (a resume is a brand-new process needing the same env)."""
+) -> tuple[dict[str, str], str]:
+    """The environment an agent process (and therefore its hooks) runs with — identity,
+    ``DATABASE_URL``, and resolved forge/git credentials — plus which harness launches
+    it. Shared by spawn and the headless resume path (a resume is a brand-new process
+    needing the same env)."""
     env = {
         "HANDLER_PROJECT_ID": project["id"],
         "HANDLER_AGENT_NAME": agent["name"],
@@ -202,13 +206,22 @@ def _agent_env(
     # A short read connection lets credential/host resolution consult the forge_hosts
     # registry (falling back to the built-in host map when a host has no row).
     with connection() as conn:
-        # Agent pinned to a model backend: point the claude binary at it. Resumes are a
+        # Agent pinned to a model backend: point its harness at it. Resumes are a
         # brand-new process, so this is what keeps an agent on the backend it started on
         # (a since-disabled backend may still finish; a deleted one fails loudly).
         try:
-            env.update(models.resolve_model_env(conn, agent.get("model_id")))
+            resolved = models.resolve_model(conn, agent.get("model_id"))
         except models.ModelError as exc:
             raise SpawnError(str(exc)) from exc
+        harness = models.harness_of(resolved)
+        if harness == "pi":
+            row, key = resolved
+            # The pi config dir is regenerated per launch, same contract as the claude
+            # settings/skills materialization — a row edit reaches the next run.
+            pi_harness.write_config(agent["working_dir"], row, key)
+            env.update(pi_harness.agent_env(agent["working_dir"], row))
+        else:
+            env.update(models.claude_env(resolved))
         env.update(credentials.credential_env(token, project.get("git_remote"), conn))
         if token:
             _install_git_credentials(agent["working_dir"], project.get("git_remote"), conn)
@@ -217,7 +230,7 @@ def _agent_env(
             env.update(reposync.ssh_env(project.get("git_remote"), conn))
         except reposync.SyncError as exc:
             raise SpawnError(str(exc)) from exc
-    return env
+    return env, harness
 
 
 def _check_forge_version(working_dir: str) -> str | None:
@@ -278,20 +291,23 @@ def resume(agent: dict, answer: str, worker_id: str | None = None) -> tuple[bool
             token = credentials.resolve_for_project(project, conn)
     except credentials.CredentialError as exc:
         return False, str(exc)
-    env = _agent_env(project, agent, token)
+    env, harness = _agent_env(project, agent, token)
 
     if not agent.get("session_id"):
         # Pre-headless agent row (or a spawn that never launched): nothing to --resume.
-        return _resume_reinjected(agent, answer, settings_path, env, worker_id)
+        return _resume_reinjected(agent, answer, settings_path, env, worker_id, harness)
 
-    transcript = headless.session_dir(working_dir) / f"{agent['session_id']}.jsonl"
+    if harness == "pi":
+        transcript = pi_harness.session_file(working_dir, agent["session_id"])
+    else:
+        transcript = headless.session_dir(working_dir) / f"{agent['session_id']}.jsonl"
     if archive is not None:
         try:
-            headless.materialize_session(working_dir, bytes(archive["archive"]))
+            headless.materialize_session(working_dir, bytes(archive["archive"]), harness=harness)
         except (OSError, ValueError) as exc:
             return False, f"could not materialize session archive: {exc}"
     elif not transcript.exists():
-        return _resume_reinjected(agent, answer, settings_path, env, worker_id)
+        return _resume_reinjected(agent, answer, settings_path, env, worker_id, harness)
 
     try:
         run = headless.launch(
@@ -301,6 +317,7 @@ def resume(agent: dict, answer: str, worker_id: str | None = None) -> tuple[bool
             settings_path=settings_path,
             env=env,
             worker_id=worker_id,
+            harness=harness,
         )
     except repo.RunConflictError:
         # Another worker won the race for this resume (two queued resume commands, or a
@@ -311,7 +328,12 @@ def resume(agent: dict, answer: str, worker_id: str | None = None) -> tuple[bool
 
 
 def _resume_reinjected(
-    agent: dict, answer: str, settings_path: str, env: dict, worker_id: str
+    agent: dict,
+    answer: str,
+    settings_path: str,
+    env: dict,
+    worker_id: str,
+    harness: str = "claude",
 ) -> tuple[bool, str]:
     """Degraded resume: no transcript anywhere, so start a fresh session with the
     context rebuilt from the DB. Continuity is approximate — say so in the event log."""
@@ -341,6 +363,7 @@ def _resume_reinjected(
             settings_path=settings_path,
             env=env,
             worker_id=worker_id,
+            harness=harness,
         )
     except repo.RunConflictError:
         return False, "another worker is already running this agent's session"

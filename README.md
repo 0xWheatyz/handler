@@ -132,7 +132,7 @@ Configuration is entirely environment-driven (see [`.env.example`](.env.example)
 | `WEBHOOK_URL` | Generic target for the `Notification` hook (ntfy, Slack, …) | unset → no-op |
 | `HANDLER_SECRET_KEY` | Fernet key encrypting git-server tokens + SSH keys at rest (set the same value on API and control) | unset → secret store disabled |
 | `PROJECTS_ROOT` | Base dir for per-project roots / worktrees / auto-clones | `./projects` |
-| `CLAUDE_BIN` / `MISE_BIN` / `TMUX_BIN` / `FORGE_BIN` / `GIT_BIN` | Binary overrides | `claude` / `mise` / `tmux` / `forge` / `git` |
+| `CLAUDE_BIN` / `PI_BIN` / `MISE_BIN` / `TMUX_BIN` / `FORGE_BIN` / `GIT_BIN` | Binary overrides | `claude` / `pi` / `mise` / `tmux` / `forge` / `git` |
 | `FORGE_VERSION` | Pinned forge version verified at spawn (Phase 2) | unset → skip check |
 | `PROTECTED_BRANCHES` | Branches a direct push needs an approval to reach (Phase 2) | `main,master` |
 
@@ -257,14 +257,18 @@ What the dashboard can now do (all state-changing actions require `ADMIN_TOKEN`)
 - **Claude** — the management page for the Claude Code install agents run on. The account
   login lives here (see below), plus web-managed **model backends**, **skills**,
   **MCP connectors**, **plugins**, and **permission overrides**. Model backends are
-  Anthropic-API-compatible endpoints (a local Qwen/Llama behind LiteLLM or
-  claude-code-router, an LLM gateway) offered in the spawn form's **Model** dropdown next
-  to the Claude subscription: the same `claude` binary is pointed at the endpoint via
-  `ANTHROPIC_BASE_URL`/`ANTHROPIC_MODEL` env at launch, so hooks, skills, connectors, and
-  gates apply unchanged, and the agent stays pinned to its backend across resumes. API
-  keys are stored encrypted (`HANDLER_SECRET_KEY`) and never returned. See
-  [`docs/local-models.md`](docs/local-models.md) for working local stacks (and why bare
-  OpenAI-compatible servers break tool calling). These are plain DB rows the control container
+  alternative endpoints offered in the spawn form's **Model** dropdown next to the
+  Claude subscription, and each picks a **harness**: `claude` (the same `claude` binary
+  pointed at an Anthropic-API-compatible endpoint — a local model behind LiteLLM or
+  claude-code-router, an LLM gateway — via `ANTHROPIC_BASE_URL`/`ANTHROPIC_MODEL` env at
+  launch) or `pi` (the lightweight [pi coding agent](https://github.com/badlogic/pi-mono),
+  which speaks bare OpenAI-compatible endpoints — vLLM, llama.cpp, Ollama — natively, no
+  translation proxy, with handler's hooks/gates/memory/skills bridged in via a bundled pi
+  extension). Either way hooks, skills, and gates apply, and the agent stays pinned to
+  its backend across resumes. API keys are stored encrypted (`HANDLER_SECRET_KEY`) and
+  never returned. See [`docs/local-models.md`](docs/local-models.md) for working local
+  stacks (and why bare OpenAI-compatible servers break tool calling *on the claude
+  harness*). These are plain DB rows the control container
   applies at every launch: skills sync to each worker's user-level `~/.claude/skills`
   (marker-file managed, so hand-installed skills survive), enabled connectors become the
   run's `--mcp-config` file (nothing lands in the repo tree), and plugins/permissions fold

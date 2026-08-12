@@ -506,10 +506,16 @@ const emptyModel = {
   base_url: "",
   model: "",
   small_fast_model: "",
+  harness: "claude" as "claude" | "pi",
   api_key: "",
   env: "",
   enabled: true,
 };
+
+const HARNESS_OPTS = [
+  { value: "claude", label: "claude — Anthropic-compatible endpoint (LiteLLM/gateway)" },
+  { value: "pi", label: "pi — bare OpenAI-compatible endpoint (vLLM/llama.cpp/Ollama)" },
+];
 
 function ModelsPanel() {
   const s = useDashboard();
@@ -527,6 +533,7 @@ function ModelsPanel() {
       base_url: form.base_url.trim(),
       model: form.model.trim(),
       small_fast_model: form.small_fast_model.trim() || null,
+      harness: form.harness,
       api_key: form.api_key.trim() || null,
       env: parseKeyValues(form.env),
       enabled: form.enabled,
@@ -544,6 +551,7 @@ function ModelsPanel() {
       base_url: m.base_url,
       model: m.model,
       small_fast_model: m.small_fast_model ?? "",
+      harness: m.harness ?? "claude",
       api_key: "", // write-only; blank = keep the stored key
       env: formatKeyValues(m.env),
       enabled: m.enabled,
@@ -555,13 +563,15 @@ function ModelsPanel() {
     <>
       <div className="faint" style={{ fontSize: "var(--text-sm)", marginBottom: 14 }}>
         Alternative model backends the spawn dropdown offers next to the Claude
-        subscription — the same <span className="mono">claude</span> binary pointed at a
-        different endpoint via <span className="mono">ANTHROPIC_BASE_URL</span>, so
-        skills, connectors, hooks, and gates apply unchanged. The endpoint must speak the{" "}
-        <b>Anthropic Messages API including tool use</b> — a bare OpenAI-compatible
-        server (Ollama, llama.cpp, LM Studio) breaks tool calling; front it with LiteLLM
-        or claude-code-router and enable the backend&apos;s native tool parser. See{" "}
-        <span className="mono">docs/local-models.md</span> for working Qwen-Coder stacks.
+        subscription. The <b>claude</b> harness is the same{" "}
+        <span className="mono">claude</span> binary pointed at a different endpoint via{" "}
+        <span className="mono">ANTHROPIC_BASE_URL</span> — the endpoint must speak the{" "}
+        <b>Anthropic Messages API including tool use</b>, so front a bare
+        OpenAI-compatible server with LiteLLM or claude-code-router. The <b>pi</b>{" "}
+        harness runs the lightweight pi coding agent instead, which speaks{" "}
+        <b>OpenAI-compatible endpoints natively</b> (vLLM, llama.cpp, Ollama — no
+        translation proxy) — hooks, gates, memory, and skills still apply via
+        handler&apos;s bridge. See <span className="mono">docs/local-models.md</span>.
       </div>
       <Card>
         <div className="card-head" style={{ marginBottom: 14 }}>
@@ -593,6 +603,12 @@ function ModelsPanel() {
             value={form.small_fast_model}
             onChange={(v) => setForm({ ...form, small_fast_model: v })}
             placeholder="qwen3-1.7b"
+          />
+          <Select
+            label="Harness (which agent binary runs against this endpoint)"
+            value={form.harness}
+            onChange={(v) => setForm({ ...form, harness: v as "claude" | "pi" })}
+            options={HARNESS_OPTS}
           />
           <Input
             label={editingId != null ? "API key (blank = keep stored key)" : "API key (optional)"}
@@ -635,6 +651,7 @@ function ModelsPanel() {
               {m.name}
             </span>
             <div className="hstack">
+              {m.harness === "pi" && <Badge tone="info">pi harness</Badge>}
               {m.has_api_key && <Badge tone="info">key stored</Badge>}
               <Badge tone={m.enabled ? "success" : "neutral"}>
                 {m.enabled ? "enabled" : "disabled"}

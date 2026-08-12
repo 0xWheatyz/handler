@@ -201,6 +201,7 @@ export interface ModelBody {
   base_url: string;
   model: string;
   small_fast_model: string | null;
+  harness: "claude" | "pi";
   /* Write-only: encrypted at rest server-side, never echoed back. Null = no change. */
   api_key: string | null;
   clear_api_key?: boolean;

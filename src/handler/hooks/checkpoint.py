@@ -169,8 +169,11 @@ def handle_stop(conn: Connection, ident: Identity, hook_input: HookInput) -> dic
     )
     # A done agent's checkmark carries its own closing message — the substance the
     # dashboard shows; a blocked one carries the blockers (the next turn will re-capture
-    # the narrative once the gate clears).
-    final_text = _final_assistant_text(hook_input.transcript_path)
+    # the narrative once the gate clears). A harness that passes the text directly (pi)
+    # wins over the claude-transcript parse.
+    final_text = hook_input.final_assistant_text or _final_assistant_text(
+        hook_input.transcript_path
+    )
     where_it_stopped = final_text[:4000] if not blockers and final_text else summary
 
     log_id = repo.insert_log_entry(

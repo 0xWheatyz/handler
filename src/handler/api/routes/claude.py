@@ -304,6 +304,7 @@ def create_model(body: ClaudeModelIn, conn: Connection = Depends(db_conn)) -> di
             body.model,
             api_key_enc=api_key_enc,
             small_fast_model=body.small_fast_model,
+            harness=body.harness,
             env=body.env,
             enabled=body.enabled,
         )

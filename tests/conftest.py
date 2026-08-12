@@ -135,14 +135,15 @@ def fake_launch(monkeypatch):
 
     calls: list[dict] = []
 
-    def launch(agent, *, kind, prompt, settings_path, env, worker_id, on_exit=None):
+    def launch(agent, *, kind, prompt, settings_path, env, worker_id, on_exit=None,
+               harness="claude"):
         session_id = agent.get("session_id") if kind == "resume" else f"fake-sid-{len(calls) + 1}"
         with connection() as conn:
             run = repo.create_run(conn, agent["id"], session_id, worker_id, kind)
             repo.set_agent_session(conn, agent["id"], session_id, worker_id)
         calls.append(
             {"agent": agent, "kind": kind, "prompt": prompt, "settings_path": settings_path,
-             "env": env, "worker_id": worker_id, "run": run}
+             "env": env, "worker_id": worker_id, "run": run, "harness": harness}
         )
         return run
 

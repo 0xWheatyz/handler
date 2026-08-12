@@ -424,6 +424,10 @@ claude_models = Table(
     Column("api_key_enc", String),  # encrypted (HANDLER_SECRET_KEY); never returned by the API
     Column("model", String, nullable=False),  # ANTHROPIC_MODEL — the id the endpoint serves
     Column("small_fast_model", String),  # ANTHROPIC_SMALL_FAST_MODEL; falls back to ``model``
+    # Which agent binary this backend launches: "claude" (default — the claude binary
+    # pointed at an Anthropic-API-compatible endpoint) or "pi" (the lightweight pi coding
+    # agent, which speaks OpenAI-compatible endpoints natively — no translation proxy).
+    Column("harness", String, nullable=False, server_default="claude"),
     Column("env", PortableJSON),  # extra env overrides (timeouts, max tokens, …), merged last
     Column("enabled", Boolean, nullable=False, server_default="1"),
     Column("created_at", PortableTimestamp, nullable=False, server_default=func.now()),

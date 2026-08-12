@@ -1,4 +1,6 @@
-"""The headless runner: worker-owned ``claude -p`` subprocesses streaming to the DB.
+"""The headless runner: worker-owned agent subprocesses streaming to the DB —
+``claude -p --output-format stream-json`` by default, ``pi -p --mode json`` for agents
+pinned to a pi-harness model backend (see ``control.pi_harness``).
 
 This is the tmux replacement seam for agent *runs* (tmux stays only for the interactive
 ``/login`` flow). Each invocation is ``claude -p --output-format stream-json`` with a
@@ -34,7 +36,7 @@ from pathlib import Path
 from ..config import get_settings
 from ..db import repository as repo
 from ..db.engine import connection
-from . import claude_gen
+from . import claude_gen, pi_harness
 
 # Stream types we recognize from ``--output-format stream-json``; anything else (or an
 # unparseable line) is stored as-is so no output is ever dropped. ``worker`` is our own:
@@ -144,20 +146,59 @@ def assistant_text(payload: dict) -> str | None:
     return text or None
 
 
-def archive_session(working_dir: str, session_id: str, max_bytes: int | None = None) -> bytes | None:
-    """Tar.gz the session transcript + sidecar dir, or None when nothing exists yet or
-    the result would exceed ``max_bytes`` (the caller records a worker event; the run
-    itself is unaffected — only cross-worker resume degrades)."""
-    base = session_dir(working_dir)
-    jsonl = base / f"{session_id}.jsonl"
-    sidecar = base / session_id
-    if not jsonl.exists() and not sidecar.exists():
+def pi_assistant_text(payload: dict) -> str | None:
+    """The assistant text of a pi ``message_end`` event, or None for non-assistant
+    messages (pi emits ``message_end`` for user/custom messages too — claude's
+    ``assistant`` events never carry another role, so this guard is pi-only)."""
+    message = payload.get("message")
+    if not isinstance(message, dict) or message.get("role") != "assistant":
+        return None
+    return assistant_text(payload)
+
+
+def pi_result_payload(agent_end: dict) -> dict:
+    """A pi ``agent_end`` event normalized into the claude-``result``-shaped payload the
+    run row stores: enough for the ``is_error`` verdict and the UI. pi emits one
+    ``agent_end`` per low-level run (auto-retries and stop-gate continuations each get
+    their own); the supervisor overwrites on each, so the final one wins — exactly the
+    verdict of the run's last words."""
+    messages = agent_end.get("messages")
+    stop_reason = None
+    if isinstance(messages, list):
+        for message in reversed(messages):
+            if isinstance(message, dict) and message.get("role") == "assistant":
+                stop_reason = message.get("stopReason")
+                break
+    return {
+        "harness": "pi",
+        "is_error": stop_reason in ("error", "aborted"),
+        "stop_reason": stop_reason,
+        "will_retry": bool(agent_end.get("willRetry")),
+    }
+
+
+def archive_session(
+    working_dir: str, session_id: str, max_bytes: int | None = None, harness: str = "claude"
+) -> bytes | None:
+    """Tar.gz the session transcript (+ claude's sidecar dir), or None when nothing
+    exists yet or the result would exceed ``max_bytes`` (the caller records a worker
+    event; the run itself is unaffected — only cross-worker resume degrades). A pi
+    session is a single JSONL file at the path handler pre-assigned via ``--session``."""
+    if harness == "pi":
+        base = pi_harness.sessions_dir(working_dir)
+        jsonl = pi_harness.session_file(working_dir, session_id)
+        sidecar = None
+    else:
+        base = session_dir(working_dir)
+        jsonl = base / f"{session_id}.jsonl"
+        sidecar = base / session_id
+    if not jsonl.exists() and (sidecar is None or not sidecar.exists()):
         return None
     buf = io.BytesIO()
     with tarfile.open(fileobj=buf, mode="w:gz") as tar:
         if jsonl.exists():
             tar.add(jsonl, arcname=jsonl.name)
-        if sidecar.is_dir():
+        if sidecar is not None and sidecar.is_dir():
             tar.add(sidecar, arcname=sidecar.name)
     data = buf.getvalue()
     limit = max_bytes if max_bytes is not None else get_settings().session_archive_max_bytes
@@ -166,13 +207,16 @@ def archive_session(working_dir: str, session_id: str, max_bytes: int | None = N
     return data
 
 
-def materialize_session(working_dir: str, archive: bytes) -> None:
-    """Unpack a session archive where claude will look for it on ``--resume``.
+def materialize_session(working_dir: str, archive: bytes, harness: str = "claude") -> None:
+    """Unpack a session archive where the harness will look for it on resume.
 
     ``filter="data"`` rejects path traversal and special members — the archive came from
     our own DB, but a defense-in-depth default costs nothing.
     """
-    base = session_dir(working_dir)
+    if harness == "pi":
+        base = pi_harness.sessions_dir(working_dir)
+    else:
+        base = session_dir(working_dir)
     base.mkdir(parents=True, exist_ok=True)
     with tarfile.open(fileobj=io.BytesIO(archive), mode="r:gz") as tar:
         tar.extractall(base, filter="data")
@@ -198,6 +242,8 @@ class RunSupervisor:
         cancel_poll: float = 5.0,
         archive_interval: float = 60.0,
         on_exit=None,
+        harness: str = "claude",
+        prompt_stdin: str | None = None,
     ) -> None:
         self.agent = agent
         self.run = run
@@ -207,6 +253,10 @@ class RunSupervisor:
         self.cancel_poll = cancel_poll
         self.archive_interval = archive_interval
         self.on_exit = on_exit  # worker's slot-release callback
+        self.harness = harness
+        # pi takes the prompt on stdin (it has no ``--`` argv separator); claude runs
+        # keep stdin closed as before.
+        self.prompt_stdin = prompt_stdin
         self._seq = 0
         self._seq_lock = threading.Lock()  # reader thread + supervisor both emit events
         self._result_payload: dict | None = None
@@ -241,7 +291,18 @@ class RunSupervisor:
             etype, payload = parse_stream_line(line)
             try:
                 self._insert_event(etype, payload)
-                if etype == "result":
+                if self.harness == "pi":
+                    # pi's stream is normalized on the fly: the final ``agent_end``
+                    # plays claude's ``result`` role, assistant ``message_end`` events
+                    # feed last_output. Raw events are stored as-is either way.
+                    if etype == "agent_end":
+                        self._result_payload = pi_result_payload(payload)
+                    elif etype == "message_end":
+                        text = pi_assistant_text(payload)
+                        if text:
+                            with connection() as conn:
+                                repo.update_agent_output(conn, self.agent["id"], text)
+                elif etype == "result":
                     self._result_payload = payload
                 elif etype == "assistant":
                     text = assistant_text(payload)
@@ -253,7 +314,7 @@ class RunSupervisor:
 
     def _upload_archive(self) -> None:
         try:
-            data = archive_session(self.cwd, self.run["session_id"])
+            data = archive_session(self.cwd, self.run["session_id"], harness=self.harness)
             if data is None:
                 return
             with connection() as conn:
@@ -278,20 +339,27 @@ class RunSupervisor:
 
     def _supervise(self) -> None:
         stderr_file = tempfile.TemporaryFile()
+        pipe_prompt = self.prompt_stdin is not None
         try:
             proc = subprocess.Popen(
                 self.argv,
                 cwd=self.cwd,
                 env={**os.environ, **self.env},
-                stdin=subprocess.DEVNULL,
+                stdin=subprocess.PIPE if pipe_prompt else subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=stderr_file,
                 text=True,
             )
         except OSError as exc:
             stderr_file.close()
-            self._settle(exit_code=None, stderr_tail=f"failed to launch claude: {exc}")
+            self._settle(exit_code=None, stderr_tail=f"failed to launch {self.harness}: {exc}")
             return
+        if pipe_prompt:
+            try:
+                proc.stdin.write(self.prompt_stdin)
+                proc.stdin.close()
+            except (OSError, ValueError):
+                pass  # a dead-on-arrival process is settled by the wait loop below
         reader = threading.Thread(
             target=self._pump_stdout, args=(proc.stdout,), daemon=True
         )
@@ -381,33 +449,56 @@ def launch(
     env: dict[str, str],
     worker_id: str,
     on_exit=None,
+    harness: str = "claude",
 ) -> dict:
     """Start a headless run for ``agent`` and return its ``agent_runs`` row.
 
     ``kind`` is ``spawn`` (fresh session, new UUID) or ``resume`` (materialize the stored
     archive, continue the agent's existing session). Fire-and-forget from the caller's
     perspective — the returned run row is already ``running`` and a daemon supervisor
-    owns the process from here.
+    owns the process from here. ``harness`` selects the binary: ``claude`` (default) or
+    ``pi`` (see ``control.pi_harness``) — the supervision, event log, archive, and
+    status reconciliation are identical either way.
     """
     working_dir = agent["working_dir"]
-    # The generated connectors file (control.claude_gen) rides along when present; its
-    # presence on disk is the contract, so the launch seam's signature stays stable.
-    mcp_config = claude_gen.mcp_config_path(working_dir)
-    if not os.path.exists(mcp_config):
-        mcp_config = None
+    prompt_stdin: str | None = None
     if kind == "spawn":
         session_id = str(uuid.uuid4())
-        argv = build_spawn_argv(prompt, settings_path, session_id, mcp_config)
     else:
         session_id = agent.get("session_id")
         if not session_id:
             raise ValueError(f"agent '{agent['name']}' has no session to resume")
-        argv = build_resume_argv(session_id, prompt, settings_path, mcp_config)
+    if harness == "pi":
+        # Spawn and resume are the same invocation: the pre-assigned --session file is
+        # created on first use and appended to afterwards. The prompt travels on stdin.
+        argv = pi_harness.build_argv(session_id, working_dir)
+        prompt_stdin = prompt
+        # The bridge extension reports hook events under the run's session UUID (the
+        # transcript basename), same identity contract as claude's hook stdin.
+        env = {**env, "HANDLER_SESSION_ID": session_id}
+    else:
+        # The generated connectors file (control.claude_gen) rides along when present;
+        # its presence on disk is the contract, so the launch seam's signature stays
+        # stable. (pi has no MCP — its bridge registers the memory tools directly.)
+        mcp_config = claude_gen.mcp_config_path(working_dir)
+        if not os.path.exists(mcp_config):
+            mcp_config = None
+        if kind == "spawn":
+            argv = build_spawn_argv(prompt, settings_path, session_id, mcp_config)
+        else:
+            argv = build_resume_argv(session_id, prompt, settings_path, mcp_config)
     with connection() as conn:
         run = repo.create_run(conn, agent["id"], session_id, worker_id, kind)
         repo.set_agent_session(conn, agent["id"], session_id, worker_id)
     supervisor = RunSupervisor(
-        agent, run, argv, cwd=working_dir, env=env, on_exit=on_exit
+        agent,
+        run,
+        argv,
+        cwd=working_dir,
+        env=env,
+        on_exit=on_exit,
+        harness=harness,
+        prompt_stdin=prompt_stdin,
     )
     supervisor.start()
     return run
