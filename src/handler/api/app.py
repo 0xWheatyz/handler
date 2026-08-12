@@ -17,6 +17,7 @@ from ..config import get_settings
 from .routes import (
     agents,
     approvals,
+    auth,
     claude,
     commands,
     hosts,
@@ -44,6 +45,7 @@ def create_app() -> FastAPI:
     def health() -> dict:
         return {"status": "ok"}
 
+    app.include_router(auth.router)
     app.include_router(projects.router)
     app.include_router(agents.router)
     app.include_router(interaction.router)

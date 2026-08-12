@@ -104,6 +104,8 @@ class ProjectOut(BaseModel):
     root_dir: str
     git_remote: str | None = None
     credential_ref: str | None = None
+    # Owning user account; null = shared/legacy (visible to everyone, admin-managed).
+    owner_user_id: int | None = None
     created_at: datetime
 
 
@@ -409,6 +411,7 @@ class ClaudeSkillOut(BaseModel):
     # Relative paths of auxiliary files (references/, scripts/, …) captured by the
     # install-from-prompt import; synced alongside SKILL.md, read-only over the API.
     files: list[str] = Field(default_factory=list)
+    owner_user_id: int | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -472,6 +475,7 @@ class ClaudeConnectorOut(BaseModel):
     url: str | None = None
     headers: dict[str, str] | None = None
     enabled: bool
+    owner_user_id: int | None = None
     created_at: datetime
 
 
@@ -521,6 +525,7 @@ class ClaudePluginOut(BaseModel):
     marketplace: str
     marketplace_repo: str
     enabled: bool
+    owner_user_id: int | None = None
     created_at: datetime
 
 
@@ -587,6 +592,7 @@ class ClaudeModelOut(BaseModel):
     enabled: bool
     # The key never leaves the server; this says whether one is stored.
     has_api_key: bool = False
+    owner_user_id: int | None = None
     created_at: datetime
 
 
@@ -680,3 +686,107 @@ class MemoryGraphOut(BaseModel):
 
     notes: list[MemoryNoteOut]
     links: list[MemoryLinkOut]
+
+
+# ---- user accounts & sessions (``/auth``) ----------------------------------------------
+
+
+class AuthStatusOut(BaseModel):
+    """Unauthenticated bootstrap probe: does the login page show a sign-in form or the
+    first-run setup form, and can the deployment send email?"""
+
+    initialized: bool  # any user account exists
+    smtp_configured: bool
+
+
+class UserOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    email: str
+    is_admin: bool
+    disabled: bool
+    # False until an invited user sets their password through the invite link.
+    has_password: bool = False
+    created_at: datetime
+
+
+class SetupIn(BaseModel):
+    """First-run: create the very first account, which becomes the admin."""
+
+    email: str = Field(min_length=3, max_length=254)
+    password: str = Field(min_length=8, max_length=1024)
+
+
+class LoginIn(BaseModel):
+    email: str = Field(min_length=3, max_length=254)
+    password: str = Field(min_length=1, max_length=1024)
+
+
+class SessionOut(BaseModel):
+    """A fresh bearer session token plus who it belongs to."""
+
+    token: str
+    user: UserOut
+
+
+class MeOut(BaseModel):
+    """Who the presented bearer resolves to. Legacy env tokens have no user identity —
+    ``kind == "token"`` with null user fields."""
+
+    kind: str  # "user" | "token"
+    user_id: int | None = None
+    email: str | None = None
+    is_admin: bool
+
+
+class ChangePasswordIn(BaseModel):
+    current_password: str = Field(min_length=1, max_length=1024)
+    new_password: str = Field(min_length=8, max_length=1024)
+
+
+class ForgotIn(BaseModel):
+    email: str = Field(min_length=3, max_length=254)
+
+
+class ForgotOut(BaseModel):
+    """Always ``ok`` — whether the address has an account is deliberately not revealed."""
+
+    ok: bool = True
+    emailed: bool  # False when SMTP is not configured (ask an admin for a reset link)
+
+
+class ResetIn(BaseModel):
+    """Complete a reset or invite link: spend the one-shot token, set the password."""
+
+    token: str = Field(min_length=1, max_length=256)
+    password: str = Field(min_length=8, max_length=1024)
+
+
+class UserCreateIn(BaseModel):
+    """Admin creates an account; the new user sets their password via the invite link."""
+
+    email: str = Field(min_length=3, max_length=254)
+    is_admin: bool = False
+
+
+class UserCreatedOut(BaseModel):
+    user: UserOut
+    # The invite link is always returned (the admin can hand it over out-of-band);
+    # ``emailed`` says whether it was also delivered by SMTP.
+    invite_url: str
+    emailed: bool
+
+
+class UserUpdateIn(BaseModel):
+    """Admin edits; omit a field to leave it unchanged."""
+
+    is_admin: bool | None = None
+    disabled: bool | None = None
+
+
+class ResetLinkOut(BaseModel):
+    """An admin-minted reset (or invite) link for a user."""
+
+    reset_url: str
+    emailed: bool
