@@ -1198,6 +1198,7 @@ def create_claude_model(
     model: str,
     api_key_enc: str | None = None,
     small_fast_model: str | None = None,
+    harness: str = "claude",
     env: dict | None = None,
     enabled: bool = True,
 ) -> dict:
@@ -1208,6 +1209,7 @@ def create_claude_model(
             api_key_enc=api_key_enc,
             model=model,
             small_fast_model=small_fast_model,
+            harness=harness,
             env=env,
             enabled=enabled,
             created_at=_now(),
@@ -1217,7 +1219,16 @@ def create_claude_model(
 
 
 def update_claude_model(conn: Connection, model_id: int, **fields: Any) -> dict | None:
-    allowed = {"name", "base_url", "api_key_enc", "model", "small_fast_model", "env", "enabled"}
+    allowed = {
+        "name",
+        "base_url",
+        "api_key_enc",
+        "model",
+        "small_fast_model",
+        "harness",
+        "env",
+        "enabled",
+    }
     values = {k: v for k, v in fields.items() if k in allowed}
     if values:
         conn.execute(

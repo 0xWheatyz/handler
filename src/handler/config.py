@@ -35,6 +35,14 @@ class Settings(BaseSettings):
     # Optional generic webhook target for the Notification hook. No-op when unset.
     webhook_url: str | None = None
 
+    # ---- Web tools (handler.webtool): the agents' web_search/web_fetch, exposed to
+    # pi-harness agents via the bridge extension. Search provider resolution order:
+    # SEARXNG_URL (self-hosted metasearch, format=json enabled) -> BRAVE_SEARCH_API_KEY
+    # (Brave Search API) -> neither = DuckDuckGo's HTML endpoint (zero-config fallback,
+    # rate-limited and markup-brittle; fine for occasional lookups).
+    searxng_url: str | None = None
+    brave_search_api_key: str | None = None
+
     # Symmetric key (Fernet, urlsafe-base64) for the DB-backed secret store: git-server
     # tokens and SSH private keys are encrypted with it at rest. Generate one with
     # ``python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"``.
@@ -46,6 +54,7 @@ class Settings(BaseSettings):
 
     # Binary overrides so tests/CI can point at fakes.
     claude_bin: str = "claude"
+    pi_bin: str = "pi"
     mise_bin: str = "mise"
     tmux_bin: str = "tmux"
     forge_bin: str = "forge"

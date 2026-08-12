@@ -53,6 +53,16 @@ class HookInput:
         return bool(self.raw.get("stop_hook_active"))
 
     @property
+    def final_assistant_text(self) -> str | None:
+        """The agent's closing message, when the harness passes it directly (the pi
+        bridge does — pi session files aren't claude-transcript-shaped, so the
+        transcript fallback can't parse them)."""
+        value = self.raw.get("final_assistant_text")
+        if isinstance(value, str) and value.strip():
+            return value
+        return None
+
+    @property
     def reason(self) -> str | None:
         return self.raw.get("reason")
 

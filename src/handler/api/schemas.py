@@ -14,6 +14,9 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 Role = Literal["junior", "senior", "deploy"]
 ForgeType = Literal["github", "gitlab", "gitea", "forgejo", "bitbucket"]
 
+# Agent harness a model backend launches (claude_models.harness).
+Harness = Literal["claude", "pi"]
+
 # credential_ref schemes an operator may set over the web. ``cmd:`` is intentionally
 # excluded — it would run an arbitrary command in the control container at spawn — so the
 # API rejects it even though the CLI/DB path still allows it.
@@ -532,6 +535,10 @@ class ClaudeModelIn(BaseModel):
     base_url: str = Field(min_length=1)
     model: str = Field(min_length=1)
     small_fast_model: str | None = None
+    # Which agent binary runs against this backend. "claude" needs an
+    # Anthropic-API-compatible endpoint; "pi" speaks OpenAI-compatible endpoints
+    # (vLLM, llama.cpp, Ollama) natively — no translation proxy.
+    harness: Harness = "claude"
     api_key: str | None = None
     env: dict[str, str] = Field(default_factory=dict)
     enabled: bool = True
@@ -550,6 +557,7 @@ class ClaudeModelUpdateIn(BaseModel):
     base_url: str | None = None
     model: str | None = Field(default=None, min_length=1)
     small_fast_model: str | None = None
+    harness: Harness | None = None
     api_key: str | None = None
     clear_api_key: bool = False
     env: dict[str, str] | None = None
@@ -574,6 +582,7 @@ class ClaudeModelOut(BaseModel):
     base_url: str
     model: str
     small_fast_model: str | None = None
+    harness: Harness = "claude"
     env: dict[str, str] | None = None
     enabled: bool
     # The key never leaves the server; this says whether one is stored.

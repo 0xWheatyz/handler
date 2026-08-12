@@ -193,6 +193,9 @@ export interface ClaudeModel {
   base_url: string;
   model: string;
   small_fast_model?: string | null;
+  /* Which agent binary runs against this backend: "claude" (Anthropic-compatible
+     endpoint required) or "pi" (bare OpenAI-compatible endpoint, lightweight). */
+  harness?: "claude" | "pi";
   env?: Record<string, string> | null;
   enabled: boolean;
   has_api_key: boolean;
