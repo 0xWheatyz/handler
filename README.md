@@ -554,6 +554,11 @@ Forgejo / Bitbucket. Still ahead: **Phase 3** a web UI, **Phase 4** optional obs
 and **Phase 5** open-source release. Details and design rationale live in
 [`docs/PLAN.md`](docs/PLAN.md).
 
+## Changelog
+
+Release notes — including per-release **deployment/rollout checklists** (migrations,
+image changes, new env vars) — live in [`CHANGELOG.md`](CHANGELOG.md).
+
 ## License
 
 MIT.
