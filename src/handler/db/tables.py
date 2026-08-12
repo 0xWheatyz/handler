@@ -72,6 +72,54 @@ def _in(column: str, values: tuple[str, ...]) -> str:
     return f"{column} IN ({joined})"
 
 
+# ---- User accounts (email + password). The first account created (the setup flow)
+# is the admin; every later account is created by an admin. ``password_hash`` is null
+# until an invited user sets a password through their invite link. Ownership columns
+# elsewhere (``owner_user_id``) reference ``users.id`` *without* an FK — same rationale
+# as ``agents.model_id``: deleting a user must never orphan or cascade away resources,
+# so ``delete_user`` explicitly reassigns owned rows to shared (NULL) instead.
+users = Table(
+    "users",
+    metadata,
+    Column("id", PortableBigInt, primary_key=True, autoincrement=True),
+    Column("email", String, nullable=False, unique=True),  # stored lowercased
+    Column("password_hash", String),  # scrypt (handler.authn); null = invite not accepted
+    Column("is_admin", Boolean, nullable=False, server_default="0"),
+    Column("disabled", Boolean, nullable=False, server_default="0"),
+    Column("created_at", PortableTimestamp, nullable=False, server_default=func.now()),
+)
+
+# Browser sessions. The API hands out a random bearer token at login and stores only its
+# SHA-256 here, so a database dump never contains a usable session credential.
+auth_sessions = Table(
+    "auth_sessions",
+    metadata,
+    Column("id", PortableBigInt, primary_key=True, autoincrement=True),
+    Column("user_id", BigInteger, ForeignKey("users.id"), nullable=False),
+    Column("token_hash", String, nullable=False, unique=True),
+    Column("created_at", PortableTimestamp, nullable=False, server_default=func.now()),
+    Column("expires_at", PortableTimestamp, nullable=False),
+    Column("last_used_at", PortableTimestamp),
+)
+
+# One-shot links: password resets and invites (an invite is just a longer-lived reset on
+# an account that has no password yet). Hash-stored like sessions; ``used_at`` makes them
+# single-use.
+AUTH_TOKEN_PURPOSES = ("reset", "invite")
+
+auth_tokens = Table(
+    "auth_tokens",
+    metadata,
+    Column("id", PortableBigInt, primary_key=True, autoincrement=True),
+    Column("user_id", BigInteger, ForeignKey("users.id"), nullable=False),
+    Column("token_hash", String, nullable=False, unique=True),
+    Column("purpose", String, nullable=False),
+    Column("expires_at", PortableTimestamp, nullable=False),
+    Column("used_at", PortableTimestamp),
+    Column("created_at", PortableTimestamp, nullable=False, server_default=func.now()),
+    CheckConstraint(_in("purpose", AUTH_TOKEN_PURPOSES), name="ck_auth_tokens_purpose"),
+)
+
 projects = Table(
     "projects",
     metadata,
@@ -80,6 +128,9 @@ projects = Table(
     Column("git_remote", String),
     # Pointer to a secret (env:VAR / file:/path / cmd:...), never the token — README 3.7.
     Column("credential_ref", String),
+    # Owning user account; null = shared/legacy (visible to everyone, admin-managed).
+    # No FK by design — see the ``users`` table comment.
+    Column("owner_user_id", BigInteger),
     Column("created_at", PortableTimestamp, nullable=False, server_default=func.now()),
 )
 
@@ -354,6 +405,8 @@ claude_skills = Table(
     Column("description", String),
     Column("content", String, nullable=False),  # markdown body below the front-matter
     Column("enabled", Boolean, nullable=False, server_default="1"),
+    # Owning user; null = shared (synced for every user's agents). No FK — see ``users``.
+    Column("owner_user_id", BigInteger),
     Column("created_at", PortableTimestamp, nullable=False, server_default=func.now()),
     Column("updated_at", PortableTimestamp, nullable=False, server_default=func.now()),
 )
@@ -390,6 +443,8 @@ claude_connectors = Table(
     Column("url", String),  # http/sse: the endpoint
     Column("headers", PortableJSON),  # http/sse: header map (may carry auth)
     Column("enabled", Boolean, nullable=False, server_default="1"),
+    # Owning user; null = shared (applied to every user's launches). No FK — see ``users``.
+    Column("owner_user_id", BigInteger),
     Column("created_at", PortableTimestamp, nullable=False, server_default=func.now()),
     CheckConstraint(_in("transport", MCP_TRANSPORTS), name="ck_claude_connectors_transport"),
 )
@@ -404,6 +459,8 @@ claude_plugins = Table(
     Column("marketplace", String, nullable=False),  # marketplace key, e.g. "acme-tools"
     Column("marketplace_repo", String, nullable=False),  # "owner/repo" or a git URL
     Column("enabled", Boolean, nullable=False, server_default="1"),
+    # Owning user; null = shared. No FK — see ``users``.
+    Column("owner_user_id", BigInteger),
     Column("created_at", PortableTimestamp, nullable=False, server_default=func.now()),
     UniqueConstraint("name", "marketplace", name="uq_claude_plugins_name_marketplace"),
 )
@@ -430,6 +487,8 @@ claude_models = Table(
     Column("harness", String, nullable=False, server_default="claude"),
     Column("env", PortableJSON),  # extra env overrides (timeouts, max tokens, …), merged last
     Column("enabled", Boolean, nullable=False, server_default="1"),
+    # Owning user; null = shared (offered in every user's spawn dropdown). No FK — see ``users``.
+    Column("owner_user_id", BigInteger),
     Column("created_at", PortableTimestamp, nullable=False, server_default=func.now()),
 )
 
