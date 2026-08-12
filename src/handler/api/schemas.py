@@ -90,6 +90,8 @@ class ProjectUpdateIn(BaseModel):
     root_dir: str | None = None
     git_remote: str | None = None
     credential_ref: str | None = None
+    # Reassign ownership (admin only); explicit null makes the project shared.
+    owner_user_id: int | None = None
 
     @field_validator("credential_ref")
     @classmethod

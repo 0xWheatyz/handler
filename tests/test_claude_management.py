@@ -388,7 +388,9 @@ def test_skill_install_route_enqueues(client, auth, lowpriv):
     assert r.status_code == 202
     body = r.json()
     assert body["type"] == "skill_install" and body["status"] == "queued"
-    assert body["payload"] == {"prompt": "Install x from y"}
+    # Env-token installs land as shared skills (owner_user_id None); a signed-in user's
+    # install would carry their id here.
+    assert body["payload"] == {"prompt": "Install x from y", "owner_user_id": None}
 
     assert (
         client.post("/claude/skills/install", json={"prompt": "x"}, headers=lowpriv).status_code

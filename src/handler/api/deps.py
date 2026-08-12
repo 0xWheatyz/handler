@@ -103,15 +103,14 @@ def get_actor(
     if token is None:
         raise _unauthorized()
 
-    # Legacy env tokens first (cheap constant-time compares). Order matters for the
-    # historical fallbacks: with ADMIN_TOKEN unset it falls back to AUTH_TOKEN, so the
-    # plain token must come out admin — checking the admin value first guarantees that.
-    if _check(token, settings.effective_admin_token):
-        return Actor(kind="token", is_admin=True, shared_write=True)
-    if _check(token, settings.effective_shared_write_token):
-        return Actor(kind="token", shared_write=True)
-    if _check(token, settings.auth_token):
-        return Actor(kind="token")
+    # Legacy env tokens first (cheap constant-time compares). Each capability is
+    # checked independently so the historical fallbacks hold exactly: with ADMIN_TOKEN
+    # unset the plain token comes out admin, while a dedicated admin token does *not*
+    # inherit shared-context write (that stays with the shared-write token, as before).
+    token_admin = _check(token, settings.effective_admin_token)
+    token_shared = _check(token, settings.effective_shared_write_token)
+    if token_admin or token_shared or _check(token, settings.auth_token):
+        return Actor(kind="token", is_admin=token_admin, shared_write=token_shared)
 
     # Otherwise it may be a user session token (hash-stored).
     token_hash = authn.hash_token(token)

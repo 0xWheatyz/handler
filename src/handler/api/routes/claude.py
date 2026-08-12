@@ -7,8 +7,11 @@ become the run's ``--mcp-config`` file, and plugins/permissions fold into the ge
 per-agent ``settings.json`` (``control.settings_gen`` / ``control.claude_gen``). Changes
 therefore apply to the *next* launch of every agent, not to runs already in flight.
 
-Reads take the normal token; writes take the admin token (they shape what every agent
-is allowed to do). The login flow stays under ``/login`` — it needs the worker's tmux.
+Skills, connectors, plugins, and model backends are per-user resources: everyone sees
+the **shared** rows (owner NULL, admin-managed) plus their own, users create and manage
+their own rows, and only what's visible to a project's owner is applied to its agents'
+launches. Permission overrides stay global and admin-gated. The login flow stays under
+``/login`` — it needs the worker's tmux.
 """
 
 from __future__ import annotations
@@ -19,7 +22,7 @@ from sqlalchemy import Connection
 from ... import secretstore
 from ...config import get_settings
 from ...db import repository as repo
-from ..deps import db_conn, require_admin, require_auth
+from ..deps import Actor, db_conn, get_actor, require_admin, require_auth
 from ..schemas import (
     ClaudeConnectorIn,
     ClaudeConnectorOut,
@@ -42,12 +45,32 @@ from ..schemas import (
 router = APIRouter(prefix="/claude", tags=["claude"], dependencies=[Depends(require_auth)])
 
 
+def _require_create(actor: Actor) -> None:
+    """Creating rows: users always may (they own what they create); legacy tokens keep
+    their historical rule — only the admin token writes here."""
+    if actor.kind == "token" and not actor.is_admin:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN, detail="this action requires an admin token"
+        )
+
+
+def _require_edit(actor: Actor, row: dict, what: str) -> None:
+    """Mutating a row: the owner or an admin. Shared rows (owner NULL) are admin-managed."""
+    if not actor.can_edit(row.get("owner_user_id")):
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            detail=f"this {what} is shared — only an admin can change it"
+            if row.get("owner_user_id") is None
+            else f"this {what} belongs to another user",
+        )
+
+
 # ---- skills ---------------------------------------------------------------------------
 
 
-def _skill_or_404(conn: Connection, skill_id: int) -> dict:
+def _skill_or_404(conn: Connection, skill_id: int, actor: Actor) -> dict:
     skill = repo.get_claude_skill(conn, skill_id)
-    if skill is None:
+    if skill is None or not actor.can_view(skill.get("owner_user_id")):
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail=f"skill {skill_id} not found")
     return skill
 
@@ -60,21 +83,35 @@ def _skill_out(conn: Connection, row: dict) -> dict:
 
 
 @router.get("/skills", response_model=list[ClaudeSkillOut])
-def list_skills(conn: Connection = Depends(db_conn)) -> list[dict]:
-    return [_skill_out(conn, s) for s in repo.list_claude_skills(conn)]
+def list_skills(
+    actor: Actor = Depends(get_actor), conn: Connection = Depends(db_conn)
+) -> list[dict]:
+    return [
+        _skill_out(conn, s)
+        for s in repo.list_claude_skills(conn, visible_to=actor.visible_scope)
+    ]
 
 
 @router.post(
     "/skills",
     response_model=ClaudeSkillOut,
     status_code=status.HTTP_201_CREATED,
-    dependencies=[Depends(require_admin)],
 )
-def create_skill(body: ClaudeSkillIn, conn: Connection = Depends(db_conn)) -> dict:
+def create_skill(
+    body: ClaudeSkillIn,
+    actor: Actor = Depends(get_actor),
+    conn: Connection = Depends(db_conn),
+) -> dict:
+    _require_create(actor)
     if repo.get_claude_skill_by_name(conn, body.name) is not None:
         raise HTTPException(status.HTTP_409_CONFLICT, detail=f"skill '{body.name}' exists")
     return repo.create_claude_skill(
-        conn, body.name, body.content, description=body.description, enabled=body.enabled
+        conn,
+        body.name,
+        body.content,
+        description=body.description,
+        enabled=body.enabled,
+        owner_user_id=actor.user_id,
     )
 
 
@@ -82,25 +119,34 @@ def create_skill(body: ClaudeSkillIn, conn: Connection = Depends(db_conn)) -> di
     "/skills/install",
     response_model=CommandOut,
     status_code=status.HTTP_202_ACCEPTED,
-    dependencies=[Depends(require_admin)],
 )
-def enqueue_skill_install(body: SkillInstallIn, conn: Connection = Depends(db_conn)) -> dict:
+def enqueue_skill_install(
+    body: SkillInstallIn,
+    actor: Actor = Depends(get_actor),
+    conn: Connection = Depends(db_conn),
+) -> dict:
     """Run a pasted marketplace install prompt on the worker (which has ``claude`` and
     network) and import what it fetches as managed skills. The UI polls the returned
     command like any other control action; its result carries the imported skill names
-    and claude's report of the defaults it chose."""
+    and claude's report of the defaults it chose. Imported skills belong to the
+    requesting user (shared when requested with the admin token)."""
+    _require_create(actor)
     return repo.enqueue_command(
-        conn, "skill_install", payload={"prompt": body.prompt}, requested_by="operator:web"
+        conn,
+        "skill_install",
+        payload={"prompt": body.prompt, "owner_user_id": actor.user_id},
+        requested_by=actor.label,
     )
 
 
-@router.patch(
-    "/skills/{skill_id}", response_model=ClaudeSkillOut, dependencies=[Depends(require_admin)]
-)
+@router.patch("/skills/{skill_id}", response_model=ClaudeSkillOut)
 def update_skill(
-    skill_id: int, body: ClaudeSkillUpdateIn, conn: Connection = Depends(db_conn)
+    skill_id: int,
+    body: ClaudeSkillUpdateIn,
+    actor: Actor = Depends(get_actor),
+    conn: Connection = Depends(db_conn),
 ) -> dict:
-    _skill_or_404(conn, skill_id)
+    _require_edit(actor, _skill_or_404(conn, skill_id, actor), "skill")
     fields = body.model_dump(exclude_unset=True)
     if "name" in fields:
         clash = repo.get_claude_skill_by_name(conn, fields["name"])
@@ -111,9 +157,14 @@ def update_skill(
     return _skill_out(conn, repo.update_claude_skill(conn, skill_id, **fields))
 
 
-@router.delete("/skills/{skill_id}", dependencies=[Depends(require_admin)])
-def delete_skill(skill_id: int, conn: Connection = Depends(db_conn)) -> dict:
-    skill = _skill_or_404(conn, skill_id)
+@router.delete("/skills/{skill_id}")
+def delete_skill(
+    skill_id: int,
+    actor: Actor = Depends(get_actor),
+    conn: Connection = Depends(db_conn),
+) -> dict:
+    skill = _skill_or_404(conn, skill_id, actor)
+    _require_edit(actor, skill, "skill")
     repo.delete_claude_skill(conn, skill_id)
     return {"deleted": skill["name"]}
 
@@ -121,9 +172,9 @@ def delete_skill(skill_id: int, conn: Connection = Depends(db_conn)) -> dict:
 # ---- connectors (MCP servers) ---------------------------------------------------------
 
 
-def _connector_or_404(conn: Connection, connector_id: int) -> dict:
+def _connector_or_404(conn: Connection, connector_id: int, actor: Actor) -> dict:
     connector = repo.get_claude_connector(conn, connector_id)
-    if connector is None:
+    if connector is None or not actor.can_view(connector.get("owner_user_id")):
         raise HTTPException(
             status.HTTP_404_NOT_FOUND, detail=f"connector {connector_id} not found"
         )
@@ -131,17 +182,23 @@ def _connector_or_404(conn: Connection, connector_id: int) -> dict:
 
 
 @router.get("/connectors", response_model=list[ClaudeConnectorOut])
-def list_connectors(conn: Connection = Depends(db_conn)) -> list[dict]:
-    return repo.list_claude_connectors(conn)
+def list_connectors(
+    actor: Actor = Depends(get_actor), conn: Connection = Depends(db_conn)
+) -> list[dict]:
+    return repo.list_claude_connectors(conn, visible_to=actor.visible_scope)
 
 
 @router.post(
     "/connectors",
     response_model=ClaudeConnectorOut,
     status_code=status.HTTP_201_CREATED,
-    dependencies=[Depends(require_admin)],
 )
-def create_connector(body: ClaudeConnectorIn, conn: Connection = Depends(db_conn)) -> dict:
+def create_connector(
+    body: ClaudeConnectorIn,
+    actor: Actor = Depends(get_actor),
+    conn: Connection = Depends(db_conn),
+) -> dict:
+    _require_create(actor)
     if repo.get_claude_connector_by_name(conn, body.name) is not None:
         raise HTTPException(status.HTTP_409_CONFLICT, detail=f"connector '{body.name}' exists")
     return repo.create_claude_connector(
@@ -154,18 +211,22 @@ def create_connector(body: ClaudeConnectorIn, conn: Connection = Depends(db_conn
         url=body.url,
         headers=body.headers,
         enabled=body.enabled,
+        owner_user_id=actor.user_id,
     )
 
 
 @router.patch(
     "/connectors/{connector_id}",
     response_model=ClaudeConnectorOut,
-    dependencies=[Depends(require_admin)],
 )
 def update_connector(
-    connector_id: int, body: ClaudeConnectorUpdateIn, conn: Connection = Depends(db_conn)
+    connector_id: int,
+    body: ClaudeConnectorUpdateIn,
+    actor: Actor = Depends(get_actor),
+    conn: Connection = Depends(db_conn),
 ) -> dict:
-    current = _connector_or_404(conn, connector_id)
+    current = _connector_or_404(conn, connector_id, actor)
+    _require_edit(actor, current, "connector")
     fields = body.model_dump(exclude_unset=True)
     if "name" in fields:
         clash = repo.get_claude_connector_by_name(conn, fields["name"])
@@ -189,9 +250,14 @@ def update_connector(
     return repo.update_claude_connector(conn, connector_id, **fields)
 
 
-@router.delete("/connectors/{connector_id}", dependencies=[Depends(require_admin)])
-def delete_connector(connector_id: int, conn: Connection = Depends(db_conn)) -> dict:
-    connector = _connector_or_404(conn, connector_id)
+@router.delete("/connectors/{connector_id}")
+def delete_connector(
+    connector_id: int,
+    actor: Actor = Depends(get_actor),
+    conn: Connection = Depends(db_conn),
+) -> dict:
+    connector = _connector_or_404(conn, connector_id, actor)
+    _require_edit(actor, connector, "connector")
     repo.delete_claude_connector(conn, connector_id)
     return {"deleted": connector["name"]}
 
@@ -199,42 +265,55 @@ def delete_connector(connector_id: int, conn: Connection = Depends(db_conn)) -> 
 # ---- plugins --------------------------------------------------------------------------
 
 
-def _plugin_or_404(conn: Connection, plugin_id: int) -> dict:
+def _plugin_or_404(conn: Connection, plugin_id: int, actor: Actor) -> dict:
     plugin = repo.get_claude_plugin(conn, plugin_id)
-    if plugin is None:
+    if plugin is None or not actor.can_view(plugin.get("owner_user_id")):
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail=f"plugin {plugin_id} not found")
     return plugin
 
 
 @router.get("/plugins", response_model=list[ClaudePluginOut])
-def list_plugins(conn: Connection = Depends(db_conn)) -> list[dict]:
-    return repo.list_claude_plugins(conn)
+def list_plugins(
+    actor: Actor = Depends(get_actor), conn: Connection = Depends(db_conn)
+) -> list[dict]:
+    return repo.list_claude_plugins(conn, visible_to=actor.visible_scope)
 
 
 @router.post(
     "/plugins",
     response_model=ClaudePluginOut,
     status_code=status.HTTP_201_CREATED,
-    dependencies=[Depends(require_admin)],
 )
-def create_plugin(body: ClaudePluginIn, conn: Connection = Depends(db_conn)) -> dict:
+def create_plugin(
+    body: ClaudePluginIn,
+    actor: Actor = Depends(get_actor),
+    conn: Connection = Depends(db_conn),
+) -> dict:
+    _require_create(actor)
     if repo.get_claude_plugin_by_key(conn, body.name, body.marketplace) is not None:
         raise HTTPException(
             status.HTTP_409_CONFLICT,
             detail=f"plugin '{body.name}@{body.marketplace}' exists",
         )
     return repo.create_claude_plugin(
-        conn, body.name, body.marketplace, body.marketplace_repo, enabled=body.enabled
+        conn,
+        body.name,
+        body.marketplace,
+        body.marketplace_repo,
+        enabled=body.enabled,
+        owner_user_id=actor.user_id,
     )
 
 
-@router.patch(
-    "/plugins/{plugin_id}", response_model=ClaudePluginOut, dependencies=[Depends(require_admin)]
-)
+@router.patch("/plugins/{plugin_id}", response_model=ClaudePluginOut)
 def update_plugin(
-    plugin_id: int, body: ClaudePluginUpdateIn, conn: Connection = Depends(db_conn)
+    plugin_id: int,
+    body: ClaudePluginUpdateIn,
+    actor: Actor = Depends(get_actor),
+    conn: Connection = Depends(db_conn),
 ) -> dict:
-    current = _plugin_or_404(conn, plugin_id)
+    current = _plugin_or_404(conn, plugin_id, actor)
+    _require_edit(actor, current, "plugin")
     fields = body.model_dump(exclude_unset=True)
     if "name" in fields or "marketplace" in fields:
         merged = {**current, **fields}
@@ -247,9 +326,14 @@ def update_plugin(
     return repo.update_claude_plugin(conn, plugin_id, **fields)
 
 
-@router.delete("/plugins/{plugin_id}", dependencies=[Depends(require_admin)])
-def delete_plugin(plugin_id: int, conn: Connection = Depends(db_conn)) -> dict:
-    plugin = _plugin_or_404(conn, plugin_id)
+@router.delete("/plugins/{plugin_id}")
+def delete_plugin(
+    plugin_id: int,
+    actor: Actor = Depends(get_actor),
+    conn: Connection = Depends(db_conn),
+) -> dict:
+    plugin = _plugin_or_404(conn, plugin_id, actor)
+    _require_edit(actor, plugin, "plugin")
     repo.delete_claude_plugin(conn, plugin_id)
     return {"deleted": f"{plugin['name']}@{plugin['marketplace']}"}
 
@@ -261,9 +345,9 @@ def delete_plugin(plugin_id: int, conn: Connection = Depends(db_conn)) -> dict:
 # key is encrypted at rest (HANDLER_SECRET_KEY) and never returned.
 
 
-def _model_or_404(conn: Connection, model_id: int) -> dict:
+def _model_or_404(conn: Connection, model_id: int, actor: Actor) -> dict:
     row = repo.get_claude_model(conn, model_id)
-    if row is None:
+    if row is None or not actor.can_view(row.get("owner_user_id")):
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail=f"model {model_id} not found")
     return row
 
@@ -282,17 +366,25 @@ def _encrypt_key_or_400(value: str) -> str:
 
 
 @router.get("/models", response_model=list[ClaudeModelOut])
-def list_models(conn: Connection = Depends(db_conn)) -> list[dict]:
-    return [_model_out(m) for m in repo.list_claude_models(conn)]
+def list_models(
+    actor: Actor = Depends(get_actor), conn: Connection = Depends(db_conn)
+) -> list[dict]:
+    return [
+        _model_out(m) for m in repo.list_claude_models(conn, visible_to=actor.visible_scope)
+    ]
 
 
 @router.post(
     "/models",
     response_model=ClaudeModelOut,
     status_code=status.HTTP_201_CREATED,
-    dependencies=[Depends(require_admin)],
 )
-def create_model(body: ClaudeModelIn, conn: Connection = Depends(db_conn)) -> dict:
+def create_model(
+    body: ClaudeModelIn,
+    actor: Actor = Depends(get_actor),
+    conn: Connection = Depends(db_conn),
+) -> dict:
+    _require_create(actor)
     if repo.get_claude_model_by_name(conn, body.name) is not None:
         raise HTTPException(status.HTTP_409_CONFLICT, detail=f"model '{body.name}' exists")
     api_key_enc = _encrypt_key_or_400(body.api_key) if body.api_key else None
@@ -307,17 +399,19 @@ def create_model(body: ClaudeModelIn, conn: Connection = Depends(db_conn)) -> di
             harness=body.harness,
             env=body.env,
             enabled=body.enabled,
+            owner_user_id=actor.user_id,
         )
     )
 
 
-@router.patch(
-    "/models/{model_id}", response_model=ClaudeModelOut, dependencies=[Depends(require_admin)]
-)
+@router.patch("/models/{model_id}", response_model=ClaudeModelOut)
 def update_model(
-    model_id: int, body: ClaudeModelUpdateIn, conn: Connection = Depends(db_conn)
+    model_id: int,
+    body: ClaudeModelUpdateIn,
+    actor: Actor = Depends(get_actor),
+    conn: Connection = Depends(db_conn),
 ) -> dict:
-    _model_or_404(conn, model_id)
+    _require_edit(actor, _model_or_404(conn, model_id, actor), "model")
     fields = body.model_dump(exclude_unset=True)
     if "name" in fields:
         clash = repo.get_claude_model_by_name(conn, fields["name"])
@@ -335,9 +429,14 @@ def update_model(
     return _model_out(repo.update_claude_model(conn, model_id, **fields))
 
 
-@router.delete("/models/{model_id}", dependencies=[Depends(require_admin)])
-def delete_model(model_id: int, conn: Connection = Depends(db_conn)) -> dict:
-    row = _model_or_404(conn, model_id)
+@router.delete("/models/{model_id}")
+def delete_model(
+    model_id: int,
+    actor: Actor = Depends(get_actor),
+    conn: Connection = Depends(db_conn),
+) -> dict:
+    row = _model_or_404(conn, model_id, actor)
+    _require_edit(actor, row, "model")
     repo.delete_claude_model(conn, model_id)
     return {"deleted": row["name"]}
 
