@@ -29,11 +29,15 @@ import {
   type Command,
   type Host,
   type LogEntry,
+  type Me,
   type MemoryGraph,
   type NoteKind,
   type Project,
+  type ResetLink,
   type Schedule,
   type SharedContext,
+  type User,
+  type UserCreated,
 } from "@/lib/api";
 
 export type Section =
@@ -46,7 +50,8 @@ export type Section =
   | "activity"
   | "shared"
   | "memory"
-  | "claude";
+  | "claude"
+  | "users";
 
 /* The claude web-login flow, driven through the login_start / login_submit commands.
  *  idle → starting → awaiting (have URL) → submitting → done | error */
@@ -107,6 +112,17 @@ interface StoreValue {
   cmd: CmdState;
   lastError: string;
   loading: boolean;
+
+  /* Who this session belongs to (null until /auth/me answers). Legacy env tokens come
+   * back as kind "token"; admin-ness drives the Users nav and admin-only controls. */
+  me: Me | null;
+
+  /* User accounts (admin only; empty for everyone else). */
+  users: User[];
+  createUser: (email: string, isAdmin: boolean) => Promise<UserCreated | null>;
+  updateUser: (id: number, b: { is_admin?: boolean; disabled?: boolean }) => Promise<boolean>;
+  deleteUser: (id: number) => Promise<void>;
+  mintResetLink: (id: number) => Promise<ResetLink | null>;
 
   refresh: () => void;
 
@@ -338,6 +354,8 @@ export function DashboardProvider({
   const [claudePlugins, setClaudePlugins] = useState<ClaudePlugin[]>([]);
   const [claudePermissions, setClaudePermissions] = useState<ClaudePermissions | null>(null);
   const [claudeModels, setClaudeModels] = useState<ClaudeModel[]>([]);
+  const [me, setMe] = useState<Me | null>(null);
+  const [users, setUsers] = useState<User[]>([]);
 
   // Keep polling loop reading fresh values without re-subscribing every render.
   const sectionRef = useRef(section);
@@ -494,6 +512,23 @@ export function DashboardProvider({
     }
   }, []);
 
+  const loadMe = useCallback(async () => {
+    try {
+      setMe(await clientRef.current.api<Me>("/auth/me"));
+    } catch (e) {
+      if (!(e instanceof AuthError)) setMe(null);
+    }
+  }, []);
+
+  const loadUsers = useCallback(async () => {
+    try {
+      setUsers(await clientRef.current.api<User[]>("/auth/users"));
+    } catch {
+      // Non-admins get a 403 here; the section is hidden for them anyway.
+      setUsers([]);
+    }
+  }, []);
+
   const loadClaude = useCallback(async () => {
     try {
       const [skills, connectors, plugins, permissions] = await Promise.all([
@@ -538,10 +573,15 @@ export function DashboardProvider({
     if (s === "shared") await loadShared();
     if (s === "memory") await loadMemory();
     if (s === "claude") await loadClaude();
-  }, [loadAgents, loadRun, loadApprovals, loadHosts, loadCommands, loadSchedules, loadShared, loadMemory, loadClaude, loadClaudeModels]);
+    if (s === "users") await loadUsers();
+  }, [loadAgents, loadRun, loadApprovals, loadHosts, loadCommands, loadSchedules, loadShared, loadMemory, loadClaude, loadClaudeModels, loadUsers]);
 
   // Initial load + polling loop. The first tick populates projects *and* agents (and the
   // active section) up front, so the Runs inbox is filled without waiting a poll interval.
+  useEffect(() => {
+    void loadMe();
+  }, [loadMe]);
+
   useEffect(() => {
     let alive = true;
     (async () => {
@@ -570,8 +610,9 @@ export function DashboardProvider({
       if (s === "shared") void loadShared();
       if (s === "memory") void loadMemory();
       if (s === "claude") void loadClaude();
+      if (s === "users") void loadUsers();
     },
-    [loadApprovals, loadHosts, loadCommands, loadSchedules, loadShared, loadMemory, loadClaude, loadClaudeModels],
+    [loadApprovals, loadHosts, loadCommands, loadSchedules, loadShared, loadMemory, loadClaude, loadClaudeModels, loadUsers],
   );
 
   const selectProject = useCallback(
@@ -1400,6 +1441,84 @@ export function DashboardProvider({
     [memoryWrite],
   );
 
+  // ---- user accounts (admin management; direct writes like the Claude pages) ----
+  const createUser = useCallback(
+    async (email: string, isAdmin: boolean): Promise<UserCreated | null> => {
+      try {
+        const created = await clientRef.current.api<UserCreated>("/auth/users", {
+          method: "POST",
+          body: { email: email.trim(), is_admin: isAdmin },
+        });
+        setCmd({
+          text: created.emailed
+            ? `invited ${created.user.email} — an email with their set-password link is on its way`
+            : `invited ${created.user.email} — email is not configured, hand them the link below`,
+          error: false,
+          busy: false,
+        });
+        await loadUsers();
+        return created;
+      } catch (e) {
+        if (e instanceof AuthError) return null;
+        setCmd({ text: (e as Error).message, error: true, busy: false });
+        return null;
+      }
+    },
+    [loadUsers],
+  );
+
+  const updateUser = useCallback(
+    async (id: number, b: { is_admin?: boolean; disabled?: boolean }) => {
+      try {
+        await clientRef.current.api(`/auth/users/${id}`, { method: "PATCH", body: b });
+        await loadUsers();
+        return true;
+      } catch (e) {
+        if (e instanceof AuthError) return false;
+        setCmd({ text: (e as Error).message, error: true, busy: false });
+        return false;
+      }
+    },
+    [loadUsers],
+  );
+
+  const deleteUser = useCallback(
+    async (id: number) => {
+      try {
+        const r = await clientRef.current.api<{ deleted: string; note: string }>(
+          `/auth/users/${id}`,
+          { method: "DELETE" },
+        );
+        setCmd({ text: `removed ${r.deleted} — ${r.note}`, error: false, busy: false });
+        await loadUsers();
+      } catch (e) {
+        if (e instanceof AuthError) return;
+        setCmd({ text: (e as Error).message, error: true, busy: false });
+      }
+    },
+    [loadUsers],
+  );
+
+  const mintResetLink = useCallback(async (id: number): Promise<ResetLink | null> => {
+    try {
+      const link = await clientRef.current.api<ResetLink>(`/auth/users/${id}/reset-link`, {
+        method: "POST",
+      });
+      setCmd({
+        text: link.emailed
+          ? "reset link emailed to the user (also shown below)"
+          : "reset link generated — email is not configured, hand it over yourself",
+        error: false,
+        busy: false,
+      });
+      return link;
+    } catch (e) {
+      if (e instanceof AuthError) return null;
+      setCmd({ text: (e as Error).message, error: true, busy: false });
+      return null;
+    }
+  }, []);
+
   const value: StoreValue = {
     section,
     setSection,
@@ -1424,6 +1543,12 @@ export function DashboardProvider({
     cmd,
     lastError,
     loading,
+    me,
+    users,
+    createUser,
+    updateUser,
+    deleteUser,
+    mintResetLink,
     refresh,
     spawnAgent,
     killAgent,
