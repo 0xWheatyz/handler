@@ -137,8 +137,8 @@ def sync_user_skills(skills: list[dict], home: str | None = None) -> list[str]:
     return written
 
 
-def _load_skills(conn: Connection) -> list[dict]:
-    skills = repo.list_claude_skills(conn, enabled_only=True)
+def _load_skills(conn: Connection, visible_to) -> list[dict]:
+    skills = repo.list_claude_skills(conn, enabled_only=True, visible_to=visible_to)
     return [
         {
             **s,
@@ -150,15 +150,24 @@ def _load_skills(conn: Connection) -> list[dict]:
     ]
 
 
-def apply(working_dir: str, conn: Connection | None = None) -> dict:
-    """Apply the whole web-managed config for one launch; returns a small summary."""
+def apply(working_dir: str, conn: Connection | None = None, visible_to=None) -> dict:
+    """Apply the whole web-managed config for one launch; returns a small summary.
+
+    ``visible_to`` is the launching project's ``owner_user_id`` — the launch gets the
+    shared rows plus that user's own, so one user's skills and connectors never reach
+    another user's agents. ``None`` (a shared/legacy project) applies shared rows only,
+    which is exactly the pre-accounts behavior when nothing has an owner. Note the
+    skills sync target is the worker's user-level skills dir: each launch rewrites it
+    to its own visible set, so on a busy multi-user worker the set follows the most
+    recent launch (a bounded staleness, not a leak — a launch never *reads* another
+    user's skills into its own sync)."""
     if conn is None:
         with connection() as c:
-            connectors = repo.list_claude_connectors(c, enabled_only=True)
-            skills = _load_skills(c)
+            connectors = repo.list_claude_connectors(c, enabled_only=True, visible_to=visible_to)
+            skills = _load_skills(c, visible_to)
     else:
-        connectors = repo.list_claude_connectors(conn, enabled_only=True)
-        skills = _load_skills(conn)
+        connectors = repo.list_claude_connectors(conn, enabled_only=True, visible_to=visible_to)
+        skills = _load_skills(conn, visible_to)
     mcp_path = write_mcp_config(working_dir, [memory_server_connector()] + connectors)
     written = sync_user_skills(skills)
     return {"mcp_config": mcp_path, "skills_written": len(written)}

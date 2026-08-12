@@ -170,10 +170,13 @@ def _collect_skill(skill_dir: str) -> tuple[dict[str, str], dict[str, str], list
     return files_and_meta
 
 
-def import_staged(staging_dir: str, conn: Connection) -> list[dict]:
+def import_staged(
+    staging_dir: str, conn: Connection, owner_user_id: int | None = None
+) -> list[dict]:
     """Upsert every ``<staging>/<name>/SKILL.md`` as a managed skill row (matched by
     name — reinstalling a skill updates it in place) with its auxiliary files. Returns
-    one summary dict per skill."""
+    one summary dict per skill. New rows belong to ``owner_user_id`` (None = shared);
+    a reinstall keeps the existing row's owner."""
     results: list[dict] = []
     for entry in sorted(os.listdir(staging_dir)):
         skill_dir = os.path.join(staging_dir, entry)
@@ -190,7 +193,9 @@ def import_staged(staging_dir: str, conn: Connection) -> list[dict]:
         body = meta["__body__"].strip() + "\n"
         existing = repo.get_claude_skill_by_name(conn, name)
         if existing is None:
-            row = repo.create_claude_skill(conn, name, body, description=description)
+            row = repo.create_claude_skill(
+                conn, name, body, description=description, owner_user_id=owner_user_id
+            )
             action = "created"
         else:
             row = repo.update_claude_skill(
@@ -205,11 +210,12 @@ def import_staged(staging_dir: str, conn: Connection) -> list[dict]:
     return results
 
 
-def run(prompt: str) -> dict:
+def run(prompt: str, owner_user_id: int | None = None) -> dict:
     """The whole flow: stage, run the wrapped prompt through headless claude, import.
 
     Returns ``{"skills": [...], "summary": <claude's closing report>}``; raises
-    InstallError when the run fails or fetched nothing importable.
+    InstallError when the run fails or fetched nothing importable. Imported skills
+    belong to ``owner_user_id`` (None = shared).
     """
     prompt = (prompt or "").strip()
     if not prompt:
@@ -221,7 +227,7 @@ def run(prompt: str) -> dict:
         output = _run_claude(_WRAPPER.format(prompt=prompt), staging, settings_path)
         os.remove(settings_path)  # never importable, but keep the scan surface clean
         with connection() as conn:
-            skills = import_staged(staging, conn)
+            skills = import_staged(staging, conn, owner_user_id=owner_user_id)
     if not skills:
         raise InstallError(
             "the install run finished but no <skill>/SKILL.md landed in the staging "
