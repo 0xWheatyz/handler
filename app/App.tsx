@@ -27,7 +27,12 @@ import {
 } from "@expo-google-fonts/spline-sans-mono";
 
 import { useTheme } from "./src/theme/useTheme";
-import { AppStateProvider, useAppState } from "./src/state/AppState";
+import {
+  AppStateProvider,
+  useAppState,
+  type Screen as ScreenName,
+} from "./src/state/AppState";
+import { ManageScreen } from "./src/screens/manage/ManageScreen";
 import { ServerConfigProvider, useServerConfig } from "./src/state/ServerConfig";
 import { ConnectScreen } from "./src/screens/ConnectScreen";
 import { FleetScreen } from "./src/screens/FleetScreen";
@@ -42,7 +47,9 @@ import { SettingsScreen } from "./src/screens/SettingsScreen";
 function Router() {
   const { screen } = useAppState();
 
-  const Screen = {
+  // Partial while the management subscreens land one by one; anything unmapped
+  // falls back to the fleet so a half-wired build never renders undefined.
+  const screens: Partial<Record<ScreenName, () => React.JSX.Element>> = {
     connect: ConnectScreen,
     fleet: FleetScreen,
     detail: AgentDetailScreen,
@@ -52,7 +59,9 @@ function Router() {
     memory: MemoryScreen,
     log: LogScreen,
     settings: SettingsScreen,
-  }[screen];
+    manage: ManageScreen,
+  };
+  const Screen = screens[screen] ?? FleetScreen;
 
   return <Screen />;
 }

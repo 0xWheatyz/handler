@@ -12,6 +12,8 @@ export interface Project {
   root_dir: string;
   git_remote?: string | null;
   credential_ref?: string | null;
+  /* Owning user account; null = shared/legacy (visible to everyone, admin-managed). */
+  owner_user_id?: number | null;
   created_at: string;
   /* Present on the registration response in git-server mode: the enqueued clone. */
   sync_command_id?: number | null;
@@ -142,6 +144,48 @@ export interface Schedule {
   created_at: string;
 }
 
+/* ---- Claude management (the web dashboard's Claude page) ---- */
+
+export interface ClaudeSkill {
+  id: number;
+  name: string;
+  description?: string | null;
+  content: string;
+  enabled: boolean;
+  /* Relative paths of auxiliary files captured by an install-from-prompt import
+   * (references/, scripts/, …); synced alongside SKILL.md, read-only here. */
+  files: string[];
+  owner_user_id?: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export type McpTransport = "stdio" | "http" | "sse";
+
+export interface ClaudeConnector {
+  id: number;
+  name: string;
+  transport: McpTransport;
+  command?: string | null;
+  args?: string[] | null;
+  env?: Record<string, string> | null;
+  url?: string | null;
+  headers?: Record<string, string> | null;
+  enabled: boolean;
+  owner_user_id?: number | null;
+  created_at: string;
+}
+
+export interface ClaudePlugin {
+  id: number;
+  name: string;
+  marketplace: string;
+  marketplace_repo: string;
+  enabled: boolean;
+  owner_user_id?: number | null;
+  created_at: string;
+}
+
 /* A registered model backend: an Anthropic-API-compatible endpoint (a local model
  * behind LiteLLM / claude-code-router, an LLM gateway) the spawn dropdown offers next
  * to the Claude subscription. The API key is write-only server-side (has_api_key only). */
@@ -157,7 +201,58 @@ export interface ClaudeModel {
   env?: Record<string, string> | null;
   enabled: boolean;
   has_api_key: boolean;
+  owner_user_id?: number | null;
   created_at: string;
+}
+
+/* Stored overrides + the env baseline they merge over at launch (read-only here). */
+export interface ClaudePermissions {
+  default_mode?: string | null;
+  allow: string[];
+  deny: string[];
+  ask: string[];
+  base_mode: string;
+  base_allow: string[];
+}
+
+/* ---- user accounts (/auth) ---- */
+
+export interface AuthStatus {
+  initialized: boolean; // any account exists; false => show the first-run setup form
+  smtp_configured: boolean;
+}
+
+export interface User {
+  id: number;
+  email: string;
+  is_admin: boolean;
+  disabled: boolean;
+  /* False until an invited user sets their password through their invite link. */
+  has_password: boolean;
+  created_at: string;
+}
+
+export interface Me {
+  kind: "user" | "token";
+  user_id?: number | null;
+  email?: string | null;
+  is_admin: boolean;
+}
+
+export interface SessionResponse {
+  token: string;
+  user: User;
+}
+
+export interface UserCreated {
+  user: User;
+  invite_url: string;
+  emailed: boolean;
+}
+
+export interface ResetLink {
+  reset_url: string;
+  emailed: boolean;
 }
 
 /* ---- agent memory (the note graph agents distill their learnings into) ---- */
@@ -235,6 +330,36 @@ export interface ApiClient {
 /* Strip a trailing slash so `baseUrl + "/projects"` never double-slashes. */
 function normalizeBaseUrl(baseUrl: string): string {
   return baseUrl.trim().replace(/\/+$/, "");
+}
+
+/* Unauthenticated auth calls (status/login/setup/forgot/reset) — used by the connect
+ * flow before any token exists, so they sit outside createClient. Unlike the web
+ * client the endpoint is a parameter (the phone talks to a user-entered URL). */
+export async function authApi<T>(
+  baseUrl: string,
+  path: string,
+  body?: unknown,
+): Promise<T> {
+  const res = await fetch(normalizeBaseUrl(baseUrl) + path, {
+    method: body === undefined ? "GET" : "POST",
+    headers: body === undefined ? {} : { "Content-Type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  if (!res.ok) {
+    let detail: string = res.statusText;
+    try {
+      const j = await res.json();
+      if (j && typeof j.detail !== "undefined") {
+        detail = typeof j.detail === "string" ? j.detail : JSON.stringify(j.detail);
+      }
+    } catch {
+      /* non-JSON error body; keep statusText */
+    }
+    const err = new Error(detail) as ApiError;
+    err.status = res.status;
+    throw err;
+  }
+  return (await res.json()) as T;
 }
 
 export function createClient(

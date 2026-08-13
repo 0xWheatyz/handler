@@ -12,9 +12,12 @@ import {
   SectionLabel,
   StatusDot,
 } from "../components/primitives";
+import { Icon } from "../components/Icon";
 import { TabBar } from "../components/TabBar";
+import { useAppState } from "../state/AppState";
 import { useServerConfig } from "../state/ServerConfig";
 import { createClient } from "../api/client";
+import { Pressable } from "react-native";
 
 type Ping =
   | { state: "checking" }
@@ -25,6 +28,7 @@ export function SettingsScreen() {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const { config, clear } = useServerConfig();
+  const { go } = useAppState();
 
   // Notification toggles stay local (no server-side counterpart yet).
   const [pushWait, setPushWait] = useState(true);
@@ -94,6 +98,21 @@ export function SettingsScreen() {
           </View>
         </Card>
 
+        <SectionLabel style={{ marginBottom: 10 }}>Control</SectionLabel>
+        <Card style={{ marginBottom: 20 }}>
+          <NavRow
+            title="Manage"
+            subtitle="Models, skills, repos, users — the full admin surface"
+            onPress={() => go("manage")}
+          />
+          <Divider />
+          <NavRow
+            title="Account"
+            subtitle="Who you're signed in as, change password"
+            onPress={() => go("account")}
+          />
+        </Card>
+
         <SectionLabel style={{ marginBottom: 10 }}>Notifications</SectionLabel>
         <Card style={{ marginBottom: 20 }}>
           <ToggleRow
@@ -122,6 +141,27 @@ export function SettingsScreen() {
       </ScrollView>
       <TabBar active="settings" />
     </View>
+  );
+}
+
+function NavRow({
+  title,
+  subtitle,
+  onPress,
+}: {
+  title: string;
+  subtitle: string;
+  onPress: () => void;
+}) {
+  const { colors } = useTheme();
+  return (
+    <Pressable style={[styles.infoRow, { paddingVertical: 12 }]} onPress={onPress}>
+      <View style={{ flex: 1, gap: 2 }}>
+        <Text style={[text.label, { color: colors.textHeading }]}>{title}</Text>
+        <Text style={[text.caption, { color: colors.textMuted }]}>{subtitle}</Text>
+      </View>
+      <Icon name="chevronRight" size={16} color={colors.textMuted} />
+    </Pressable>
   );
 }
 

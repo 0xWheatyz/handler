@@ -44,7 +44,21 @@ export type Screen =
   | "schedules"
   | "memory"
   | "log"
-  | "settings";
+  | "settings"
+  /* Management subscreens, reached from Settings → Manage. */
+  | "manage"
+  | "models"
+  | "skills"
+  | "connectors"
+  | "plugins"
+  | "permissions"
+  | "repositories"
+  | "gitServers"
+  | "approvals"
+  | "shared"
+  | "users"
+  | "account"
+  | "claudeLogin";
 
 export type DetailTab = "state" | "events" | "log";
 export type BadgeTone = "neutral" | "positive" | "warning" | "danger";
@@ -87,6 +101,11 @@ interface Selected {
 }
 
 interface AppStateValue {
+  /* The API client for the configured endpoint/token. Management screens fetch and
+   * mutate through it directly (with their own local state) rather than growing this
+   * store; it is null only in the moment before ServerConfig loads. */
+  client: ApiClient | null;
+
   // Navigation.
   screen: Screen;
   detailTab: DetailTab;
@@ -609,6 +628,7 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
 
   const value = useMemo<AppStateValue>(
     () => ({
+      client,
       screen,
       detailTab,
       logFilter,
@@ -644,6 +664,7 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
       deleteSchedule,
     }),
     [
+      client,
       screen,
       detailTab,
       logFilter,
