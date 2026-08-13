@@ -6,6 +6,64 @@ the image workflows publish (plus `latest` from every push to `main`).
 
 ## [Unreleased]
 
+### Added — mobile app feature parity
+
+The iOS app (`app/`) catches up with everything the backend and web dashboard gained
+since its last release:
+
+- **Model backend picker on spawn**: the spawn form now offers the registered model
+  backends (`/claude/models`) next to the Claude subscription, matching the web
+  dashboard's per-spawn dropdown; the agent detail meta card shows which backend an
+  agent is pinned to, plus its supervising worker.
+- **Headless run event stream**: a new Events tab on the agent detail screen polls the
+  cursor-paged `/agents/{name}/events` endpoint and renders the stream-json events live —
+  assistant text, tool-call badges, run results with turns/cost, worker notices, raw
+  lines.
+- **Schedules tab**: list, create (interval, role, model backend, prompt), pause/resume,
+  and delete recurring agent spawns across all projects.
+- **Memory tab**: the agent-memory note graph (`/memory/graph`) with kind filters and
+  expandable notes showing body, tags, and links — plus note authoring and deletion.
+- **The full management surface** (Settings → Manage): model backends (CRUD incl.
+  write-only API keys and the claude/pi harness pick), skills (incl.
+  install-from-prompt), MCP connectors, plugins, permission overrides, repository
+  registration (git-server + manual modes, mise-init), forge hosts (encrypted tokens,
+  generated deploy keys), branch approvals, shared context, and the worker's
+  `claude /login` flow — the phone no longer needs a laptop nearby.
+- **User accounts on mobile**: the connect screen gains email sign-in against
+  `/auth/login` (session token stored like the legacy env token), first-run admin
+  setup, forgot-password, and an API-token fallback (auto-selected for servers
+  predating accounts); Settings gains an Account screen (identity, change password,
+  sign out with server-side revocation) and Manage gains the admin Users screen
+  (invite with shareable links, promote/disable, reset links, delete).
+
+### Added — built-in operator skills, pre-installed on every deployment
+
+Eight skills now ship inside Handler (`handler.builtin_skills`) and are seeded into
+the managed skill store on API startup, so every fresh install — and every existing
+deployment on upgrade — starts with the judgment layer the hard gates can't enforce:
+
+- `handler-quiet-output` — work through tool calls, not prose: the transcript is not
+  the deliverable. A minimized `NOTES.md` ledger records what happened and how,
+  problems go to memory, status goes to the checkpoint, and questions go through the
+  question tool (push notification + answer prompt in the web/mobile apps) — never
+  typed into the transcript.
+- `handler-gate-recovery` — respond to a blocked completion/push gate by fixing the
+  real failure; never delete/skip tests, weaken the mise `test` task, or `--no-verify`.
+- `handler-testing` — every behavior change lands with a test that fails without it;
+  keep suites fast and deterministic.
+- `handler-checkpoints` — checkpoints written for a phone-sized glance; questions only
+  for operator-only decisions, with a recommended default.
+- `handler-memory` — search before starting; save gotchas/decisions/runbooks, not
+  narration or secrets.
+- `handler-mise-tasks` — `mise run test` is the verification contract; never narrow it
+  to get green.
+- `handler-scheduled-runs` — the read-state-file → one increment → overwrite-state-file
+  continuity pattern for recurring runs.
+- `handler-secrets` — injected credentials stay out of logs, commits, PRs, and memory.
+
+Seeding is idempotent by name: operator edits/disables survive every upgrade; deleting
+a built-in restores it (as shipped) on the next API start. 6 new tests (406 total).
+
 ### Added — user accounts: email sign-in, invites, resets, per-user separation
 
 - **Email + password accounts** replace "know the API key" for humans. First run shows

@@ -14,7 +14,11 @@ import { Icon } from "./Icon";
  * Leeworks Select, ported from components/forms/Select.jsx. Native <select>
  * has no cross-platform styling in RN, so the field opens a bottom sheet of
  * options — same visual field (value + chevron), real picking behavior.
+ * Options are either bare strings (value doubles as the label) or
+ * value/label pairs, matching the web dashboard's Select.
  */
+export type SelectOption = string | { value: string; label: string };
+
 export function Select({
   label,
   options,
@@ -22,12 +26,17 @@ export function Select({
   onChange,
 }: {
   label: string;
-  options: string[];
+  options: SelectOption[];
   value: string;
   onChange: (v: string) => void;
 }) {
   const { colors } = useTheme();
   const [open, setOpen] = useState(false);
+
+  const opts = options.map((o) =>
+    typeof o === "string" ? { value: o, label: o } : o,
+  );
+  const current = opts.find((o) => o.value === value);
 
   return (
     <View style={{ gap: 6 }}>
@@ -40,7 +49,7 @@ export function Select({
         ]}
       >
         <Text style={[text.body, { color: colors.textHeading, flex: 1 }]}>
-          {value}
+          {current?.label ?? value}
         </Text>
         <Icon name="chevronDown" size={16} color={colors.textMuted} />
       </Pressable>
@@ -54,13 +63,13 @@ export function Select({
               shadows.raised,
             ]}
           >
-            {options.map((opt) => {
-              const on = opt === value;
+            {opts.map((opt) => {
+              const on = opt.value === value;
               return (
                 <Pressable
-                  key={opt}
+                  key={opt.value}
                   onPress={() => {
-                    onChange(opt);
+                    onChange(opt.value);
                     setOpen(false);
                   }}
                   style={({ pressed }) => [
@@ -78,7 +87,7 @@ export function Select({
                       },
                     ]}
                   >
-                    {opt}
+                    {opt.label}
                   </Text>
                   {on && <Icon name="chevronRight" size={16} color={colors.textMuted} />}
                 </Pressable>

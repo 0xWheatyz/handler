@@ -8,12 +8,16 @@ integration are just clients of this — same contract as ``curl``. When ``ui_en
 
 from __future__ import annotations
 
+import logging
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
+from ..builtin_skills import seed_builtin_skills
 from ..config import get_settings
+from ..db.engine import connection
 from .routes import (
     agents,
     approvals,
@@ -31,6 +35,23 @@ from .routes import (
 
 _STATIC_DIR = Path(__file__).parent / "static"
 
+_log = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    # Seed the built-in operator skills (idempotent by name; operator edits and
+    # disables survive). Best-effort: a failure here (e.g. migrations applied
+    # out-of-band and not yet run) must not keep the API from serving.
+    try:
+        with connection() as conn:
+            created = seed_builtin_skills(conn)
+        if created:
+            _log.info("seeded built-in skills: %s", ", ".join(created))
+    except Exception:  # pragma: no cover - defensive; seeding retries next boot
+        _log.warning("could not seed built-in skills", exc_info=True)
+    yield
+
 
 def create_app() -> FastAPI:
     settings = get_settings()
@@ -39,6 +60,7 @@ def create_app() -> FastAPI:
         title="Handler API",
         version="0.1.0",
         summary="Read layer over the Handler control database.",
+        lifespan=_lifespan,
     )
 
     @app.get("/health", tags=["meta"])

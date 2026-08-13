@@ -27,28 +27,63 @@ import {
 } from "@expo-google-fonts/spline-sans-mono";
 
 import { useTheme } from "./src/theme/useTheme";
-import { AppStateProvider, useAppState } from "./src/state/AppState";
+import {
+  AppStateProvider,
+  useAppState,
+  type Screen as ScreenName,
+} from "./src/state/AppState";
+import { ManageScreen } from "./src/screens/manage/ManageScreen";
+import { ModelsScreen } from "./src/screens/manage/ModelsScreen";
+import { SkillsScreen } from "./src/screens/manage/SkillsScreen";
+import { ConnectorsScreen } from "./src/screens/manage/ConnectorsScreen";
+import { PluginsScreen } from "./src/screens/manage/PluginsScreen";
+import { PermissionsScreen } from "./src/screens/manage/PermissionsScreen";
+import { RepositoriesScreen } from "./src/screens/manage/RepositoriesScreen";
+import { GitServersScreen } from "./src/screens/manage/GitServersScreen";
+import { ApprovalsScreen } from "./src/screens/manage/ApprovalsScreen";
+import { SharedContextScreen } from "./src/screens/manage/SharedContextScreen";
+import { UsersScreen } from "./src/screens/manage/UsersScreen";
+import { AccountScreen } from "./src/screens/manage/AccountScreen";
+import { ClaudeLoginScreen } from "./src/screens/manage/ClaudeLoginScreen";
 import { ServerConfigProvider, useServerConfig } from "./src/state/ServerConfig";
 import { ConnectScreen } from "./src/screens/ConnectScreen";
 import { FleetScreen } from "./src/screens/FleetScreen";
 import { AgentDetailScreen } from "./src/screens/AgentDetailScreen";
 import { AnswerScreen } from "./src/screens/AnswerScreen";
 import { SpawnScreen } from "./src/screens/SpawnScreen";
+import { SchedulesScreen } from "./src/screens/SchedulesScreen";
+import { MemoryScreen } from "./src/screens/MemoryScreen";
 import { LogScreen } from "./src/screens/LogScreen";
 import { SettingsScreen } from "./src/screens/SettingsScreen";
 
 function Router() {
   const { screen } = useAppState();
 
-  const Screen = {
+  const screens: Record<ScreenName, () => React.JSX.Element> = {
     connect: ConnectScreen,
     fleet: FleetScreen,
     detail: AgentDetailScreen,
     answer: AnswerScreen,
     spawn: SpawnScreen,
+    schedules: SchedulesScreen,
+    memory: MemoryScreen,
     log: LogScreen,
     settings: SettingsScreen,
-  }[screen];
+    manage: ManageScreen,
+    models: ModelsScreen,
+    skills: SkillsScreen,
+    connectors: ConnectorsScreen,
+    plugins: PluginsScreen,
+    permissions: PermissionsScreen,
+    repositories: RepositoriesScreen,
+    gitServers: GitServersScreen,
+    approvals: ApprovalsScreen,
+    shared: SharedContextScreen,
+    users: UsersScreen,
+    account: AccountScreen,
+    claudeLogin: ClaudeLoginScreen,
+  };
+  const Screen = screens[screen];
 
   return <Screen />;
 }

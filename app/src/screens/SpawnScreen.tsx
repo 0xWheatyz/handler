@@ -18,13 +18,23 @@ import { useAppState } from "../state/AppState";
 export function SpawnScreen() {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
-  const { go, projects, spawn } = useAppState();
+  const { go, projects, models, spawn } = useAppState();
 
   const projectIds = projects.map((p) => p.id);
   const [project, setProject] = useState("");
   const [task, setTask] = useState("");
+  const [model, setModel] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Same choice the web dashboard's spawn form offers: the Claude subscription by
+  // default, plus every enabled registered model backend.
+  const modelOptions = [
+    { value: "", label: "Claude (subscription)" },
+    ...models
+      .filter((m) => m.enabled)
+      .map((m) => ({ value: String(m.id), label: `${m.name} (${m.model})` })),
+  ];
 
   // Default to the first project once they load (or if the current pick vanished).
   useEffect(() => {
@@ -45,7 +55,7 @@ export function SpawnScreen() {
     setError(null);
     setBusy(true);
     try {
-      await spawn(project, task.trim());
+      await spawn(project, task.trim(), model ? Number(model) : null);
       go("fleet");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Couldn’t spawn the agent.");
@@ -86,6 +96,15 @@ export function SpawnScreen() {
                 </Text>
               </View>
             )}
+
+            {modelOptions.length > 1 ? (
+              <Select
+                label="Model"
+                options={modelOptions}
+                value={model}
+                onChange={setModel}
+              />
+            ) : null}
 
             <View>
               <Text style={[text.label, { color: colors.textHeading, marginBottom: 6 }]}>

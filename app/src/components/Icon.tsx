@@ -12,6 +12,8 @@ export type IconName =
   | "chevronDown"
   | "home"
   | "file"
+  | "clock"
+  | "brain"
   | "settings"
   | "x";
 
@@ -28,6 +30,24 @@ const paths: Record<IconName, React.ReactNode> = {
     <>
       <Path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" />
       <Path d="M14 2v4a2 2 0 0 0 2 2h4" />
+    </>
+  ),
+  clock: (
+    <>
+      <Circle cx="12" cy="12" r="10" />
+      <Path d="M12 6v6l4 2" />
+    </>
+  ),
+  /* Lucide waypoints — the memory note graph. */
+  brain: (
+    <>
+      <Circle cx="12" cy="4.5" r="2.5" />
+      <Path d="m10.2 6.3-3.9 3.9" />
+      <Circle cx="4.5" cy="12" r="2.5" />
+      <Path d="M7 12h10" />
+      <Circle cx="19.5" cy="12" r="2.5" />
+      <Path d="m13.8 17.7 3.9-3.9" />
+      <Circle cx="12" cy="19.5" r="2.5" />
     </>
   ),
   settings: (

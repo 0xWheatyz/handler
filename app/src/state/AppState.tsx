@@ -11,11 +11,15 @@ import {
   AuthError,
   createClient,
   type Agent,
+  type AgentEvent,
   type ApiClient,
   type ApiError,
   type Checkmark,
+  type ClaudeModel,
   type LogEntry,
+  type MemoryGraph,
   type Project,
+  type Schedule,
 } from "../api/client";
 import { statusLabel, statusTone, timeAgo } from "../api/format";
 import { useServerConfig } from "./ServerConfig";
@@ -37,10 +41,26 @@ export type Screen =
   | "detail"
   | "answer"
   | "spawn"
+  | "schedules"
+  | "memory"
   | "log"
-  | "settings";
+  | "settings"
+  /* Management subscreens, reached from Settings → Manage. */
+  | "manage"
+  | "models"
+  | "skills"
+  | "connectors"
+  | "plugins"
+  | "permissions"
+  | "repositories"
+  | "gitServers"
+  | "approvals"
+  | "shared"
+  | "users"
+  | "account"
+  | "claudeLogin";
 
-export type DetailTab = "state" | "log";
+export type DetailTab = "state" | "events" | "log";
 export type BadgeTone = "neutral" | "positive" | "warning" | "danger";
 export type RecentTone = "positive" | "danger";
 
@@ -81,6 +101,11 @@ interface Selected {
 }
 
 interface AppStateValue {
+  /* The API client for the configured endpoint/token. Management screens fetch and
+   * mutate through it directly (with their own local state) rather than growing this
+   * store; it is null only in the moment before ServerConfig loads. */
+  client: ApiClient | null;
+
   // Navigation.
   screen: Screen;
   detailTab: DetailTab;
@@ -95,6 +120,14 @@ interface AppStateValue {
   loading: boolean;
   error: string | null;
   projects: Project[];
+  /* Registered model backends (the spawn/schedule dropdown next to the subscription). */
+  models: ClaudeModel[];
+  /* Recurring agent spawns, across all projects. */
+  schedules: Schedule[];
+  /* The agent-memory note graph; null until the memory screen first loads it. */
+  memory: MemoryGraph | null;
+  memoryError: string | null;
+  reloadMemory: () => void;
   waiting: WaitingItem[];
   recent: RecentItem[];
   counts: { running: number; waiting: number; done: number };
@@ -105,11 +138,26 @@ interface AppStateValue {
   selectedAgent: Agent | null;
   selectedCheckmark: Checkmark | null;
   selectedLog: LogEntry[];
+  /* Headless run event stream for the selected agent, oldest-first (empty for a
+   * legacy tmux agent). Polled on a fast cadence while the detail screen is open. */
+  selectedEvents: AgentEvent[];
 
   // Mutations.
   sendAnswer: (text: string) => Promise<{ resumed: boolean; note?: string }>;
-  spawn: (project: string, task: string) => Promise<void>;
+  spawn: (project: string, task: string, modelId?: number | null) => Promise<void>;
   kill: (project: string, name: string) => Promise<void>;
+  createSchedule: (
+    project: string,
+    input: {
+      name_prefix: string;
+      task: string;
+      interval_seconds: number;
+      role?: string | null;
+      model_id?: number | null;
+    },
+  ) => Promise<void>;
+  toggleSchedule: (id: number, enabled: boolean) => Promise<void>;
+  deleteSchedule: (id: number) => Promise<void>;
 }
 
 const AppStateContext = createContext<AppStateValue | null>(null);
@@ -152,6 +200,8 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
 
   // Fleet data.
   const [projects, setProjects] = useState<Project[]>([]);
+  const [models, setModels] = useState<ClaudeModel[]>([]);
+  const [schedules, setSchedules] = useState<Schedule[]>([]);
   const [agentsByProject, setAgentsByProject] = useState<Record<string, Agent[]>>({});
   const [checkmarks, setCheckmarks] = useState<Record<string, Checkmark | null>>({});
   const [logsByAgent, setLogsByAgent] = useState<Record<string, LogEntry[]>>({});
@@ -166,6 +216,8 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
 
   const resetData = useCallback(() => {
     setProjects([]);
+    setModels([]);
+    setSchedules([]);
     setAgentsByProject({});
     setCheckmarks({});
     setLogsByAgent({});
@@ -189,6 +241,22 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
     try {
       setError(null);
       const projs = await client.api<Project[]>("/projects");
+
+      // Model backends feed the spawn dropdown; an older server without the endpoint
+      // (404) just means "subscription only", so failures leave the list empty.
+      const modelList = await client
+        .api<ClaudeModel[]>("/claude/models")
+        .catch((e) => {
+          if (e instanceof AuthError) throw e;
+          return [] as ClaudeModel[];
+        });
+
+      const scheduleList = await client
+        .api<Schedule[]>("/schedules")
+        .catch((e) => {
+          if (e instanceof AuthError) throw e;
+          return [] as Schedule[];
+        });
 
       // Per-agent/per-project sub-requests are isolated: one flaky agent (a 500 on
       // its log, say) must not blank the whole fleet. A rejected AuthError still
@@ -249,6 +317,8 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
       for (const [k, v] of logEntries) logMap[k] = v;
 
       setProjects(projs);
+      setModels(modelList);
+      setSchedules(scheduleList);
       setAgentsByProject(abp);
       setCheckmarks(cmMap);
       setLogsByAgent(logMap);
@@ -360,6 +430,68 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
     return rows;
   }, [agentsByProject, logsByAgent]);
 
+  // ---- Agent memory --------------------------------------------------------
+  // The note graph is loaded when the memory screen opens (and re-fetched on each
+  // open) rather than on the fleet poll — it changes slowly and can be large.
+  const [memory, setMemory] = useState<MemoryGraph | null>(null);
+  const [memoryError, setMemoryError] = useState<string | null>(null);
+  const [memoryNonce, setMemoryNonce] = useState(0);
+  const reloadMemory = useCallback(() => setMemoryNonce((n) => n + 1), []);
+  useEffect(() => {
+    if (!client || screen !== "memory") return;
+    let stale = false;
+    setMemoryError(null);
+    client
+      .api<MemoryGraph>("/memory/graph")
+      .then((g) => {
+        if (!stale) setMemory(g);
+      })
+      .catch((e) => {
+        if (e instanceof AuthError) return; // handled by onUnauthorized
+        if (!stale) setMemoryError(errMessage(e));
+      });
+    return () => {
+      stale = true;
+    };
+  }, [client, screen, memoryNonce]);
+
+  // ---- Selected agent's run events ----------------------------------------
+  // Cursor-paged poll (after_id = largest id seen) on a 3s cadence, active only
+  // while the detail or answer screen is showing an agent. Selection change resets
+  // the stream; the cap keeps a very chatty run from growing without bound.
+  const [selectedEvents, setSelectedEvents] = useState<AgentEvent[]>([]);
+  useEffect(() => {
+    setSelectedEvents([]);
+    if (!client || !selected || (screen !== "detail" && screen !== "answer")) {
+      return;
+    }
+    const { project, name } = selected;
+    let cursor = 0;
+    let stopped = false;
+
+    async function poll() {
+      if (!client) return;
+      try {
+        const batch = await client.api<AgentEvent[]>(
+          `/projects/${enc(project)}/agents/${enc(name)}/events?after_id=${cursor}&limit=200`,
+        );
+        if (stopped || batch.length === 0) return;
+        cursor = batch[batch.length - 1].id;
+        setSelectedEvents((prev) => [...prev, ...batch].slice(-400));
+      } catch {
+        // AuthError signs out via onUnauthorized; anything else (a 404 from an
+        // older server, a blip) just skips this cycle.
+      }
+    }
+
+    void poll();
+    const id = setInterval(() => void poll(), 3000);
+    return () => {
+      stopped = true;
+      clearInterval(id);
+    };
+  }, [client, selected, screen]);
+
   // ---- Selected agent ------------------------------------------------------
   const selectedAgent = useMemo<Agent | null>(() => {
     if (!selected) return null;
@@ -424,11 +556,15 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
   );
 
   const spawn = useCallback(
-    async (project: string, task: string) => {
+    async (project: string, task: string, modelId?: number | null) => {
       if (!client) throw new Error("not connected");
       const name = deriveAgentName(task);
       await client.api(`/projects/${enc(project)}/agents/spawn`, {
-        body: { name, ...(task.trim() ? { task: task.trim() } : {}) },
+        body: {
+          name,
+          ...(task.trim() ? { task: task.trim() } : {}),
+          ...(modelId != null ? { model_id: modelId } : {}),
+        },
       });
       await refresh();
     },
@@ -446,8 +582,56 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
     [client, refresh],
   );
 
+  const createSchedule = useCallback(
+    async (
+      project: string,
+      input: {
+        name_prefix: string;
+        task: string;
+        interval_seconds: number;
+        role?: string | null;
+        model_id?: number | null;
+      },
+    ) => {
+      if (!client) throw new Error("not connected");
+      await client.api(`/projects/${enc(project)}/schedules`, {
+        body: {
+          name_prefix: input.name_prefix,
+          task: input.task,
+          interval_seconds: input.interval_seconds,
+          ...(input.role ? { role: input.role } : {}),
+          ...(input.model_id != null ? { model_id: input.model_id } : {}),
+        },
+      });
+      await refresh();
+    },
+    [client, refresh],
+  );
+
+  const toggleSchedule = useCallback(
+    async (id: number, enabled: boolean) => {
+      if (!client) throw new Error("not connected");
+      await client.api(`/schedules/${id}`, {
+        method: "PATCH",
+        body: { enabled },
+      });
+      await refresh();
+    },
+    [client, refresh],
+  );
+
+  const deleteSchedule = useCallback(
+    async (id: number) => {
+      if (!client) throw new Error("not connected");
+      await client.api(`/schedules/${id}`, { method: "DELETE" });
+      await refresh();
+    },
+    [client, refresh],
+  );
+
   const value = useMemo<AppStateValue>(
     () => ({
+      client,
       screen,
       detailTab,
       logFilter,
@@ -460,6 +644,11 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
       loading,
       error,
       projects,
+      models,
+      schedules,
+      memory,
+      memoryError,
+      reloadMemory,
       waiting,
       recent,
       counts,
@@ -469,12 +658,17 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
       selectedAgent,
       selectedCheckmark,
       selectedLog,
+      selectedEvents,
 
       sendAnswer,
       spawn,
       kill,
+      createSchedule,
+      toggleSchedule,
+      deleteSchedule,
     }),
     [
+      client,
       screen,
       detailTab,
       logFilter,
@@ -483,6 +677,11 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
       loading,
       error,
       projects,
+      models,
+      schedules,
+      memory,
+      memoryError,
+      reloadMemory,
       waiting,
       recent,
       counts,
@@ -491,9 +690,13 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
       selectedAgent,
       selectedCheckmark,
       selectedLog,
+      selectedEvents,
       sendAnswer,
       spawn,
       kill,
+      createSchedule,
+      toggleSchedule,
+      deleteSchedule,
     ],
   );
 

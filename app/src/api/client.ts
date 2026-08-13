@@ -12,6 +12,8 @@ export interface Project {
   root_dir: string;
   git_remote?: string | null;
   credential_ref?: string | null;
+  /* Owning user account; null = shared/legacy (visible to everyone, admin-managed). */
+  owner_user_id?: number | null;
   created_at: string;
   /* Present on the registration response in git-server mode: the enqueued clone. */
   sync_command_id?: number | null;
@@ -27,10 +29,31 @@ export interface Agent {
   working_dir: string;
   status: string;
   role?: string | null;
-  /* Latest tmux pane-tail snapshot from the worker, so the UI can show what a running
-   * agent is actually doing (and expose one wedged on an interactive prompt). */
+  /* Model backend the agent is pinned to (see ClaudeModel); null = the Claude
+   * subscription the worker is logged in to. */
+  model_id?: number | null;
+  /* Latest output snapshot from the worker: the tmux pane tail for legacy agents, the
+   * latest assistant text for headless runs. For a crashed agent this is the evidence
+   * frame — the last thing the process said. */
   last_output?: string | null;
   output_at?: string | null;
+  /* Headless runner: claude session UUID (null = legacy tmux agent) + supervising worker. */
+  session_id?: string | null;
+  worker_id?: string | null;
+  created_at: string;
+}
+
+/* One persisted stream-json event of a headless run (GET .../events, cursor-paged by id).
+ * `type` mirrors the stream (system/assistant/user/result) plus `worker` (runner notices)
+ * and `raw` (unparseable line kept verbatim). */
+export interface AgentEvent {
+  id: number;
+  agent_id: number;
+  run_id: number;
+  session_id?: string | null;
+  seq: number;
+  type: string;
+  payload?: Record<string, unknown> | null;
   created_at: string;
 }
 
@@ -111,12 +134,154 @@ export interface Schedule {
   role?: string | null;
   worktree?: string | null;
   subdir?: string | null;
+  /* Model backend every fired run spawns on (see ClaudeModel); null = subscription. */
+  model_id?: number | null;
   interval_seconds: number;
   enabled: boolean;
   next_run_at: string;
   last_run_at?: string | null;
   last_command_id?: number | null;
   created_at: string;
+}
+
+/* ---- Claude management (the web dashboard's Claude page) ---- */
+
+export interface ClaudeSkill {
+  id: number;
+  name: string;
+  description?: string | null;
+  content: string;
+  enabled: boolean;
+  /* Relative paths of auxiliary files captured by an install-from-prompt import
+   * (references/, scripts/, …); synced alongside SKILL.md, read-only here. */
+  files: string[];
+  owner_user_id?: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export type McpTransport = "stdio" | "http" | "sse";
+
+export interface ClaudeConnector {
+  id: number;
+  name: string;
+  transport: McpTransport;
+  command?: string | null;
+  args?: string[] | null;
+  env?: Record<string, string> | null;
+  url?: string | null;
+  headers?: Record<string, string> | null;
+  enabled: boolean;
+  owner_user_id?: number | null;
+  created_at: string;
+}
+
+export interface ClaudePlugin {
+  id: number;
+  name: string;
+  marketplace: string;
+  marketplace_repo: string;
+  enabled: boolean;
+  owner_user_id?: number | null;
+  created_at: string;
+}
+
+/* A registered model backend: an Anthropic-API-compatible endpoint (a local model
+ * behind LiteLLM / claude-code-router, an LLM gateway) the spawn dropdown offers next
+ * to the Claude subscription. The API key is write-only server-side (has_api_key only). */
+export interface ClaudeModel {
+  id: number;
+  name: string;
+  base_url: string;
+  model: string;
+  small_fast_model?: string | null;
+  /* Which agent binary runs against this backend: "claude" (Anthropic-compatible
+     endpoint required) or "pi" (bare OpenAI-compatible endpoint, lightweight). */
+  harness?: "claude" | "pi";
+  env?: Record<string, string> | null;
+  enabled: boolean;
+  has_api_key: boolean;
+  owner_user_id?: number | null;
+  created_at: string;
+}
+
+/* Stored overrides + the env baseline they merge over at launch (read-only here). */
+export interface ClaudePermissions {
+  default_mode?: string | null;
+  allow: string[];
+  deny: string[];
+  ask: string[];
+  base_mode: string;
+  base_allow: string[];
+}
+
+/* ---- user accounts (/auth) ---- */
+
+export interface AuthStatus {
+  initialized: boolean; // any account exists; false => show the first-run setup form
+  smtp_configured: boolean;
+}
+
+export interface User {
+  id: number;
+  email: string;
+  is_admin: boolean;
+  disabled: boolean;
+  /* False until an invited user sets their password through their invite link. */
+  has_password: boolean;
+  created_at: string;
+}
+
+export interface Me {
+  kind: "user" | "token";
+  user_id?: number | null;
+  email?: string | null;
+  is_admin: boolean;
+}
+
+export interface SessionResponse {
+  token: string;
+  user: User;
+}
+
+export interface UserCreated {
+  user: User;
+  invite_url: string;
+  emailed: boolean;
+}
+
+export interface ResetLink {
+  reset_url: string;
+  emailed: boolean;
+}
+
+/* ---- agent memory (the note graph agents distill their learnings into) ---- */
+
+export interface MemoryNote {
+  id: number;
+  project_id?: string | null; // null = global note
+  agent_id?: number | null; // authoring agent; null = operator-authored
+  title: string;
+  body: string;
+  kind: string;
+  tags?: string[] | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MemoryLink {
+  id: number;
+  src_note_id: number;
+  dst_note_id: number;
+  relation: string;
+  created_by_agent_id?: number | null;
+  created_at: string;
+}
+
+/* Everything the graph view draws, in one response (GET /memory/graph). */
+export interface MemoryGraph {
+  notes: MemoryNote[];
+  links: MemoryLink[];
 }
 
 export interface SharedContext {
@@ -165,6 +330,36 @@ export interface ApiClient {
 /* Strip a trailing slash so `baseUrl + "/projects"` never double-slashes. */
 function normalizeBaseUrl(baseUrl: string): string {
   return baseUrl.trim().replace(/\/+$/, "");
+}
+
+/* Unauthenticated auth calls (status/login/setup/forgot/reset) — used by the connect
+ * flow before any token exists, so they sit outside createClient. Unlike the web
+ * client the endpoint is a parameter (the phone talks to a user-entered URL). */
+export async function authApi<T>(
+  baseUrl: string,
+  path: string,
+  body?: unknown,
+): Promise<T> {
+  const res = await fetch(normalizeBaseUrl(baseUrl) + path, {
+    method: body === undefined ? "GET" : "POST",
+    headers: body === undefined ? {} : { "Content-Type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  if (!res.ok) {
+    let detail: string = res.statusText;
+    try {
+      const j = await res.json();
+      if (j && typeof j.detail !== "undefined") {
+        detail = typeof j.detail === "string" ? j.detail : JSON.stringify(j.detail);
+      }
+    } catch {
+      /* non-JSON error body; keep statusText */
+    }
+    const err = new Error(detail) as ApiError;
+    err.status = res.status;
+    throw err;
+  }
+  return (await res.json()) as T;
 }
 
 export function createClient(

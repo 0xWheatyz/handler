@@ -7,13 +7,15 @@ import { Icon, type IconName } from "./Icon";
 import { useAppState, type Screen } from "../state/AppState";
 
 /**
- * Bottom tab bar shown on the three primary screens (Fleet / Log / Settings).
- * The design's fixed 24px bottom inset is replaced by the real home-indicator
- * safe-area inset.
+ * Bottom tab bar shown on the primary screens (Fleet / Schedules / Log /
+ * Settings). The design's fixed 24px bottom inset is replaced by the real
+ * home-indicator safe-area inset.
  */
 
 const TABS: { key: Screen; label: string; icon: IconName }[] = [
   { key: "fleet", label: "Fleet", icon: "home" },
+  { key: "schedules", label: "Schedules", icon: "clock" },
+  { key: "memory", label: "Memory", icon: "brain" },
   { key: "log", label: "Log", icon: "file" },
   { key: "settings", label: "Settings", icon: "settings" },
 ];
