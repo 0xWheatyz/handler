@@ -4,6 +4,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { fonts, radius, text } from "../theme/tokens";
 import { useTheme } from "../theme/useTheme";
 import { Button } from "../components/Button";
+import { EventLine } from "../components/EventLine";
 import { PageHeader } from "../components/PageHeader";
 import { SegmentedControl } from "../components/SegmentedControl";
 import { Card, Divider, Mono, SectionLabel } from "../components/primitives";
@@ -24,9 +25,11 @@ export function AgentDetailScreen() {
     openAnswer,
     detailTab,
     setDetailTab,
+    models,
     selectedAgent,
     selectedCheckmark,
     selectedLog,
+    selectedEvents,
     kill,
   } = useAppState();
 
@@ -48,9 +51,16 @@ export function AgentDetailScreen() {
   const cm = selectedCheckmark;
   const openQuestion = cm?.open_question?.trim();
 
+  const modelName =
+    agent.model_id != null
+      ? models.find((m) => m.id === agent.model_id)?.name ?? `#${agent.model_id}`
+      : "claude";
+
   const meta = [
     { label: "Started", value: timeAgo(agent.created_at) },
     { label: "Status", value: statusLabel(agent.status) },
+    { label: "Model", value: modelName },
+    ...(agent.worker_id ? [{ label: "Worker", value: agent.worker_id }] : []),
     { label: "Tests", value: cm ? statusLabel(cm.tests_status) : "—" },
     { label: "Build", value: cm ? statusLabel(cm.build_status) : "—" },
   ];
@@ -101,6 +111,7 @@ export function AgentDetailScreen() {
           <SegmentedControl
             segments={[
               { value: "state", label: "Checkmark" },
+              { value: "events", label: "Events" },
               { value: "log", label: "Log" },
             ]}
             value={detailTab}
@@ -178,6 +189,27 @@ export function AgentDetailScreen() {
               ))}
             </Card>
           </>
+        ) : detailTab === "events" ? (
+          <View
+            style={[
+              styles.sunkenCard,
+              { backgroundColor: colors.surfaceSunken, borderColor: colors.borderSubtle },
+            ]}
+          >
+            {selectedEvents.length === 0 ? (
+              <Text style={[text.bodySm, { color: colors.textMuted }]}>
+                {agent.session_id
+                  ? "No run events yet."
+                  : "No event stream — this agent predates the headless runner."}
+              </Text>
+            ) : (
+              <View style={{ gap: 10 }}>
+                {selectedEvents.map((e) => (
+                  <EventLine key={e.id} event={e} />
+                ))}
+              </View>
+            )}
+          </View>
         ) : (
           <View
             style={[

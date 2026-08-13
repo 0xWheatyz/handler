@@ -11,6 +11,7 @@ import {
   AuthError,
   createClient,
   type Agent,
+  type AgentEvent,
   type ApiClient,
   type ApiError,
   type Checkmark,
@@ -41,7 +42,7 @@ export type Screen =
   | "log"
   | "settings";
 
-export type DetailTab = "state" | "log";
+export type DetailTab = "state" | "events" | "log";
 export type BadgeTone = "neutral" | "positive" | "warning" | "danger";
 export type RecentTone = "positive" | "danger";
 
@@ -108,6 +109,9 @@ interface AppStateValue {
   selectedAgent: Agent | null;
   selectedCheckmark: Checkmark | null;
   selectedLog: LogEntry[];
+  /* Headless run event stream for the selected agent, oldest-first (empty for a
+   * legacy tmux agent). Polled on a fast cadence while the detail screen is open. */
+  selectedEvents: AgentEvent[];
 
   // Mutations.
   sendAnswer: (text: string) => Promise<{ resumed: boolean; note?: string }>;
@@ -375,6 +379,43 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
     return rows;
   }, [agentsByProject, logsByAgent]);
 
+  // ---- Selected agent's run events ----------------------------------------
+  // Cursor-paged poll (after_id = largest id seen) on a 3s cadence, active only
+  // while the detail or answer screen is showing an agent. Selection change resets
+  // the stream; the cap keeps a very chatty run from growing without bound.
+  const [selectedEvents, setSelectedEvents] = useState<AgentEvent[]>([]);
+  useEffect(() => {
+    setSelectedEvents([]);
+    if (!client || !selected || (screen !== "detail" && screen !== "answer")) {
+      return;
+    }
+    const { project, name } = selected;
+    let cursor = 0;
+    let stopped = false;
+
+    async function poll() {
+      if (!client) return;
+      try {
+        const batch = await client.api<AgentEvent[]>(
+          `/projects/${enc(project)}/agents/${enc(name)}/events?after_id=${cursor}&limit=200`,
+        );
+        if (stopped || batch.length === 0) return;
+        cursor = batch[batch.length - 1].id;
+        setSelectedEvents((prev) => [...prev, ...batch].slice(-400));
+      } catch {
+        // AuthError signs out via onUnauthorized; anything else (a 404 from an
+        // older server, a blip) just skips this cycle.
+      }
+    }
+
+    void poll();
+    const id = setInterval(() => void poll(), 3000);
+    return () => {
+      stopped = true;
+      clearInterval(id);
+    };
+  }, [client, selected, screen]);
+
   // ---- Selected agent ------------------------------------------------------
   const selectedAgent = useMemo<Agent | null>(() => {
     if (!selected) return null;
@@ -489,6 +530,7 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
       selectedAgent,
       selectedCheckmark,
       selectedLog,
+      selectedEvents,
 
       sendAnswer,
       spawn,
@@ -512,6 +554,7 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
       selectedAgent,
       selectedCheckmark,
       selectedLog,
+      selectedEvents,
       sendAnswer,
       spawn,
       kill,
