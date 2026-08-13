@@ -33,6 +33,18 @@ import {
   type Screen as ScreenName,
 } from "./src/state/AppState";
 import { ManageScreen } from "./src/screens/manage/ManageScreen";
+import { ModelsScreen } from "./src/screens/manage/ModelsScreen";
+import { SkillsScreen } from "./src/screens/manage/SkillsScreen";
+import { ConnectorsScreen } from "./src/screens/manage/ConnectorsScreen";
+import { PluginsScreen } from "./src/screens/manage/PluginsScreen";
+import { PermissionsScreen } from "./src/screens/manage/PermissionsScreen";
+import { RepositoriesScreen } from "./src/screens/manage/RepositoriesScreen";
+import { GitServersScreen } from "./src/screens/manage/GitServersScreen";
+import { ApprovalsScreen } from "./src/screens/manage/ApprovalsScreen";
+import { SharedContextScreen } from "./src/screens/manage/SharedContextScreen";
+import { UsersScreen } from "./src/screens/manage/UsersScreen";
+import { AccountScreen } from "./src/screens/manage/AccountScreen";
+import { ClaudeLoginScreen } from "./src/screens/manage/ClaudeLoginScreen";
 import { ServerConfigProvider, useServerConfig } from "./src/state/ServerConfig";
 import { ConnectScreen } from "./src/screens/ConnectScreen";
 import { FleetScreen } from "./src/screens/FleetScreen";
@@ -47,9 +59,7 @@ import { SettingsScreen } from "./src/screens/SettingsScreen";
 function Router() {
   const { screen } = useAppState();
 
-  // Partial while the management subscreens land one by one; anything unmapped
-  // falls back to the fleet so a half-wired build never renders undefined.
-  const screens: Partial<Record<ScreenName, () => React.JSX.Element>> = {
+  const screens: Record<ScreenName, () => React.JSX.Element> = {
     connect: ConnectScreen,
     fleet: FleetScreen,
     detail: AgentDetailScreen,
@@ -60,8 +70,20 @@ function Router() {
     log: LogScreen,
     settings: SettingsScreen,
     manage: ManageScreen,
+    models: ModelsScreen,
+    skills: SkillsScreen,
+    connectors: ConnectorsScreen,
+    plugins: PluginsScreen,
+    permissions: PermissionsScreen,
+    repositories: RepositoriesScreen,
+    gitServers: GitServersScreen,
+    approvals: ApprovalsScreen,
+    shared: SharedContextScreen,
+    users: UsersScreen,
+    account: AccountScreen,
+    claudeLogin: ClaudeLoginScreen,
   };
-  const Screen = screens[screen] ?? FleetScreen;
+  const Screen = screens[screen];
 
   return <Screen />;
 }

@@ -127,6 +127,7 @@ interface AppStateValue {
   /* The agent-memory note graph; null until the memory screen first loads it. */
   memory: MemoryGraph | null;
   memoryError: string | null;
+  reloadMemory: () => void;
   waiting: WaitingItem[];
   recent: RecentItem[];
   counts: { running: number; waiting: number; done: number };
@@ -434,6 +435,8 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
   // open) rather than on the fleet poll — it changes slowly and can be large.
   const [memory, setMemory] = useState<MemoryGraph | null>(null);
   const [memoryError, setMemoryError] = useState<string | null>(null);
+  const [memoryNonce, setMemoryNonce] = useState(0);
+  const reloadMemory = useCallback(() => setMemoryNonce((n) => n + 1), []);
   useEffect(() => {
     if (!client || screen !== "memory") return;
     let stale = false;
@@ -450,7 +453,7 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
     return () => {
       stale = true;
     };
-  }, [client, screen]);
+  }, [client, screen, memoryNonce]);
 
   // ---- Selected agent's run events ----------------------------------------
   // Cursor-paged poll (after_id = largest id seen) on a 3s cadence, active only
@@ -645,6 +648,7 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
       schedules,
       memory,
       memoryError,
+      reloadMemory,
       waiting,
       recent,
       counts,
@@ -677,6 +681,7 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
       schedules,
       memory,
       memoryError,
+      reloadMemory,
       waiting,
       recent,
       counts,
