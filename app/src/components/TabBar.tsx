@@ -15,6 +15,7 @@ import { useAppState, type Screen } from "../state/AppState";
 const TABS: { key: Screen; label: string; icon: IconName }[] = [
   { key: "fleet", label: "Fleet", icon: "home" },
   { key: "schedules", label: "Schedules", icon: "clock" },
+  { key: "memory", label: "Memory", icon: "brain" },
   { key: "log", label: "Log", icon: "file" },
   { key: "settings", label: "Settings", icon: "settings" },
 ];

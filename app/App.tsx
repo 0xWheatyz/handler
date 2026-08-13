@@ -35,6 +35,7 @@ import { AgentDetailScreen } from "./src/screens/AgentDetailScreen";
 import { AnswerScreen } from "./src/screens/AnswerScreen";
 import { SpawnScreen } from "./src/screens/SpawnScreen";
 import { SchedulesScreen } from "./src/screens/SchedulesScreen";
+import { MemoryScreen } from "./src/screens/MemoryScreen";
 import { LogScreen } from "./src/screens/LogScreen";
 import { SettingsScreen } from "./src/screens/SettingsScreen";
 
@@ -48,6 +49,7 @@ function Router() {
     answer: AnswerScreen,
     spawn: SpawnScreen,
     schedules: SchedulesScreen,
+    memory: MemoryScreen,
     log: LogScreen,
     settings: SettingsScreen,
   }[screen];

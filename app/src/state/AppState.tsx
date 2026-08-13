@@ -17,6 +17,7 @@ import {
   type Checkmark,
   type ClaudeModel,
   type LogEntry,
+  type MemoryGraph,
   type Project,
   type Schedule,
 } from "../api/client";
@@ -41,6 +42,7 @@ export type Screen =
   | "answer"
   | "spawn"
   | "schedules"
+  | "memory"
   | "log"
   | "settings";
 
@@ -103,6 +105,9 @@ interface AppStateValue {
   models: ClaudeModel[];
   /* Recurring agent spawns, across all projects. */
   schedules: Schedule[];
+  /* The agent-memory note graph; null until the memory screen first loads it. */
+  memory: MemoryGraph | null;
+  memoryError: string | null;
   waiting: WaitingItem[];
   recent: RecentItem[];
   counts: { running: number; waiting: number; done: number };
@@ -405,6 +410,29 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
     return rows;
   }, [agentsByProject, logsByAgent]);
 
+  // ---- Agent memory --------------------------------------------------------
+  // The note graph is loaded when the memory screen opens (and re-fetched on each
+  // open) rather than on the fleet poll — it changes slowly and can be large.
+  const [memory, setMemory] = useState<MemoryGraph | null>(null);
+  const [memoryError, setMemoryError] = useState<string | null>(null);
+  useEffect(() => {
+    if (!client || screen !== "memory") return;
+    let stale = false;
+    setMemoryError(null);
+    client
+      .api<MemoryGraph>("/memory/graph")
+      .then((g) => {
+        if (!stale) setMemory(g);
+      })
+      .catch((e) => {
+        if (e instanceof AuthError) return; // handled by onUnauthorized
+        if (!stale) setMemoryError(errMessage(e));
+      });
+    return () => {
+      stale = true;
+    };
+  }, [client, screen]);
+
   // ---- Selected agent's run events ----------------------------------------
   // Cursor-paged poll (after_id = largest id seen) on a 3s cadence, active only
   // while the detail or answer screen is showing an agent. Selection change resets
@@ -595,6 +623,8 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
       projects,
       models,
       schedules,
+      memory,
+      memoryError,
       waiting,
       recent,
       counts,
@@ -624,6 +654,8 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
       projects,
       models,
       schedules,
+      memory,
+      memoryError,
       waiting,
       recent,
       counts,
