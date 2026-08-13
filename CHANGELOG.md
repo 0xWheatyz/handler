@@ -6,6 +6,14 @@ the image workflows publish (plus `latest` from every push to `main`).
 
 ## [Unreleased]
 
+### Added
+
+- **Activity screen in the mobile app** (Settings → Manage → Activity): the
+  control-command queue with status filters, per-row worker attribution
+  (`on <worker>` / `unclaimed`), expandable result/error text, a Sweep CI action, and
+  a 5s auto-refresh — the screen that answers "why is my login/spawn/sync stuck" from
+  the phone.
+
 ### Fixed
 
 - **Untrusted-workspace wedge on headless runs.** Phase 4's tmux-path deletion also

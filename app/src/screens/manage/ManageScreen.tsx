@@ -29,6 +29,7 @@ const CLAUDE_ROWS: Row[] = [
 ];
 
 const SERVER_ROWS: Row[] = [
+  { screen: "activity", title: "Activity", subtitle: "The command queue — see why an action is stuck" },
   { screen: "repositories", title: "Repositories", subtitle: "Register + sync project repos" },
   { screen: "gitServers", title: "Git servers", subtitle: "Forge hosts, tokens, deploy keys" },
   { screen: "approvals", title: "Approvals", subtitle: "Approve or reject protected branches" },

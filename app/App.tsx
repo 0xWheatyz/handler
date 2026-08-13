@@ -41,6 +41,7 @@ import { PermissionsScreen } from "./src/screens/manage/PermissionsScreen";
 import { RepositoriesScreen } from "./src/screens/manage/RepositoriesScreen";
 import { GitServersScreen } from "./src/screens/manage/GitServersScreen";
 import { ApprovalsScreen } from "./src/screens/manage/ApprovalsScreen";
+import { ActivityScreen } from "./src/screens/manage/ActivityScreen";
 import { SharedContextScreen } from "./src/screens/manage/SharedContextScreen";
 import { UsersScreen } from "./src/screens/manage/UsersScreen";
 import { AccountScreen } from "./src/screens/manage/AccountScreen";
@@ -78,6 +79,7 @@ function Router() {
     repositories: RepositoriesScreen,
     gitServers: GitServersScreen,
     approvals: ApprovalsScreen,
+    activity: ActivityScreen,
     shared: SharedContextScreen,
     users: UsersScreen,
     account: AccountScreen,
