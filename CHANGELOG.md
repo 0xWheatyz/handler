@@ -6,6 +6,20 @@ the image workflows publish (plus `latest` from every push to `main`).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Agents missing freshly pushed commits.** A spawn with no explicit placement ran
+  the agent in the shared project-root checkout, and the root only fast-forwards
+  while parked on the default branch — so as soon as one agent left it on a feature
+  branch, every later no-placement spawn (the mobile app always, the web form with an
+  empty branch field) started from a stale tree even though the push had been
+  fetched. Operator spawns on a git root now default to a fresh worktree on
+  `agent/<name>` cut from `origin/HEAD` — always the remote's latest push, and real
+  per-agent isolation (README's "one working directory or git worktree per agent").
+  Explicit worktree/subdir placements are honored unchanged; schedule firings and the
+  mise-init bootstrap keep root placement (their conventions depend on the root
+  tree); non-git roots are untouched. 4 regression tests.
+
 ### Added
 
 - **Tappable fleet stat cards** in the mobile app: Running / Waiting / Done now open a

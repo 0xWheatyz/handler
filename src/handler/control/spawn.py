@@ -77,6 +77,7 @@ def spawn(
     require_tests: bool = True,
     mise_init: bool = False,
     worker_id: str | None = None,
+    auto_worktree: bool = True,
 ) -> dict:
     """Create and launch an agent. Returns the agent row.
 
@@ -88,6 +89,14 @@ def spawn(
     instead of the worker's Claude subscription — same binary, same hooks/skills/gates,
     different ``ANTHROPIC_*`` env. ``worker_id`` identifies the calling worker container
     (headless runs record it on the run row; the CLI defaults to a pid-scoped id).
+
+    ``auto_worktree``: when no placement is given and the root is a git repo, default to
+    a fresh worktree on ``agent/<name>`` instead of the shared root checkout. The root
+    only fast-forwards while parked on the default branch, so agents sharing it saw
+    stale trees the moment one of them left it on a feature branch — a worktree cut
+    from ``origin/HEAD`` always starts at the remote's latest push (README's "one
+    working directory or git worktree per agent"). Schedule firings pass False: their
+    continuity convention is a state file living in the root tree across runs.
     """
     if not task:
         # ``claude -p`` has no idle-REPL mode — an empty prompt would exit immediately
@@ -120,6 +129,20 @@ def spawn(
                     reposync.sync_project(project, conn)
                 except reposync.SyncError as exc:
                     raise SpawnError(str(exc)) from exc
+
+        if (
+            auto_worktree
+            and worktree_branch is None
+            and subdir is None
+            and not mise_init  # the bootstrap commits .mise.toml to the default branch
+            and gitops.is_repo(root)
+        ):
+            # Isolation by default: without this, every no-placement spawn shares the
+            # root checkout, whose tree goes stale as soon as an agent parks it off the
+            # default branch. (Name reuse after a deleted agent can leave a stale
+            # agent/<name> branch behind; it is then checked out as-is, same as any
+            # explicitly named existing branch.)
+            worktree_branch = f"agent/{name}"
 
         try:
             working_dir = worktree.resolve_working_dir(

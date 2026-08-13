@@ -50,6 +50,11 @@ def _cmd_spawn(command: dict) -> dict:
     name = command.get("agent_name") or p.get("name")
     if not command.get("project_id") or not name:
         raise CommandError("spawn requires project_id and an agent name")
+    # Schedule firings keep the legacy root placement when their schedule sets no
+    # worktree/subdir: the scheduled-run convention parks continuity in a state file
+    # in the root tree, which a fresh per-run worktree would not see. Operator spawns
+    # default to an isolated worktree cut from origin/HEAD (spawn.auto_worktree).
+    scheduled = (command.get("requested_by") or "").startswith("schedule:")
     agent = spawn.spawn(
         command["project_id"],
         name,
@@ -59,6 +64,7 @@ def _cmd_spawn(command: dict) -> dict:
         role=p.get("role"),
         model_id=p.get("model_id"),
         worker_id=command.get("claimed_by"),
+        auto_worktree=not scheduled,
     )
     result = {
         "agent_id": agent["id"],
