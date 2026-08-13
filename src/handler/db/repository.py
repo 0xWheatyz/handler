@@ -26,6 +26,8 @@ from .tables import (
     agent_runs,
     agents,
     approvals,
+    auth_sessions,
+    auth_tokens,
     checkmarks,
     claude_config,
     claude_connectors,
@@ -43,6 +45,7 @@ from .tables import (
     schedules,
     session_archives,
     shared_context,
+    users,
     workers,
 )
 from .upsert import upsert_checkmark
@@ -52,6 +55,21 @@ def _now() -> datetime:
     return datetime.now(UTC)
 
 
+# Sentinel for "no ownership filter" (admins, legacy tokens, and internal callers).
+# ``visible_to=<user id>`` narrows a listing to shared rows (owner NULL) plus that
+# user's own; ``visible_to=None`` means shared rows only (launches of a shared project).
+VISIBLE_ALL = object()
+
+
+def _owner_scope(owner_column, visible_to):
+    """WHERE clause for the shared-plus-mine visibility rule, or None for no filter."""
+    if visible_to is VISIBLE_ALL:
+        return None
+    if visible_to is None:
+        return owner_column.is_(None)
+    return owner_column.is_(None) | (owner_column == visible_to)
+
+
 def _row_to_dict(row) -> dict[str, Any] | None:
     return dict(row._mapping) if row is not None else None
 
@@ -59,8 +77,12 @@ def _row_to_dict(row) -> dict[str, Any] | None:
 # --------------------------------------------------------------------------- reads
 
 
-def list_projects(conn: Connection) -> list[dict]:
-    rows = conn.execute(select(projects).order_by(projects.c.id)).all()
+def list_projects(conn: Connection, visible_to=VISIBLE_ALL) -> list[dict]:
+    stmt = select(projects)
+    scope = _owner_scope(projects.c.owner_user_id, visible_to)
+    if scope is not None:
+        stmt = stmt.where(scope)
+    rows = conn.execute(stmt.order_by(projects.c.id)).all()
     return [dict(r._mapping) for r in rows]
 
 
@@ -192,6 +214,7 @@ def create_project(
     root_dir: str,
     git_remote: str | None = None,
     credential_ref: str | None = None,
+    owner_user_id: int | None = None,
 ) -> dict:
     conn.execute(
         projects.insert().values(
@@ -199,6 +222,7 @@ def create_project(
             root_dir=root_dir,
             git_remote=git_remote,
             credential_ref=credential_ref,
+            owner_user_id=owner_user_id,
             created_at=_now(),
         )
     )
@@ -362,7 +386,7 @@ def update_project(conn: Connection, project_id: str, **fields: Any) -> dict | N
 
     Only known columns are applied; an empty patch is a no-op read. Returns the row.
     """
-    allowed = {"root_dir", "git_remote", "credential_ref"}
+    allowed = {"root_dir", "git_remote", "credential_ref", "owner_user_id"}
     values = {k: v for k, v in fields.items() if k in allowed}
     if values:
         conn.execute(projects.update().where(projects.c.id == project_id).values(**values))
@@ -499,11 +523,24 @@ def get_command(conn: Connection, command_id: int) -> dict | None:
 
 
 def list_commands(
-    conn: Connection, project_id: str | None = None, limit: int = 100, offset: int = 0
+    conn: Connection,
+    project_id: str | None = None,
+    limit: int = 100,
+    offset: int = 0,
+    restrict_to_projects: list[str] | None = None,
+    or_requested_by: str | None = None,
 ) -> list[dict]:
+    """The activity feed. ``restrict_to_projects`` scopes a non-admin user's view to
+    commands on projects they can see — plus, via ``or_requested_by``, non-project
+    commands they enqueued themselves (e.g. a skill install), so they can track them."""
     stmt = select(commands)
     if project_id is not None:
         stmt = stmt.where(commands.c.project_id == project_id)
+    if restrict_to_projects is not None:
+        scope = commands.c.project_id.in_(restrict_to_projects)
+        if or_requested_by is not None:
+            scope = scope | (commands.c.requested_by == or_requested_by)
+        stmt = stmt.where(scope)
     rows = conn.execute(
         stmt.order_by(commands.c.id.desc()).limit(limit).offset(offset)
     ).all()
@@ -971,10 +1008,15 @@ def get_runtime_secret(conn: Connection, key: str) -> dict | None:
 # --------------------------------------------------- claude management (web-managed)
 
 
-def list_claude_skills(conn: Connection, enabled_only: bool = False) -> list[dict]:
+def list_claude_skills(
+    conn: Connection, enabled_only: bool = False, visible_to=VISIBLE_ALL
+) -> list[dict]:
     stmt = select(claude_skills)
     if enabled_only:
         stmt = stmt.where(claude_skills.c.enabled.is_(True))
+    scope = _owner_scope(claude_skills.c.owner_user_id, visible_to)
+    if scope is not None:
+        stmt = stmt.where(scope)
     rows = conn.execute(stmt.order_by(claude_skills.c.name)).all()
     return [dict(r._mapping) for r in rows]
 
@@ -995,6 +1037,7 @@ def create_claude_skill(
     content: str,
     description: str | None = None,
     enabled: bool = True,
+    owner_user_id: int | None = None,
 ) -> dict:
     now = _now()
     result = conn.execute(
@@ -1003,6 +1046,7 @@ def create_claude_skill(
             description=description,
             content=content,
             enabled=enabled,
+            owner_user_id=owner_user_id,
             created_at=now,
             updated_at=now,
         )
@@ -1047,10 +1091,15 @@ def set_claude_skill_files(conn: Connection, skill_id: int, files: dict[str, str
         )
 
 
-def list_claude_connectors(conn: Connection, enabled_only: bool = False) -> list[dict]:
+def list_claude_connectors(
+    conn: Connection, enabled_only: bool = False, visible_to=VISIBLE_ALL
+) -> list[dict]:
     stmt = select(claude_connectors)
     if enabled_only:
         stmt = stmt.where(claude_connectors.c.enabled.is_(True))
+    scope = _owner_scope(claude_connectors.c.owner_user_id, visible_to)
+    if scope is not None:
+        stmt = stmt.where(scope)
     rows = conn.execute(stmt.order_by(claude_connectors.c.name)).all()
     return [dict(r._mapping) for r in rows]
 
@@ -1079,6 +1128,7 @@ def create_claude_connector(
     url: str | None = None,
     headers: dict | None = None,
     enabled: bool = True,
+    owner_user_id: int | None = None,
 ) -> dict:
     result = conn.execute(
         claude_connectors.insert().values(
@@ -1090,6 +1140,7 @@ def create_claude_connector(
             url=url,
             headers=headers,
             enabled=enabled,
+            owner_user_id=owner_user_id,
             created_at=_now(),
         )
     )
@@ -1115,10 +1166,15 @@ def delete_claude_connector(conn: Connection, connector_id: int) -> bool:
     return result.rowcount > 0
 
 
-def list_claude_plugins(conn: Connection, enabled_only: bool = False) -> list[dict]:
+def list_claude_plugins(
+    conn: Connection, enabled_only: bool = False, visible_to=VISIBLE_ALL
+) -> list[dict]:
     stmt = select(claude_plugins)
     if enabled_only:
         stmt = stmt.where(claude_plugins.c.enabled.is_(True))
+    scope = _owner_scope(claude_plugins.c.owner_user_id, visible_to)
+    if scope is not None:
+        stmt = stmt.where(scope)
     rows = conn.execute(
         stmt.order_by(claude_plugins.c.marketplace, claude_plugins.c.name)
     ).all()
@@ -1145,6 +1201,7 @@ def create_claude_plugin(
     marketplace: str,
     marketplace_repo: str,
     enabled: bool = True,
+    owner_user_id: int | None = None,
 ) -> dict:
     result = conn.execute(
         claude_plugins.insert().values(
@@ -1152,6 +1209,7 @@ def create_claude_plugin(
             marketplace=marketplace,
             marketplace_repo=marketplace_repo,
             enabled=enabled,
+            owner_user_id=owner_user_id,
             created_at=_now(),
         )
     )
@@ -1173,10 +1231,15 @@ def delete_claude_plugin(conn: Connection, plugin_id: int) -> bool:
     return result.rowcount > 0
 
 
-def list_claude_models(conn: Connection, enabled_only: bool = False) -> list[dict]:
+def list_claude_models(
+    conn: Connection, enabled_only: bool = False, visible_to=VISIBLE_ALL
+) -> list[dict]:
     stmt = select(claude_models)
     if enabled_only:
         stmt = stmt.where(claude_models.c.enabled.is_(True))
+    scope = _owner_scope(claude_models.c.owner_user_id, visible_to)
+    if scope is not None:
+        stmt = stmt.where(scope)
     rows = conn.execute(stmt.order_by(claude_models.c.name)).all()
     return [dict(r._mapping) for r in rows]
 
@@ -1201,6 +1264,7 @@ def create_claude_model(
     harness: str = "claude",
     env: dict | None = None,
     enabled: bool = True,
+    owner_user_id: int | None = None,
 ) -> dict:
     result = conn.execute(
         claude_models.insert().values(
@@ -1212,6 +1276,7 @@ def create_claude_model(
             harness=harness,
             env=env,
             enabled=enabled,
+            owner_user_id=owner_user_id,
             created_at=_now(),
         )
     )
@@ -1278,16 +1343,24 @@ def list_memory_notes(
     include_global: bool = True,
     limit: int = 200,
     offset: int = 0,
+    visible_project_ids: list[str] | None = None,
 ) -> list[dict]:
     """Notes in scope, newest first. ``project_id=None`` means everything (the dashboard
     graph); a project id narrows to that project — plus the global notes unless told not
-    to (the MCP server's read scope: my project + what everyone shares)."""
+    to (the MCP server's read scope: my project + what everyone shares).
+    ``visible_project_ids`` further restricts project notes to those projects (a
+    non-admin user's view); global notes always pass."""
     stmt = select(memory_notes)
     if project_id is not None:
         scope = memory_notes.c.project_id == project_id
         if include_global:
             scope = scope | memory_notes.c.project_id.is_(None)
         stmt = stmt.where(scope)
+    if visible_project_ids is not None:
+        stmt = stmt.where(
+            memory_notes.c.project_id.is_(None)
+            | memory_notes.c.project_id.in_(visible_project_ids)
+        )
     rows = conn.execute(
         stmt.order_by(memory_notes.c.id.desc()).limit(limit).offset(offset)
     ).all()
@@ -1305,6 +1378,7 @@ def search_memory_notes(
     project_id: str | None = None,
     include_global: bool = True,
     limit: int = 20,
+    visible_project_ids: list[str] | None = None,
 ) -> list[dict]:
     """Case-insensitive substring search over title/body/kind, every term required.
 
@@ -1319,6 +1393,11 @@ def search_memory_notes(
         if include_global:
             scope = scope | memory_notes.c.project_id.is_(None)
         stmt = stmt.where(scope)
+    if visible_project_ids is not None:
+        stmt = stmt.where(
+            memory_notes.c.project_id.is_(None)
+            | memory_notes.c.project_id.in_(visible_project_ids)
+        )
     for term in terms:
         pattern = f"%{term}%"
         stmt = stmt.where(
@@ -1429,10 +1508,222 @@ def delete_memory_link(conn: Connection, link_id: int) -> bool:
     return result.rowcount > 0
 
 
-def memory_graph(conn: Connection, project_id: str | None = None) -> dict:
+# ------------------------------------------------------------- user accounts & sessions
+
+
+def count_users(conn: Connection) -> int:
+    from sqlalchemy import func as sqlfunc
+
+    return conn.execute(select(sqlfunc.count()).select_from(users)).scalar_one()
+
+
+def list_users(conn: Connection) -> list[dict]:
+    rows = conn.execute(select(users).order_by(users.c.id)).all()
+    return [dict(r._mapping) for r in rows]
+
+
+def get_user(conn: Connection, user_id: int) -> dict | None:
+    row = conn.execute(select(users).where(users.c.id == user_id)).first()
+    return _row_to_dict(row)
+
+
+def get_user_by_email(conn: Connection, email: str) -> dict | None:
+    row = conn.execute(
+        select(users).where(users.c.email == email.strip().lower())
+    ).first()
+    return _row_to_dict(row)
+
+
+def create_user(
+    conn: Connection,
+    email: str,
+    password_hash: str | None = None,
+    is_admin: bool = False,
+) -> dict:
+    result = conn.execute(
+        users.insert().values(
+            email=email.strip().lower(),
+            password_hash=password_hash,
+            is_admin=is_admin,
+            disabled=False,
+            created_at=_now(),
+        )
+    )
+    return get_user(conn, result.inserted_primary_key[0])
+
+
+def update_user(conn: Connection, user_id: int, **fields: Any) -> dict | None:
+    allowed = {"password_hash", "is_admin", "disabled"}
+    values = {k: v for k, v in fields.items() if k in allowed}
+    if values:
+        conn.execute(users.update().where(users.c.id == user_id).values(**values))
+    return get_user(conn, user_id)
+
+
+def count_active_admins(conn: Connection, exclude_user_id: int | None = None) -> int:
+    """Enabled admin accounts with a usable password — the lockout guard's input (an
+    invited admin who never set a password can't sign in, so they don't count)."""
+    from sqlalchemy import func as sqlfunc
+
+    stmt = (
+        select(sqlfunc.count())
+        .select_from(users)
+        .where(
+            users.c.is_admin.is_(True),
+            users.c.disabled.is_(False),
+            users.c.password_hash.is_not(None),
+        )
+    )
+    if exclude_user_id is not None:
+        stmt = stmt.where(users.c.id != exclude_user_id)
+    return conn.execute(stmt).scalar_one()
+
+
+def delete_user(conn: Connection, user_id: int) -> bool:
+    """Remove an account. Rows it owned become *shared* (owner NULL) rather than
+    disappearing — the ownership columns carry no FK precisely so a deleted user can
+    never orphan a project or break an agent's next launch. Sessions and one-shot
+    links die with the account."""
+    for table in (projects, claude_skills, claude_connectors, claude_plugins, claude_models):
+        conn.execute(
+            table.update()
+            .where(table.c.owner_user_id == user_id)
+            .values(owner_user_id=None)
+        )
+    conn.execute(auth_sessions.delete().where(auth_sessions.c.user_id == user_id))
+    conn.execute(auth_tokens.delete().where(auth_tokens.c.user_id == user_id))
+    result = conn.execute(users.delete().where(users.c.id == user_id))
+    return result.rowcount > 0
+
+
+def create_auth_session(
+    conn: Connection, user_id: int, token_hash: str, expires_at: datetime
+) -> dict:
+    result = conn.execute(
+        auth_sessions.insert().values(
+            user_id=user_id,
+            token_hash=token_hash,
+            created_at=_now(),
+            expires_at=expires_at,
+        )
+    )
+    row = conn.execute(
+        select(auth_sessions).where(auth_sessions.c.id == result.inserted_primary_key[0])
+    ).first()
+    return dict(row._mapping)
+
+
+def get_session_user(conn: Connection, token_hash: str) -> dict | None:
+    """The (enabled) user behind a live session token hash, or None. The session row's
+    ``expires_at``/``last_used_at`` ride along under prefixed keys for the caller."""
+    row = conn.execute(
+        select(
+            users,
+            auth_sessions.c.expires_at.label("session_expires_at"),
+            auth_sessions.c.last_used_at.label("session_last_used_at"),
+        )
+        .select_from(auth_sessions.join(users, auth_sessions.c.user_id == users.c.id))
+        .where(
+            auth_sessions.c.token_hash == token_hash,
+            auth_sessions.c.expires_at > _now(),
+            users.c.disabled.is_(False),
+        )
+    ).first()
+    return _row_to_dict(row)
+
+
+def touch_auth_session(conn: Connection, token_hash: str) -> None:
+    conn.execute(
+        auth_sessions.update()
+        .where(auth_sessions.c.token_hash == token_hash)
+        .values(last_used_at=_now())
+    )
+
+
+def delete_auth_session(conn: Connection, token_hash: str) -> bool:
+    result = conn.execute(
+        auth_sessions.delete().where(auth_sessions.c.token_hash == token_hash)
+    )
+    return result.rowcount > 0
+
+
+def delete_user_sessions(
+    conn: Connection, user_id: int, keep_token_hash: str | None = None
+) -> int:
+    """Log a user out everywhere (password change / reset), optionally keeping the
+    session doing the changing."""
+    stmt = auth_sessions.delete().where(auth_sessions.c.user_id == user_id)
+    if keep_token_hash is not None:
+        stmt = stmt.where(auth_sessions.c.token_hash != keep_token_hash)
+    return conn.execute(stmt).rowcount
+
+
+def purge_expired_sessions(conn: Connection) -> int:
+    """Housekeeping, piggybacked on logins so no scheduler is needed."""
+    now = _now()
+    expired = conn.execute(
+        auth_sessions.delete().where(auth_sessions.c.expires_at <= now)
+    ).rowcount
+    conn.execute(auth_tokens.delete().where(auth_tokens.c.expires_at <= now))
+    return expired
+
+
+def create_auth_token(
+    conn: Connection, user_id: int, token_hash: str, purpose: str, expires_at: datetime
+) -> dict:
+    """Mint a one-shot link token (``reset`` or ``invite``), superseding any earlier
+    unused ones of the same purpose so only the latest emailed link works."""
+    conn.execute(
+        auth_tokens.delete().where(
+            auth_tokens.c.user_id == user_id,
+            auth_tokens.c.purpose == purpose,
+            auth_tokens.c.used_at.is_(None),
+        )
+    )
+    result = conn.execute(
+        auth_tokens.insert().values(
+            user_id=user_id,
+            token_hash=token_hash,
+            purpose=purpose,
+            expires_at=expires_at,
+            created_at=_now(),
+        )
+    )
+    row = conn.execute(
+        select(auth_tokens).where(auth_tokens.c.id == result.inserted_primary_key[0])
+    ).first()
+    return dict(row._mapping)
+
+
+def consume_auth_token(conn: Connection, token_hash: str) -> dict | None:
+    """Atomically spend a valid, unused link token; None if unknown/expired/spent."""
+    result = conn.execute(
+        auth_tokens.update()
+        .where(
+            auth_tokens.c.token_hash == token_hash,
+            auth_tokens.c.used_at.is_(None),
+            auth_tokens.c.expires_at > _now(),
+        )
+        .values(used_at=_now())
+    )
+    if result.rowcount != 1:
+        return None
+    row = conn.execute(
+        select(auth_tokens).where(auth_tokens.c.token_hash == token_hash)
+    ).first()
+    return _row_to_dict(row)
+
+
+def memory_graph(
+    conn: Connection,
+    project_id: str | None = None,
+    visible_project_ids: list[str] | None = None,
+) -> dict:
     """The whole graph in one read — what the /memory page draws. Scoping to a project
     keeps its notes plus the global ones, and only edges with both endpoints in scope."""
-    notes = list_memory_notes(conn, project_id=project_id, limit=1000)
+    notes = list_memory_notes(
+        conn, project_id=project_id, limit=1000, visible_project_ids=visible_project_ids
+    )
     ids = [n["id"] for n in notes]
     links = list_memory_links(conn, note_ids=ids)
     in_scope = set(ids)

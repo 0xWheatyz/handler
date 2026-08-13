@@ -6,6 +6,52 @@ the image workflows publish (plus `latest` from every push to `main`).
 
 ## [Unreleased]
 
+### Added — user accounts: email sign-in, invites, resets, per-user separation
+
+- **Email + password accounts** replace "know the API key" for humans. First run shows
+  a setup form and the **first account created is the admin**; every later account is
+  **invited by an admin** through a one-shot set-password link. Passwords are scrypt
+  (stdlib, self-describing hashes); sessions are opaque bearer tokens stored only as
+  SHA-256 with a configurable TTL.
+- **Password reset by email** (`POST /auth/forgot` → short-lived link, silent about
+  account existence) via plain SMTP (`SMTP_*` settings). **Email is optional**: with
+  SMTP unset, invite/reset links are shown to the admin in the dashboard to hand over
+  out-of-band. Spending a link revokes the account's existing sessions.
+- **Per-user separation of projects, skills, and tools.** Projects, skills, MCP
+  connectors, plugins, and model backends gain an owner; users see **shared + their
+  own** (foreign resources 404 — existence isn't leaked), owners operate their own
+  projects end-to-end without admin, shared (unowned) rows stay admin-managed and
+  visible to all. Launches materialize only the project owner's skills/connectors, and
+  private model backends can't be picked for someone else's spawns or schedules.
+  Deleting a user reassigns their resources to shared; admins can reassign owners.
+- **Users page** in the dashboard (admin-only): invite, admin/disable toggles, reset
+  links, delete. Sign-in page gains first-run setup, forgot-password, and a raw
+  API-token fallback; `/reset` is the public landing page for invite/reset links.
+- **Admin safety rails**: the last active admin can't be demoted/disabled/deleted; no
+  self-deletion. `AUTH_TOKEN`/`ADMIN_TOKEN`/`SHARED_CONTEXT_WRITE_TOKEN` keep their
+  exact historical semantics for scripts/CI and break-glass.
+- 24 new tests (auth flows + separation matrix; 397 total).
+
+### Database (user accounts)
+
+- Migration **`0016_user_accounts`**: new `users`, `auth_sessions`, `auth_tokens`
+  tables plus a nullable `owner_user_id` on `projects`, `claude_skills`,
+  `claude_connectors`, `claude_plugins`, `claude_models`. Purely additive; existing
+  rows have no owner (= shared) so an upgraded deployment behaves exactly as before
+  until accounts are created.
+
+### Deployment notes (user accounts rollout)
+
+1. Apply migrations as usual (the API container runs them on start).
+2. Optionally set `SMTP_HOST`/`SMTP_PORT`/`SMTP_USERNAME`/`SMTP_PASSWORD`/`SMTP_FROM`
+   (+ `SMTP_STARTTLS`/`SMTP_SSL`) and `PUBLIC_BASE_URL` for emailed links; without
+   them, invite/reset links appear in the dashboard instead.
+3. Open the dashboard and create the first account — it becomes the admin. Existing
+   `AUTH_TOKEN`-based scripts keep working unchanged; the token can be rotated or
+   dropped once accounts exist (keep one as break-glass if you like).
+4. New TTL knobs (optional): `SESSION_TTL_DAYS=30`, `RESET_TOKEN_TTL_HOURS=2`,
+   `INVITE_TOKEN_TTL_HOURS=168`.
+
 ### Added — the pi harness for local models ([#29](https://github.com/0xWheatyz/handler/pull/29))
 
 - **`harness` on model backends** (`claude` | `pi`, default `claude`). A backend row can

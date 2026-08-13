@@ -1,8 +1,9 @@
 """Project CRUD + project-scoped control actions.
 
-Reads and row registration take the normal token; edits/deletes and the enqueue actions
-(forge-init, poll-ci) take the admin token. The agent *process* work (spawn/kill) lives in
-``agents.py``; here we cover the project itself and the two project-wide control actions.
+Every route resolves through the ownership rules in ``routes.common``: users see shared
+projects plus their own, admins (and legacy tokens) see everything, and mutations plus
+the enqueue actions (sync, forge-init, poll-ci) require the owner or an admin. New
+projects belong to the creating user (shared when registered with an env token).
 """
 
 from __future__ import annotations
@@ -16,27 +17,27 @@ from sqlalchemy.exc import IntegrityError
 
 from ...config import get_settings
 from ...db import repository as repo
-from ..deps import db_conn, require_admin, require_auth
+from ..deps import Actor, db_conn, get_actor, require_auth
 from ..schemas import CommandOut, ProjectCreatedOut, ProjectIn, ProjectOut, ProjectUpdateIn
+from .common import resolve_project
 
 router = APIRouter(prefix="/projects", tags=["projects"], dependencies=[Depends(require_auth)])
 
 
-def _get_or_404(conn: Connection, project_id: str) -> dict:
-    project = repo.get_project(conn, project_id)
-    if project is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, detail=f"project '{project_id}' not found")
-    return project
-
-
 @router.get("", response_model=list[ProjectOut])
-def list_projects(conn: Connection = Depends(db_conn)) -> list[dict]:
-    return repo.list_projects(conn)
+def list_projects(
+    actor: Actor = Depends(get_actor), conn: Connection = Depends(db_conn)
+) -> list[dict]:
+    return repo.list_projects(conn, visible_to=actor.visible_scope)
 
 
 @router.get("/{project_id}", response_model=ProjectOut)
-def get_project(project_id: str, conn: Connection = Depends(db_conn)) -> dict:
-    return _get_or_404(conn, project_id)
+def get_project(
+    project_id: str,
+    actor: Actor = Depends(get_actor),
+    conn: Connection = Depends(db_conn),
+) -> dict:
+    return resolve_project(conn, project_id, actor)
 
 
 def _slug(value: str) -> str:
@@ -73,7 +74,11 @@ def _from_git_server(body: ProjectIn, conn: Connection) -> tuple[str, str, str]:
 
 
 @router.post("", response_model=ProjectCreatedOut, status_code=status.HTTP_201_CREATED)
-def create_project(body: ProjectIn, conn: Connection = Depends(db_conn)) -> dict:
+def create_project(
+    body: ProjectIn,
+    actor: Actor = Depends(get_actor),
+    conn: Connection = Depends(db_conn),
+) -> dict:
     if body.git_server:
         project_id, root_dir, git_remote = _from_git_server(body, conn)
     else:
@@ -88,6 +93,8 @@ def create_project(body: ProjectIn, conn: Connection = Depends(db_conn)) -> dict
             root_dir=root_dir,
             git_remote=git_remote,
             credential_ref=body.credential_ref,
+            # The creating user owns their project; env tokens register shared ones.
+            owner_user_id=actor.user_id,
         )
     except IntegrityError as exc:  # pragma: no cover - guarded above
         raise HTTPException(status.HTTP_409_CONFLICT, detail="project exists") from exc
@@ -97,7 +104,7 @@ def create_project(body: ProjectIn, conn: Connection = Depends(db_conn)) -> dict
     sync_command_id = None
     if git_remote:
         command = repo.enqueue_command(
-            conn, "sync", project_id=project_id, requested_by="operator:web"
+            conn, "sync", project_id=project_id, requested_by=actor.label
         )
         sync_command_id = command["id"]
 
@@ -107,7 +114,7 @@ def create_project(body: ProjectIn, conn: Connection = Depends(db_conn)) -> dict
     mise_init_command_id = None
     if body.init_mise and git_remote:
         mise_command = repo.enqueue_command(
-            conn, "mise_init", project_id=project_id, requested_by="operator:web"
+            conn, "mise_init", project_id=project_id, requested_by=actor.label
         )
         mise_init_command_id = mise_command["id"]
 
@@ -118,18 +125,30 @@ def create_project(body: ProjectIn, conn: Connection = Depends(db_conn)) -> dict
     }
 
 
-@router.patch("/{project_id}", response_model=ProjectOut, dependencies=[Depends(require_admin)])
+@router.patch("/{project_id}", response_model=ProjectOut)
 def update_project(
-    project_id: str, body: ProjectUpdateIn, conn: Connection = Depends(db_conn)
+    project_id: str,
+    body: ProjectUpdateIn,
+    actor: Actor = Depends(get_actor),
+    conn: Connection = Depends(db_conn),
 ) -> dict:
-    _get_or_404(conn, project_id)
+    resolve_project(conn, project_id, actor, edit=True)
     fields = body.model_dump(exclude_unset=True)
+    # Reassigning ownership (including back to shared) is an admin-only move.
+    if "owner_user_id" in fields and not actor.is_admin:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN, detail="only an admin can reassign a project's owner"
+        )
     return repo.update_project(conn, project_id, **fields)
 
 
-@router.delete("/{project_id}", dependencies=[Depends(require_admin)])
-def delete_project(project_id: str, conn: Connection = Depends(db_conn)) -> dict:
-    _get_or_404(conn, project_id)
+@router.delete("/{project_id}")
+def delete_project(
+    project_id: str,
+    actor: Actor = Depends(get_actor),
+    conn: Connection = Depends(db_conn),
+) -> dict:
+    resolve_project(conn, project_id, actor, edit=True)
     repo.delete_project(conn, project_id)
     return {"deleted": project_id}
 
@@ -138,18 +157,20 @@ def delete_project(project_id: str, conn: Connection = Depends(db_conn)) -> dict
     "/{project_id}/forge-init",
     response_model=CommandOut,
     status_code=status.HTTP_202_ACCEPTED,
-    dependencies=[Depends(require_admin)],
 )
 def enqueue_forge_init(
-    project_id: str, no_commit: bool = False, conn: Connection = Depends(db_conn)
+    project_id: str,
+    no_commit: bool = False,
+    actor: Actor = Depends(get_actor),
+    conn: Connection = Depends(db_conn),
 ) -> dict:
-    _get_or_404(conn, project_id)
+    resolve_project(conn, project_id, actor, edit=True)
     return repo.enqueue_command(
         conn,
         "forge_init",
         project_id=project_id,
         payload={"no_commit": no_commit},
-        requested_by="operator:web",
+        requested_by=actor.label,
     )
 
 
@@ -157,18 +178,21 @@ def enqueue_forge_init(
     "/{project_id}/sync",
     response_model=CommandOut,
     status_code=status.HTTP_202_ACCEPTED,
-    dependencies=[Depends(require_admin)],
 )
-def enqueue_sync(project_id: str, conn: Connection = Depends(db_conn)) -> dict:
+def enqueue_sync(
+    project_id: str,
+    actor: Actor = Depends(get_actor),
+    conn: Connection = Depends(db_conn),
+) -> dict:
     """Clone-or-pull the project's repo now (the worker executes it)."""
-    project = _get_or_404(conn, project_id)
+    project = resolve_project(conn, project_id, actor, edit=True)
     if not project.get("git_remote"):
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
             detail=f"project '{project_id}' has no git_remote to sync from",
         )
     return repo.enqueue_command(
-        conn, "sync", project_id=project_id, requested_by="operator:web"
+        conn, "sync", project_id=project_id, requested_by=actor.label
     )
 
 
@@ -176,10 +200,13 @@ def enqueue_sync(project_id: str, conn: Connection = Depends(db_conn)) -> dict:
     "/{project_id}/poll-ci",
     response_model=CommandOut,
     status_code=status.HTTP_202_ACCEPTED,
-    dependencies=[Depends(require_admin)],
 )
-def enqueue_poll_ci(project_id: str, conn: Connection = Depends(db_conn)) -> dict:
-    _get_or_404(conn, project_id)
+def enqueue_poll_ci(
+    project_id: str,
+    actor: Actor = Depends(get_actor),
+    conn: Connection = Depends(db_conn),
+) -> dict:
+    resolve_project(conn, project_id, actor, edit=True)
     return repo.enqueue_command(
-        conn, "poll_ci", project_id=project_id, requested_by="operator:web"
+        conn, "poll_ci", project_id=project_id, requested_by=actor.label
     )

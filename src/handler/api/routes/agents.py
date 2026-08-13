@@ -13,7 +13,7 @@ from sqlalchemy import Connection
 from sqlalchemy.exc import IntegrityError
 
 from ...db import repository as repo
-from ..deps import db_conn, require_admin, require_auth
+from ..deps import Actor, db_conn, get_actor, require_auth
 from ..schemas import (
     AgentEventOut,
     AgentIn,
@@ -23,7 +23,7 @@ from ..schemas import (
     LogEntryOut,
     SpawnIn,
 )
-from .common import resolve_agent
+from .common import resolve_agent, resolve_project
 
 router = APIRouter(
     prefix="/projects/{project}/agents",
@@ -32,20 +32,24 @@ router = APIRouter(
 )
 
 
-def _require_project(conn: Connection, project: str) -> None:
-    if repo.get_project(conn, project) is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, detail=f"project '{project}' not found")
-
-
 @router.get("", response_model=list[AgentOut])
-def list_agents(project: str, conn: Connection = Depends(db_conn)) -> list[dict]:
-    _require_project(conn, project)
+def list_agents(
+    project: str,
+    actor: Actor = Depends(get_actor),
+    conn: Connection = Depends(db_conn),
+) -> list[dict]:
+    resolve_project(conn, project, actor)
     return repo.list_agents(conn, project)
 
 
 @router.post("", response_model=AgentOut, status_code=status.HTTP_201_CREATED)
-def create_agent(project: str, body: AgentIn, conn: Connection = Depends(db_conn)) -> dict:
-    _require_project(conn, project)
+def create_agent(
+    project: str,
+    body: AgentIn,
+    actor: Actor = Depends(get_actor),
+    conn: Connection = Depends(db_conn),
+) -> dict:
+    resolve_project(conn, project, actor)
     if repo.get_agent_by_name(conn, project, body.name) is not None:
         raise HTTPException(
             status.HTTP_409_CONFLICT,
@@ -68,11 +72,15 @@ def create_agent(project: str, body: AgentIn, conn: Connection = Depends(db_conn
     "/spawn",
     response_model=CommandOut,
     status_code=status.HTTP_202_ACCEPTED,
-    dependencies=[Depends(require_admin)],
 )
-def enqueue_spawn(project: str, body: SpawnIn, conn: Connection = Depends(db_conn)) -> dict:
+def enqueue_spawn(
+    project: str,
+    body: SpawnIn,
+    actor: Actor = Depends(get_actor),
+    conn: Connection = Depends(db_conn),
+) -> dict:
     """Enqueue a spawn; the worker creates the agent row + claude process and reports back."""
-    _require_project(conn, project)
+    resolve_project(conn, project, actor, edit=True)
     if repo.get_agent_by_name(conn, project, body.name) is not None:
         raise HTTPException(
             status.HTTP_409_CONFLICT,
@@ -89,8 +97,9 @@ def enqueue_spawn(project: str, body: SpawnIn, conn: Connection = Depends(db_con
     if body.model_id is not None:
         # Same fail-fast idea for the model dropdown: the worker re-checks at launch,
         # but a stale/disabled selection should bounce now, not fail asynchronously.
+        # Ownership counts too: another user's private backend is "not found" here.
         model = repo.get_claude_model(conn, body.model_id)
-        if model is None:
+        if model is None or not actor.can_view(model.get("owner_user_id")):
             raise HTTPException(
                 status.HTTP_400_BAD_REQUEST, detail=f"model {body.model_id} not found"
             )
@@ -106,7 +115,7 @@ def enqueue_spawn(project: str, body: SpawnIn, conn: Connection = Depends(db_con
         project_id=project,
         agent_name=body.name,
         payload=payload,
-        requested_by="operator:web",
+        requested_by=actor.label,
     )
 
 
@@ -114,26 +123,40 @@ def enqueue_spawn(project: str, body: SpawnIn, conn: Connection = Depends(db_con
     "/{name}/kill",
     response_model=CommandOut,
     status_code=status.HTTP_202_ACCEPTED,
-    dependencies=[Depends(require_admin)],
 )
-def enqueue_kill(project: str, name: str, conn: Connection = Depends(db_conn)) -> dict:
-    resolve_agent(conn, project, name)
+def enqueue_kill(
+    project: str,
+    name: str,
+    actor: Actor = Depends(get_actor),
+    conn: Connection = Depends(db_conn),
+) -> dict:
+    resolve_agent(conn, project, name, actor, edit=True)
     return repo.enqueue_command(
-        conn, "kill", project_id=project, agent_name=name, requested_by="operator:web"
+        conn, "kill", project_id=project, agent_name=name, requested_by=actor.label
     )
 
 
-@router.delete("/{name}", dependencies=[Depends(require_admin)])
-def delete_agent(project: str, name: str, conn: Connection = Depends(db_conn)) -> dict:
+@router.delete("/{name}")
+def delete_agent(
+    project: str,
+    name: str,
+    actor: Actor = Depends(get_actor),
+    conn: Connection = Depends(db_conn),
+) -> dict:
     """Remove the agent row (does not kill a live session — kill first)."""
-    resolve_agent(conn, project, name)
+    resolve_agent(conn, project, name, actor, edit=True)
     repo.delete_agent(conn, project, name)
     return {"deleted": name}
 
 
 @router.get("/{name}/checkmark", response_model=CheckmarkOut)
-def get_checkmark(project: str, name: str, conn: Connection = Depends(db_conn)) -> dict:
-    agent = resolve_agent(conn, project, name)
+def get_checkmark(
+    project: str,
+    name: str,
+    actor: Actor = Depends(get_actor),
+    conn: Connection = Depends(db_conn),
+) -> dict:
+    agent = resolve_agent(conn, project, name, actor)
     checkmark = repo.get_checkmark(conn, agent["id"])
     if checkmark is None:
         raise HTTPException(
@@ -149,6 +172,7 @@ def get_events(
     name: str,
     after_id: int = Query(0, ge=0),
     limit: int = Query(200, ge=1, le=1000),
+    actor: Actor = Depends(get_actor),
     conn: Connection = Depends(db_conn),
 ) -> list[dict]:
     """The headless run event stream, oldest-first, cursor-paged by row id.
@@ -156,7 +180,7 @@ def get_events(
     The UI polls with ``after_id`` = the largest id it has seen, so each poll returns
     only new events (an empty list for a legacy tmux agent or an idle one).
     """
-    agent = resolve_agent(conn, project, name)
+    agent = resolve_agent(conn, project, name, actor)
     return repo.list_agent_events(conn, agent["id"], after_id=after_id, limit=limit)
 
 
@@ -166,7 +190,8 @@ def get_log(
     name: str,
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
+    actor: Actor = Depends(get_actor),
     conn: Connection = Depends(db_conn),
 ) -> list[dict]:
-    agent = resolve_agent(conn, project, name)
+    agent = resolve_agent(conn, project, name, actor)
     return repo.get_log(conn, agent["id"], limit=limit, offset=offset)

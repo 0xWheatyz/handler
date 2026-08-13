@@ -392,6 +392,21 @@ a:hover {
   font-family: var(--font-mono);
 }
 
+/* Inline text button (the auth gate's "Forgot password?" / mode switches). */
+.btn-link {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--lw-blue-200, #90cdf4);
+  font-size: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.btn-link:hover {
+  opacity: 0.85;
+}
+
 /* ---------------- Callout ---------------- */
 .callout {
   border-radius: var(--radius-md);

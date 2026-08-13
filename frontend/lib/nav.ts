@@ -20,6 +20,8 @@ export const NAV_ROUTES: NavRoute[] = [
   { key: "shared", href: "/shared", label: "Shared" },
   { key: "memory", href: "/memory", label: "Memory" },
   { key: "claude", href: "/claude", label: "Claude" },
+  // Admin-only: the Shell hides this entry for non-admin sessions.
+  { key: "users", href: "/users", label: "Users" },
 ];
 
 /* Map a browser path back to its section key. Trailing slashes (Next emits them under
