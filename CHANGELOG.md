@@ -36,6 +36,29 @@ since its last release:
   sign out with server-side revocation) and Manage gains the admin Users screen
   (invite with shareable links, promote/disable, reset links, delete).
 
+### Added — built-in operator skills, pre-installed on every deployment
+
+Seven skills now ship inside Handler (`handler.builtin_skills`) and are seeded into
+the managed skill store on API startup, so every fresh install — and every existing
+deployment on upgrade — starts with the judgment layer the hard gates can't enforce:
+
+- `handler-gate-recovery` — respond to a blocked completion/push gate by fixing the
+  real failure; never delete/skip tests, weaken the mise `test` task, or `--no-verify`.
+- `handler-testing` — every behavior change lands with a test that fails without it;
+  keep suites fast and deterministic.
+- `handler-checkpoints` — checkpoints written for a phone-sized glance; questions only
+  for operator-only decisions, with a recommended default.
+- `handler-memory` — search before starting; save gotchas/decisions/runbooks, not
+  narration or secrets.
+- `handler-mise-tasks` — `mise run test` is the verification contract; never narrow it
+  to get green.
+- `handler-scheduled-runs` — the read-state-file → one increment → overwrite-state-file
+  continuity pattern for recurring runs.
+- `handler-secrets` — injected credentials stay out of logs, commits, PRs, and memory.
+
+Seeding is idempotent by name: operator edits/disables survive every upgrade; deleting
+a built-in restores it (as shipped) on the next API start. 6 new tests (406 total).
+
 ### Added — user accounts: email sign-in, invites, resets, per-user separation
 
 - **Email + password accounts** replace "know the API key" for humans. First run shows

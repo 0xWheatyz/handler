@@ -334,6 +334,12 @@ What the dashboard can now do (all state-changing actions require `ADMIN_TOKEN`)
   Headless means nobody can answer questions mid-install, so the wrapped prompt makes the
   choices a human would be asked — always user scope, the instructions' defaults — and
   reports them in the command result for after-the-fact review.
+- **Built-in operator skills** ship with Handler and are seeded into the managed store
+  on API startup (`handler.builtin_skills`): gate recovery, testing standard,
+  checkpoint quality, memory discipline, mise-task rules, scheduled-run continuity,
+  and secrets hygiene — the judgment layer the hard gates can't enforce. Seeding is
+  idempotent by name, so operator edits and disables survive upgrades; deleting one
+  brings it back as shipped on the next start (disable is the off-switch).
 
 The command queue is exposed over HTTP as `POST …/agents/spawn`, `POST …/agents/{n}/kill`,
 `POST …/approvals`, `POST …/forge-init`, `POST …/poll-ci`, `POST …/sync`,
