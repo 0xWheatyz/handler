@@ -28,9 +28,30 @@ npm run ios      # opens the iOS simulator (requires Xcode)
 | Answer | `src/screens/AnswerScreen.tsx` | Question, tappable quick replies, reply field + **Send & resume** |
 | Spawn | `src/screens/SpawnScreen.tsx` | Project select, model backend select, task field, Spawn |
 | Schedules | `src/screens/SchedulesScreen.tsx` | Recurring agent spawns: list, create (interval / role / model), pause, delete |
-| Memory | `src/screens/MemoryScreen.tsx` | Read view over the agent-memory note graph, kind filters, expandable notes |
+| Memory | `src/screens/MemoryScreen.tsx` | The agent-memory note graph: kind filters, expandable notes, note authoring + deletion |
 | Log | `src/screens/LogScreen.tsx` | All / per-project / Errors filters over the global feed |
-| Settings | `src/screens/SettingsScreen.tsx` | Server info, notification toggles, Sign out |
+| Settings | `src/screens/SettingsScreen.tsx` | Server info, Manage + Account entries, notification toggles, Sign out |
+| Connect | `src/screens/ConnectScreen.tsx` | Email sign-in (`/auth/login`), first-run admin setup, forgot-password, API-token fallback |
+
+### Management screens (Settings → Manage)
+
+The full admin surface — everything the web dashboard can do, under
+`src/screens/manage/`:
+
+| Screen | What it does |
+| --- | --- |
+| Models | Model-backend CRUD: base URL, model ids, claude/pi harness, write-only API keys (set/clear), enable toggles |
+| Skills | Create / toggle / delete managed skills, read SKILL.md, install-from-prompt via the command queue |
+| Connectors | stdio / http / sse MCP servers with args, env, and header entry |
+| Plugins | Marketplace plugins pinned to their repo |
+| Permissions | Default permission mode + allow/deny/ask rules over the read-only env baseline |
+| Claude login | Drive the worker's `claude /login` (authorize in browser, paste the code back) |
+| Repositories | Register repos (git-server or manual mode, optional mise-init bootstrap), sync, delete |
+| Git servers | Forge hosts: encrypted tokens, generated deploy keys (public half copyable) |
+| Approvals | Record operator approve / reject verdicts per project + branch |
+| Shared context | Browse and set the cross-agent key/value store |
+| Users | Invite (shareable links), promote / disable, mint reset links, delete |
+| Account | Signed-in identity, change password, sign out (revokes the session server-side) |
 
 The prototype navigates by swapping a single `screen` value (with working back
 / close controls) rather than a native stack, mirroring the design. Answering

@@ -21,9 +21,20 @@ since its last release:
   lines.
 - **Schedules tab**: list, create (interval, role, model backend, prompt), pause/resume,
   and delete recurring agent spawns across all projects.
-- **Memory tab**: a read view over the agent-memory note graph (`/memory/graph`) with
-  kind filters and expandable notes showing body, tags, and links; authoring stays on
-  the web dashboard and the agents' MCP server.
+- **Memory tab**: the agent-memory note graph (`/memory/graph`) with kind filters and
+  expandable notes showing body, tags, and links — plus note authoring and deletion.
+- **The full management surface** (Settings → Manage): model backends (CRUD incl.
+  write-only API keys and the claude/pi harness pick), skills (incl.
+  install-from-prompt), MCP connectors, plugins, permission overrides, repository
+  registration (git-server + manual modes, mise-init), forge hosts (encrypted tokens,
+  generated deploy keys), branch approvals, shared context, and the worker's
+  `claude /login` flow — the phone no longer needs a laptop nearby.
+- **User accounts on mobile**: the connect screen gains email sign-in against
+  `/auth/login` (session token stored like the legacy env token), first-run admin
+  setup, forgot-password, and an API-token fallback (auto-selected for servers
+  predating accounts); Settings gains an Account screen (identity, change password,
+  sign out with server-side revocation) and Manage gains the admin Users screen
+  (invite with shareable links, promote/disable, reset links, delete).
 
 ### Added — user accounts: email sign-in, invites, resets, per-user separation
 
