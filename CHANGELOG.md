@@ -8,6 +8,14 @@ the image workflows publish (plus `latest` from every push to `main`).
 
 ### Added
 
+- **Tappable fleet stat cards** in the mobile app: Running / Waiting / Done now open a
+  full agent list pre-filtered to that bucket (same grouping as the counts), showing
+  every agent row the API knows — including agents that haven't dropped a checkmark
+  yet — with status badges, a live last-output line for running agents, and
+  tap-through to the agent detail screen (back returns to the list).
+
+### Added
+
 - **Activity screen in the mobile app** (Settings → Manage → Activity): the
   control-command queue with status filters, per-row worker attribution
   (`on <worker>` / `unclaimed`), expandable result/error text, a Sweep CI action, and
