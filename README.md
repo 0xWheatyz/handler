@@ -335,7 +335,8 @@ What the dashboard can now do (all state-changing actions require `ADMIN_TOKEN`)
   choices a human would be asked — always user scope, the instructions' defaults — and
   reports them in the command result for after-the-fact review.
 - **Built-in operator skills** ship with Handler and are seeded into the managed store
-  on API startup (`handler.builtin_skills`): gate recovery, testing standard,
+  on API startup (`handler.builtin_skills`): quiet output (tool calls + a minimized
+  `NOTES.md` ledger instead of transcript prose), gate recovery, testing standard,
   checkpoint quality, memory discipline, mise-task rules, scheduled-run continuity,
   and secrets hygiene — the judgment layer the hard gates can't enforce. Seeding is
   idempotent by name, so operator edits and disables survive upgrades; deleting one

@@ -38,10 +38,15 @@ since its last release:
 
 ### Added — built-in operator skills, pre-installed on every deployment
 
-Seven skills now ship inside Handler (`handler.builtin_skills`) and are seeded into
+Eight skills now ship inside Handler (`handler.builtin_skills`) and are seeded into
 the managed skill store on API startup, so every fresh install — and every existing
 deployment on upgrade — starts with the judgment layer the hard gates can't enforce:
 
+- `handler-quiet-output` — work through tool calls, not prose: the transcript is not
+  the deliverable. A minimized `NOTES.md` ledger records what happened and how,
+  problems go to memory, status goes to the checkpoint, and questions go through the
+  question tool (push notification + answer prompt in the web/mobile apps) — never
+  typed into the transcript.
 - `handler-gate-recovery` — respond to a blocked completion/push gate by fixing the
   real failure; never delete/skip tests, weaken the mise `test` task, or `--no-verify`.
 - `handler-testing` — every behavior change lands with a test that fails without it;

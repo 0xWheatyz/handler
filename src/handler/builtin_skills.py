@@ -25,6 +25,49 @@ from .db import repository as repo
 # data so the content is easy to review and diff, exactly like skills_gen._SKILLS.
 BUILTIN_SKILLS: list[tuple[str, str, str]] = [
     (
+        "handler-quiet-output",
+        "Work through tool calls, not prose: the transcript is not the deliverable. "
+        "Keep a minimized NOTES.md ledger instead. Always applies.",
+        """# Quiet output: tools and notes, not prose
+
+Nobody watches your transcript live, and nobody reads it afterwards — the operator
+reads NOTES.md, the checkmark, and memory. Narration is spent tokens that bury the
+information somewhere no one will look for it.
+
+## Work through tool calls
+
+- Don't announce what you're about to do, recap what you just did, or restate file
+  contents — the tool calls are the record.
+- No essays or running commentary in the transcript. A plan worth keeping goes in
+  NOTES.md; a plan not worth keeping isn't worth typing.
+- The one message that matters is your **final** one: the Stop hook captures it onto
+  the checkmark. Keep it checkpoint-sized — a few lines of status, not a report.
+
+## NOTES.md is the output
+
+Maintain `NOTES.md` at the repo root (create it if missing) as a minimized running
+ledger, committed with your work:
+
+- One bullet per meaningful action: what changed, where, and why in one line —
+  `- fixed retry loop in poller.py (cause: timeout treated as success)`.
+- Facts, not narration. Bullets, not paragraphs. No restated diffs — the commits
+  hold the code.
+- Append under a dated/session heading; don't rewrite earlier sessions' entries.
+- Scheduled runs: your prompt's state file serves this role — keep one file, not two.
+
+## Route everything to its store
+
+- **What happened, how**: NOTES.md.
+- **Problems, surprises, causes**: memory (gotcha/decision notes) — durable and
+  shared, per the memory skill.
+- **Current status + next step**: the final checkpoint message.
+- **Questions**: the question tool (AskUserQuestion; `ask_operator` on the pi
+  harness), never prose. A deferred question reaches the operator as a push
+  notification and an answer prompt in the web and mobile apps; a question typed
+  into the transcript reaches no one and stalls the run.
+""",
+    ),
+    (
         "handler-gate-recovery",
         "What to do when the completion gate or push gate blocks you. Use whenever "
         "a Stop hook or git push is denied with a test/build failure.",
