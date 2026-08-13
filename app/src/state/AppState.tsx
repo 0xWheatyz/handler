@@ -14,6 +14,7 @@ import {
   type ApiClient,
   type ApiError,
   type Checkmark,
+  type ClaudeModel,
   type LogEntry,
   type Project,
 } from "../api/client";
@@ -95,6 +96,8 @@ interface AppStateValue {
   loading: boolean;
   error: string | null;
   projects: Project[];
+  /* Registered model backends (the spawn/schedule dropdown next to the subscription). */
+  models: ClaudeModel[];
   waiting: WaitingItem[];
   recent: RecentItem[];
   counts: { running: number; waiting: number; done: number };
@@ -108,7 +111,7 @@ interface AppStateValue {
 
   // Mutations.
   sendAnswer: (text: string) => Promise<{ resumed: boolean; note?: string }>;
-  spawn: (project: string, task: string) => Promise<void>;
+  spawn: (project: string, task: string, modelId?: number | null) => Promise<void>;
   kill: (project: string, name: string) => Promise<void>;
 }
 
@@ -152,6 +155,7 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
 
   // Fleet data.
   const [projects, setProjects] = useState<Project[]>([]);
+  const [models, setModels] = useState<ClaudeModel[]>([]);
   const [agentsByProject, setAgentsByProject] = useState<Record<string, Agent[]>>({});
   const [checkmarks, setCheckmarks] = useState<Record<string, Checkmark | null>>({});
   const [logsByAgent, setLogsByAgent] = useState<Record<string, LogEntry[]>>({});
@@ -166,6 +170,7 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
 
   const resetData = useCallback(() => {
     setProjects([]);
+    setModels([]);
     setAgentsByProject({});
     setCheckmarks({});
     setLogsByAgent({});
@@ -189,6 +194,15 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
     try {
       setError(null);
       const projs = await client.api<Project[]>("/projects");
+
+      // Model backends feed the spawn dropdown; an older server without the endpoint
+      // (404) just means "subscription only", so failures leave the list empty.
+      const modelList = await client
+        .api<ClaudeModel[]>("/claude/models")
+        .catch((e) => {
+          if (e instanceof AuthError) throw e;
+          return [] as ClaudeModel[];
+        });
 
       // Per-agent/per-project sub-requests are isolated: one flaky agent (a 500 on
       // its log, say) must not blank the whole fleet. A rejected AuthError still
@@ -249,6 +263,7 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
       for (const [k, v] of logEntries) logMap[k] = v;
 
       setProjects(projs);
+      setModels(modelList);
       setAgentsByProject(abp);
       setCheckmarks(cmMap);
       setLogsByAgent(logMap);
@@ -424,11 +439,15 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
   );
 
   const spawn = useCallback(
-    async (project: string, task: string) => {
+    async (project: string, task: string, modelId?: number | null) => {
       if (!client) throw new Error("not connected");
       const name = deriveAgentName(task);
       await client.api(`/projects/${enc(project)}/agents/spawn`, {
-        body: { name, ...(task.trim() ? { task: task.trim() } : {}) },
+        body: {
+          name,
+          ...(task.trim() ? { task: task.trim() } : {}),
+          ...(modelId != null ? { model_id: modelId } : {}),
+        },
       });
       await refresh();
     },
@@ -460,6 +479,7 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
       loading,
       error,
       projects,
+      models,
       waiting,
       recent,
       counts,
@@ -483,6 +503,7 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
       loading,
       error,
       projects,
+      models,
       waiting,
       recent,
       counts,
