@@ -27,10 +27,31 @@ export interface Agent {
   working_dir: string;
   status: string;
   role?: string | null;
-  /* Latest tmux pane-tail snapshot from the worker, so the UI can show what a running
-   * agent is actually doing (and expose one wedged on an interactive prompt). */
+  /* Model backend the agent is pinned to (see ClaudeModel); null = the Claude
+   * subscription the worker is logged in to. */
+  model_id?: number | null;
+  /* Latest output snapshot from the worker: the tmux pane tail for legacy agents, the
+   * latest assistant text for headless runs. For a crashed agent this is the evidence
+   * frame — the last thing the process said. */
   last_output?: string | null;
   output_at?: string | null;
+  /* Headless runner: claude session UUID (null = legacy tmux agent) + supervising worker. */
+  session_id?: string | null;
+  worker_id?: string | null;
+  created_at: string;
+}
+
+/* One persisted stream-json event of a headless run (GET .../events, cursor-paged by id).
+ * `type` mirrors the stream (system/assistant/user/result) plus `worker` (runner notices)
+ * and `raw` (unparseable line kept verbatim). */
+export interface AgentEvent {
+  id: number;
+  agent_id: number;
+  run_id: number;
+  session_id?: string | null;
+  seq: number;
+  type: string;
+  payload?: Record<string, unknown> | null;
   created_at: string;
 }
 
@@ -111,12 +132,61 @@ export interface Schedule {
   role?: string | null;
   worktree?: string | null;
   subdir?: string | null;
+  /* Model backend every fired run spawns on (see ClaudeModel); null = subscription. */
+  model_id?: number | null;
   interval_seconds: number;
   enabled: boolean;
   next_run_at: string;
   last_run_at?: string | null;
   last_command_id?: number | null;
   created_at: string;
+}
+
+/* A registered model backend: an Anthropic-API-compatible endpoint (a local model
+ * behind LiteLLM / claude-code-router, an LLM gateway) the spawn dropdown offers next
+ * to the Claude subscription. The API key is write-only server-side (has_api_key only). */
+export interface ClaudeModel {
+  id: number;
+  name: string;
+  base_url: string;
+  model: string;
+  small_fast_model?: string | null;
+  /* Which agent binary runs against this backend: "claude" (Anthropic-compatible
+     endpoint required) or "pi" (bare OpenAI-compatible endpoint, lightweight). */
+  harness?: "claude" | "pi";
+  env?: Record<string, string> | null;
+  enabled: boolean;
+  has_api_key: boolean;
+  created_at: string;
+}
+
+/* ---- agent memory (the note graph agents distill their learnings into) ---- */
+
+export interface MemoryNote {
+  id: number;
+  project_id?: string | null; // null = global note
+  agent_id?: number | null; // authoring agent; null = operator-authored
+  title: string;
+  body: string;
+  kind: string;
+  tags?: string[] | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MemoryLink {
+  id: number;
+  src_note_id: number;
+  dst_note_id: number;
+  relation: string;
+  created_by_agent_id?: number | null;
+  created_at: string;
+}
+
+/* Everything the graph view draws, in one response (GET /memory/graph). */
+export interface MemoryGraph {
+  notes: MemoryNote[];
+  links: MemoryLink[];
 }
 
 export interface SharedContext {
