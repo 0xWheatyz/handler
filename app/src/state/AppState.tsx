@@ -18,6 +18,7 @@ import {
   type ClaudeModel,
   type LogEntry,
   type Project,
+  type Schedule,
 } from "../api/client";
 import { statusLabel, statusTone, timeAgo } from "../api/format";
 import { useServerConfig } from "./ServerConfig";
@@ -39,6 +40,7 @@ export type Screen =
   | "detail"
   | "answer"
   | "spawn"
+  | "schedules"
   | "log"
   | "settings";
 
@@ -99,6 +101,8 @@ interface AppStateValue {
   projects: Project[];
   /* Registered model backends (the spawn/schedule dropdown next to the subscription). */
   models: ClaudeModel[];
+  /* Recurring agent spawns, across all projects. */
+  schedules: Schedule[];
   waiting: WaitingItem[];
   recent: RecentItem[];
   counts: { running: number; waiting: number; done: number };
@@ -117,6 +121,18 @@ interface AppStateValue {
   sendAnswer: (text: string) => Promise<{ resumed: boolean; note?: string }>;
   spawn: (project: string, task: string, modelId?: number | null) => Promise<void>;
   kill: (project: string, name: string) => Promise<void>;
+  createSchedule: (
+    project: string,
+    input: {
+      name_prefix: string;
+      task: string;
+      interval_seconds: number;
+      role?: string | null;
+      model_id?: number | null;
+    },
+  ) => Promise<void>;
+  toggleSchedule: (id: number, enabled: boolean) => Promise<void>;
+  deleteSchedule: (id: number) => Promise<void>;
 }
 
 const AppStateContext = createContext<AppStateValue | null>(null);
@@ -160,6 +176,7 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
   // Fleet data.
   const [projects, setProjects] = useState<Project[]>([]);
   const [models, setModels] = useState<ClaudeModel[]>([]);
+  const [schedules, setSchedules] = useState<Schedule[]>([]);
   const [agentsByProject, setAgentsByProject] = useState<Record<string, Agent[]>>({});
   const [checkmarks, setCheckmarks] = useState<Record<string, Checkmark | null>>({});
   const [logsByAgent, setLogsByAgent] = useState<Record<string, LogEntry[]>>({});
@@ -175,6 +192,7 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
   const resetData = useCallback(() => {
     setProjects([]);
     setModels([]);
+    setSchedules([]);
     setAgentsByProject({});
     setCheckmarks({});
     setLogsByAgent({});
@@ -206,6 +224,13 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
         .catch((e) => {
           if (e instanceof AuthError) throw e;
           return [] as ClaudeModel[];
+        });
+
+      const scheduleList = await client
+        .api<Schedule[]>("/schedules")
+        .catch((e) => {
+          if (e instanceof AuthError) throw e;
+          return [] as Schedule[];
         });
 
       // Per-agent/per-project sub-requests are isolated: one flaky agent (a 500 on
@@ -268,6 +293,7 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
 
       setProjects(projs);
       setModels(modelList);
+      setSchedules(scheduleList);
       setAgentsByProject(abp);
       setCheckmarks(cmMap);
       setLogsByAgent(logMap);
@@ -506,6 +532,53 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
     [client, refresh],
   );
 
+  const createSchedule = useCallback(
+    async (
+      project: string,
+      input: {
+        name_prefix: string;
+        task: string;
+        interval_seconds: number;
+        role?: string | null;
+        model_id?: number | null;
+      },
+    ) => {
+      if (!client) throw new Error("not connected");
+      await client.api(`/projects/${enc(project)}/schedules`, {
+        body: {
+          name_prefix: input.name_prefix,
+          task: input.task,
+          interval_seconds: input.interval_seconds,
+          ...(input.role ? { role: input.role } : {}),
+          ...(input.model_id != null ? { model_id: input.model_id } : {}),
+        },
+      });
+      await refresh();
+    },
+    [client, refresh],
+  );
+
+  const toggleSchedule = useCallback(
+    async (id: number, enabled: boolean) => {
+      if (!client) throw new Error("not connected");
+      await client.api(`/schedules/${id}`, {
+        method: "PATCH",
+        body: { enabled },
+      });
+      await refresh();
+    },
+    [client, refresh],
+  );
+
+  const deleteSchedule = useCallback(
+    async (id: number) => {
+      if (!client) throw new Error("not connected");
+      await client.api(`/schedules/${id}`, { method: "DELETE" });
+      await refresh();
+    },
+    [client, refresh],
+  );
+
   const value = useMemo<AppStateValue>(
     () => ({
       screen,
@@ -521,6 +594,7 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
       error,
       projects,
       models,
+      schedules,
       waiting,
       recent,
       counts,
@@ -535,6 +609,9 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
       sendAnswer,
       spawn,
       kill,
+      createSchedule,
+      toggleSchedule,
+      deleteSchedule,
     }),
     [
       screen,
@@ -546,6 +623,7 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
       error,
       projects,
       models,
+      schedules,
       waiting,
       recent,
       counts,
@@ -558,6 +636,9 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
       sendAnswer,
       spawn,
       kill,
+      createSchedule,
+      toggleSchedule,
+      deleteSchedule,
     ],
   );
 

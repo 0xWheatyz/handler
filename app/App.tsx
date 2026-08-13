@@ -34,6 +34,7 @@ import { FleetScreen } from "./src/screens/FleetScreen";
 import { AgentDetailScreen } from "./src/screens/AgentDetailScreen";
 import { AnswerScreen } from "./src/screens/AnswerScreen";
 import { SpawnScreen } from "./src/screens/SpawnScreen";
+import { SchedulesScreen } from "./src/screens/SchedulesScreen";
 import { LogScreen } from "./src/screens/LogScreen";
 import { SettingsScreen } from "./src/screens/SettingsScreen";
 
@@ -46,6 +47,7 @@ function Router() {
     detail: AgentDetailScreen,
     answer: AnswerScreen,
     spawn: SpawnScreen,
+    schedules: SchedulesScreen,
     log: LogScreen,
     settings: SettingsScreen,
   }[screen];
