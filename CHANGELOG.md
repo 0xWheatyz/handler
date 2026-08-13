@@ -6,6 +6,25 @@ the image workflows publish (plus `latest` from every push to `main`).
 
 ## [Unreleased]
 
+### Added — mobile app feature parity
+
+The iOS app (`app/`) catches up with everything the backend and web dashboard gained
+since its last release:
+
+- **Model backend picker on spawn**: the spawn form now offers the registered model
+  backends (`/claude/models`) next to the Claude subscription, matching the web
+  dashboard's per-spawn dropdown; the agent detail meta card shows which backend an
+  agent is pinned to, plus its supervising worker.
+- **Headless run event stream**: a new Events tab on the agent detail screen polls the
+  cursor-paged `/agents/{name}/events` endpoint and renders the stream-json events live —
+  assistant text, tool-call badges, run results with turns/cost, worker notices, raw
+  lines.
+- **Schedules tab**: list, create (interval, role, model backend, prompt), pause/resume,
+  and delete recurring agent spawns across all projects.
+- **Memory tab**: a read view over the agent-memory note graph (`/memory/graph`) with
+  kind filters and expandable notes showing body, tags, and links; authoring stays on
+  the web dashboard and the agents' MCP server.
+
 ### Added — the pi harness for local models ([#29](https://github.com/0xWheatyz/handler/pull/29))
 
 - **`harness` on model backends** (`claude` | `pi`, default `claude`). A backend row can

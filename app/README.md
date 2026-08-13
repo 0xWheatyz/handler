@@ -24,10 +24,12 @@ npm run ios      # opens the iOS simulator (requires Xcode)
 | Screen | File | What it does |
 | --- | --- | --- |
 | Fleet (home) | `src/screens/FleetScreen.tsx` | Stat cards, "Waiting on you" list → Answer, "Recent checkmarks" → detail |
-| Agent detail | `src/screens/AgentDetailScreen.tsx` | Checkmark / Log segmented control, meta table, Answer / Pause / Kill |
+| Agent detail | `src/screens/AgentDetailScreen.tsx` | Checkmark / Events / Log segmented control, live headless run event stream, meta table (incl. model backend + worker), Answer / Kill |
 | Answer | `src/screens/AnswerScreen.tsx` | Question, tappable quick replies, reply field + **Send & resume** |
-| Spawn | `src/screens/SpawnScreen.tsx` | Project select, task field, two toggles, Spawn |
-| Log | `src/screens/LogScreen.tsx` | All / handler / Errors filters over the global feed |
+| Spawn | `src/screens/SpawnScreen.tsx` | Project select, model backend select, task field, Spawn |
+| Schedules | `src/screens/SchedulesScreen.tsx` | Recurring agent spawns: list, create (interval / role / model), pause, delete |
+| Memory | `src/screens/MemoryScreen.tsx` | Read view over the agent-memory note graph, kind filters, expandable notes |
+| Log | `src/screens/LogScreen.tsx` | All / per-project / Errors filters over the global feed |
 | Settings | `src/screens/SettingsScreen.tsx` | Server info, notification toggles, Sign out |
 
 The prototype navigates by swapping a single `screen` value (with working back
