@@ -181,3 +181,38 @@ def test_resume_refused_while_run_live(env, fake_launch):
     ok, detail = spawn.resume(agent, "answer")
     assert ok is False
     assert "live run" in detail
+
+
+def test_spawn_trusts_working_dir_in_claude_json(env, fake_launch):
+    """The launch must pre-trust the agent's working dir in ~/.claude.json — an
+    untrusted workspace wedges a headless run on the trust dialog with nobody at a
+    TTY (regression: the call was lost when phase 4 deleted the tmux launch path)."""
+    root = env["tmp"] / "proj"
+    _write_mise(root, with_test=True)
+    _register_project(root)
+
+    spawn.spawn("proj", "api", task="build the thing")
+
+    cfg = json.loads((env["tmp"] / ".claude.json").read_text())
+    assert cfg["hasCompletedOnboarding"] is True
+    entry = cfg["projects"][str(root)]
+    assert entry["hasTrustDialogAccepted"] is True
+
+
+def test_resume_trusts_working_dir_in_claude_json(env, fake_launch):
+    """Cross-worker resume may run in a container that has never seen this working
+    dir; resume must re-seed trust exactly as spawn does."""
+    root = env["tmp"] / "proj"
+    _write_mise(root, with_test=True)
+    _register_project(root)
+    spawn.spawn("proj", "api", task="do it")
+    with get_engine().begin() as conn:
+        agent = repo.get_agent_by_name(conn, "proj", "api")
+        repo.finish_run(conn, repo.get_latest_run(conn, agent["id"])["id"], "completed")
+    (env["tmp"] / ".claude.json").unlink()  # a "fresh container": no config at all
+
+    ok, _ = spawn.resume(agent, "use Postgres")
+
+    assert ok is True
+    cfg = json.loads((env["tmp"] / ".claude.json").read_text())
+    assert cfg["projects"][str(root)]["hasTrustDialogAccepted"] is True

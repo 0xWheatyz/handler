@@ -46,6 +46,7 @@ The full admin surface — everything the web dashboard can do, under
 | Plugins | Marketplace plugins pinned to their repo |
 | Permissions | Default permission mode + allow/deny/ask rules over the read-only env baseline |
 | Claude login | Drive the worker's `claude /login` (authorize in browser, paste the code back) |
+| Activity | The control-command queue: status filters, worker attribution, result/error detail, 5s auto-refresh |
 | Repositories | Register repos (git-server or manual mode, optional mise-init bootstrap), sync, delete |
 | Git servers | Forge hosts: encrypted tokens, generated deploy keys (public half copyable) |
 | Approvals | Record operator approve / reject verdicts per project + branch |

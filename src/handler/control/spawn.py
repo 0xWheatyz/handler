@@ -15,6 +15,7 @@ from ..config import get_settings
 from ..db import repository as repo
 from ..db.engine import connection
 from . import (
+    claude_config,
     claude_gen,
     credentials,
     forge,
@@ -160,6 +161,11 @@ def spawn(
     # half also feeds pi-harness agents (their settings.json points at the same dir).
     # Scoped to the project's owner: shared rows plus theirs, nobody else's.
     claude_gen.apply(working_dir, visible_to=project.get("owner_user_id"))
+    # Mark onboarding complete and trust this working dir in ~/.claude.json before
+    # claude boots: a fresh worktree is a brand-new path, and an untrusted workspace
+    # wedges/refuses a headless run with nobody at a TTY to accept the dialog. (The
+    # old tmux launch path did this; it was lost when phase 4 deleted that path.)
+    claude_config.ensure_onboarded(working_dir)
     env, harness = _agent_env(project, agent, token, role=role, mise_init=mise_init)
 
     # Verify the pinned forge version, if one is configured. Non-fatal: a version drift
@@ -286,6 +292,9 @@ def resume(agent: dict, answer: str, worker_id: str | None = None) -> tuple[bool
     working_dir = agent["working_dir"]
     settings_path = settings_gen.write_settings(working_dir)
     claude_gen.apply(working_dir, visible_to=project.get("owner_user_id"))
+    # Cross-worker resume may land in a container whose ~/.claude.json has never seen
+    # this working dir — re-seed trust exactly as spawn does.
+    claude_config.ensure_onboarded(working_dir)
     try:
         token = None
         with connection() as conn:

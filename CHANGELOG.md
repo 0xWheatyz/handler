@@ -6,6 +6,24 @@ the image workflows publish (plus `latest` from every push to `main`).
 
 ## [Unreleased]
 
+### Added
+
+- **Activity screen in the mobile app** (Settings → Manage → Activity): the
+  control-command queue with status filters, per-row worker attribution
+  (`on <worker>` / `unclaimed`), expandable result/error text, a Sweep CI action, and
+  a 5s auto-refresh — the screen that answers "why is my login/spawn/sync stuck" from
+  the phone.
+
+### Fixed
+
+- **Untrusted-workspace wedge on headless runs.** Phase 4's tmux-path deletion also
+  removed the only call to `claude_config.ensure_onboarded`, so agent working dirs —
+  every fresh worktree — were never pre-trusted in `~/.claude.json` and headless
+  `claude -p` runs wedged or refused on the trust dialog with nobody at a TTY. Spawn
+  and resume now re-seed onboarding + per-directory trust before every launch (resume
+  included, so a cross-worker resume landing in a container that has never seen the
+  working dir is covered). 2 regression tests.
+
 ### Added — mobile app feature parity
 
 The iOS app (`app/`) catches up with everything the backend and web dashboard gained

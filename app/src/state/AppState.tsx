@@ -55,6 +55,7 @@ export type Screen =
   | "repositories"
   | "gitServers"
   | "approvals"
+  | "activity"
   | "shared"
   | "users"
   | "account"
