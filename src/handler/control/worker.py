@@ -251,12 +251,14 @@ def _cmd_login_submit(command: dict) -> dict:
 
 def _cmd_skill_install(command: dict) -> dict:
     """Run a pasted marketplace install prompt through a one-off headless claude and
-    import the fetched skills as managed rows (Claude page, Skills tab)."""
-    prompt = _payload(command).get("prompt")
+    import the fetched skills as managed rows (Claude page, Skills tab). Imported rows
+    belong to the requesting user (``owner_user_id`` in the payload; None = shared)."""
+    payload = _payload(command)
+    prompt = payload.get("prompt")
     if not prompt or not str(prompt).strip():
         raise CommandError("skill_install requires a 'prompt' in the payload")
     try:
-        return skill_install.run(str(prompt))
+        return skill_install.run(str(prompt), owner_user_id=payload.get("owner_user_id"))
     except skill_install.InstallError as exc:
         raise CommandError(str(exc)) from exc
 
@@ -488,7 +490,8 @@ def run(
             pass
         did_work = drain(worker_id) > 0
         now = time.monotonic()
-        if credsync_interval > 0 and (last_credsync == 0.0 or now - last_credsync >= credsync_interval):
+        credsync_due = last_credsync == 0.0 or now - last_credsync >= credsync_interval
+        if credsync_interval > 0 and credsync_due:
             # First pass runs immediately: a fresh worker container must materialize the
             # claude credentials before it claims its first spawn.
             try:

@@ -14,7 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import Connection
 
 from ...db import repository as repo
-from ..deps import db_conn, require_admin, require_auth
+from ..deps import Actor, db_conn, get_actor, require_auth
 from ..schemas import AnswerIn, AnswerOut, CommandOut, ResumeIn
 from .common import resolve_agent
 
@@ -30,9 +30,10 @@ def answer(
     project: str,
     name: str,
     body: AnswerIn,
+    actor: Actor = Depends(get_actor),
     conn: Connection = Depends(db_conn),
 ) -> AnswerOut:
-    agent = resolve_agent(conn, project, name)
+    agent = resolve_agent(conn, project, name, actor)
 
     if body.log_entry_id is not None:
         log_entry_id = body.log_entry_id
@@ -58,15 +59,15 @@ def answer(
     "/resume",
     response_model=CommandOut,
     status_code=status.HTTP_202_ACCEPTED,
-    dependencies=[Depends(require_admin)],
 )
 def resume(
     project: str,
     name: str,
     body: ResumeIn,
+    actor: Actor = Depends(get_actor),
     conn: Connection = Depends(db_conn),
 ) -> dict:
-    agent = resolve_agent(conn, project, name)
+    agent = resolve_agent(conn, project, name, actor, edit=True)
 
     # Resolve the answer to feed back here (the API has the log); the worker just delivers.
     answer_text = body.answer
@@ -92,5 +93,5 @@ def resume(
         project_id=project,
         agent_name=name,
         payload={"answer": answer_text},
-        requested_by="operator:web",
+        requested_by=actor.label,
     )

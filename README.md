@@ -126,9 +126,12 @@ Configuration is entirely environment-driven (see [`.env.example`](.env.example)
 | Variable | Purpose | Default |
 |---|---|---|
 | `DATABASE_URL` | `sqlite:////abs/path.db` or `postgresql+psycopg://…` | `sqlite:///./handler.db` |
-| `AUTH_TOKEN` | Global bearer token gating every API route | *(required for the API)* |
+| `AUTH_TOKEN` | Legacy/machine bearer token (scripts, CI, break-glass) — humans sign in with email + password instead ([user accounts](#user-accounts--sign-in)) | unset → env-token auth off |
 | `SHARED_CONTEXT_WRITE_TOKEN` | Higher-trust token gating `PUT /shared/context/:key` | falls back to `AUTH_TOKEN` |
-| `ADMIN_TOKEN` | Gates the web control surface (enqueue commands, project/host CRUD, credential edits) | falls back to `AUTH_TOKEN` |
+| `ADMIN_TOKEN` | Admin-level env token (enqueue commands, project/host CRUD, credential edits) | falls back to `AUTH_TOKEN` |
+| `SMTP_HOST` / `SMTP_PORT` / `SMTP_USERNAME` / `SMTP_PASSWORD` / `SMTP_FROM` / `SMTP_STARTTLS` / `SMTP_SSL` | Outbound email for invite + password-reset links | unset → links shown to the admin instead of mailed |
+| `PUBLIC_BASE_URL` | Base URL emailed links point at | unset → the request's own origin |
+| `SESSION_TTL_DAYS` / `RESET_TOKEN_TTL_HOURS` / `INVITE_TOKEN_TTL_HOURS` | Session and one-shot-link lifetimes | `30` / `2` / `168` |
 | `WEBHOOK_URL` | Generic target for the `Notification` hook (ntfy, Slack, …) | unset → no-op |
 | `SEARXNG_URL` / `BRAVE_SEARCH_API_KEY` | Provider for the agents' `web_search` tool (pi harness) | unset → DuckDuckGo fallback |
 | `HANDLER_SECRET_KEY` | Fernet key encrypting git-server tokens + SSH keys at rest (set the same value on API and control) | unset → secret store disabled |
@@ -203,6 +206,56 @@ docker compose up -d                           # db + api + control (worker)
 docker compose run --rm control handler list
 docker compose run --rm control handler spawn --project leeworks-api --name junior --task "…"
 ```
+
+## User accounts & sign-in
+
+Humans no longer need to know an API key. The dashboard signs in with **email +
+password**, and the accounts model is deliberately small-team-shaped:
+
+- **First run**: with zero accounts, the sign-in page becomes a setup form. The first
+  account created **is the admin**. (`POST /auth/setup` refuses once any account exists.)
+- **Everyone else is invited by an admin** (Users page / `POST /auth/users`): creating a
+  user mints a one-shot **invite link** through which the invitee sets their own
+  password. With SMTP configured the link is emailed; either way it is shown to the
+  admin, so email is optional infrastructure, not a requirement.
+- **Password reset by email**: "Forgot password?" mails a short-lived reset link
+  (`POST /auth/forgot` — silent about whether the address exists). Without SMTP, an
+  admin mints a reset link from the Users page instead. Spending a link revokes every
+  existing session for that account.
+- **Sessions** are opaque bearer tokens (only their SHA-256 is stored), sent exactly
+  like the old token: `Authorization: Bearer …`. `POST /auth/logout` revokes one;
+  changing a password revokes the rest.
+- **Admin safety rails**: the last active admin can't be demoted, disabled, or deleted;
+  you can't delete your own account.
+
+### Per-user separation
+
+Every project, skill, MCP connector, plugin, and model backend is either **owned** by
+one user or **shared** (no owner). The rules, everywhere:
+
+- A user sees **shared + their own** — another user's resources don't exist for them
+  (listings filter, direct lookups 404, so existence isn't leaked).
+- Creating a resource makes you its owner; owners manage their own resources without
+  admin help (spawn/kill agents, schedules, approvals, sync, memory notes — everything
+  project-nested follows the project's owner).
+- **Shared resources are admin-managed** and behave exactly like the pre-accounts world:
+  visible to all, editable by admins. Legacy rows all land here on upgrade, so nothing
+  changes until people start owning things.
+- At **launch**, an agent gets only what its project's owner can see: their skills +
+  connectors + the shared set. One user's tools never reach another user's agents, and
+  a private model backend can't be selected for someone else's spawn or schedule.
+- Deleting a user **reassigns their resources to shared** (never orphans or deletes
+  work); an admin can also reassign a project's owner explicitly (`PATCH /projects/:p`).
+- Global infrastructure stays admin-only: git servers, the Claude account login,
+  permission overrides, global memory notes, and user management itself.
+
+### Legacy env tokens
+
+`AUTH_TOKEN` / `ADMIN_TOKEN` / `SHARED_CONTEXT_WRITE_TOKEN` keep working with their
+historical semantics (see-everything machine credentials; the admin token passes admin
+gates). They're the right tool for scripts and CI — and the break-glass if every admin
+is locked out. Resources they create are shared. The dashboard's sign-in page keeps a
+"Use an API token" fallback for token-only deployments.
 
 ## Web management
 
@@ -350,10 +403,19 @@ agent's identity and `DATABASE_URL` injected into its environment. `--role`
 
 ## API reference
 
-All routes require `Authorization: Bearer <AUTH_TOKEN>`. `GET /health` is unauthenticated.
+All routes require `Authorization: Bearer <token>` — a user session token from
+`POST /auth/login` or a legacy env token. `GET /health`, `GET /auth/status`, and the
+account bootstrap routes (`setup`/`login`/`forgot`/`reset`) are unauthenticated.
 
 | Method & path | Purpose |
 |---|---|
+| `GET /auth/status` | `{initialized, smtp_configured}` — drives the setup-vs-signin page |
+| `POST /auth/setup` | Create the first account (becomes the admin) |
+| `POST /auth/login` · `POST /auth/logout` | Session lifecycle (opaque bearer, hash-stored) |
+| `GET /auth/me` · `POST /auth/change-password` | Who am I / rotate my password |
+| `POST /auth/forgot` · `POST /auth/reset` | Email reset link / spend a reset or invite link |
+| `GET`/`POST /auth/users` · `PATCH`/`DELETE /auth/users/:id` | Admin user management (invite links) |
+| `POST /auth/users/:id/reset-link` | Admin-minted reset/invite link (the no-SMTP path) |
 | `GET /projects` · `POST /projects` | List / register projects |
 | `GET /projects/:p/agents` · `POST …` | List / register agents (project-scoped) |
 | `GET /projects/:p/agents/:name/checkmark` | The agent's current-state checkmark |

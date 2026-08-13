@@ -158,7 +158,8 @@ def spawn(
     # Materialize the web-managed Claude config (MCP connectors + user-level skills)
     # so this launch picks up what the operator configured in the dashboard. The skills
     # half also feeds pi-harness agents (their settings.json points at the same dir).
-    claude_gen.apply(working_dir)
+    # Scoped to the project's owner: shared rows plus theirs, nobody else's.
+    claude_gen.apply(working_dir, visible_to=project.get("owner_user_id"))
     env, harness = _agent_env(project, agent, token, role=role, mise_init=mise_init)
 
     # Verify the pinned forge version, if one is configured. Non-fatal: a version drift
@@ -284,7 +285,7 @@ def resume(agent: dict, answer: str, worker_id: str | None = None) -> tuple[bool
 
     working_dir = agent["working_dir"]
     settings_path = settings_gen.write_settings(working_dir)
-    claude_gen.apply(working_dir)
+    claude_gen.apply(working_dir, visible_to=project.get("owner_user_id"))
     try:
         token = None
         with connection() as conn:

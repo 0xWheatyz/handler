@@ -8,12 +8,13 @@ treats as a genuine second party (satisfying the "no self-approval" rule).
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy import Connection
 
 from ...db import repository as repo
-from ..deps import db_conn, require_admin, require_auth
+from ..deps import Actor, db_conn, get_actor, require_auth
 from ..schemas import ApprovalIn, ApprovalOut, CommandOut
+from .common import resolve_project
 
 router = APIRouter(
     prefix="/projects/{project}/approvals",
@@ -22,18 +23,14 @@ router = APIRouter(
 )
 
 
-def _require_project(conn: Connection, project: str) -> None:
-    if repo.get_project(conn, project) is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, detail=f"project '{project}' not found")
-
-
 @router.get("", response_model=list[ApprovalOut])
 def list_approvals(
     project: str,
     branch: str | None = Query(None),
+    actor: Actor = Depends(get_actor),
     conn: Connection = Depends(db_conn),
 ) -> list[dict]:
-    _require_project(conn, project)
+    resolve_project(conn, project, actor)
     return repo.list_approvals(conn, project, branch=branch)
 
 
@@ -41,12 +38,14 @@ def list_approvals(
     "",
     response_model=CommandOut,
     status_code=status.HTTP_202_ACCEPTED,
-    dependencies=[Depends(require_admin)],
 )
 def enqueue_approval(
-    project: str, body: ApprovalIn, conn: Connection = Depends(db_conn)
+    project: str,
+    body: ApprovalIn,
+    actor: Actor = Depends(get_actor),
+    conn: Connection = Depends(db_conn),
 ) -> dict:
-    _require_project(conn, project)
+    resolve_project(conn, project, actor, edit=True)
     payload = {
         "branch": body.branch,
         "sha": body.sha,
@@ -61,5 +60,5 @@ def enqueue_approval(
         project_id=project,
         agent_name=body.agent_name,
         payload={k: v for k, v in payload.items() if v is not None},
-        requested_by="operator:web",
+        requested_by=actor.label,
     )

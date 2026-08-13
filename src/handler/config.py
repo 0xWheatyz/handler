@@ -19,7 +19,10 @@ class Settings(BaseSettings):
     # "is it sqlite" except db.upsert.
     database_url: str = "sqlite:///./handler.db"
 
-    # The single global bearer token gating every API route (README 3.3).
+    # Legacy/machine bearer token gating every API route (README 3.3). Human operators
+    # now sign in with email + password (user accounts, ``/auth``); this token remains
+    # for scripts/CI and as a break-glass credential, and may be left unset once
+    # accounts exist.
     auth_token: str = ""
 
     # Optional higher-trust token for PUT /shared/context/:key. Falls back to
@@ -31,6 +34,27 @@ class Settings(BaseSettings):
     # and credential-pointer edits. Falls back to auth_token when unset. A single global
     # token, like auth_token — per-user RBAC is future work.
     admin_token: str | None = None
+
+    # ---- User accounts (email + password sign-in for the dashboard/API).
+    # Browser session lifetime, and the validity windows for the one-shot links: a
+    # password reset is short-lived; an invite (set your first password) gets a week.
+    session_ttl_days: int = 30
+    reset_token_ttl_hours: int = 2
+    invite_token_ttl_hours: int = 168
+
+    # ---- Outbound email (invites + password resets). Unset SMTP_HOST => email off:
+    # admin flows return the invite/reset link in the response instead of mailing it.
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_username: str = ""
+    smtp_password: str = ""
+    smtp_from: str = ""
+    smtp_starttls: bool = True  # STARTTLS on a plain connection (the common 587 setup)
+    smtp_ssl: bool = False  # implicit TLS from byte one (the 465 setup)
+
+    # Base URL the emailed links point at, e.g. "https://handler.example.com". Falls
+    # back to the request's own origin when unset (right for the same-origin UI).
+    public_base_url: str = ""
 
     # Optional generic webhook target for the Notification hook. No-op when unset.
     webhook_url: str | None = None

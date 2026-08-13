@@ -35,6 +35,7 @@ const BADGES: Partial<Record<Section, { count: (s: Store) => number; accent?: (s
     // Draw the eye to it until Claude is logged in on the host this session.
     accent: (s) => s.claudeLogin.status !== "done",
   },
+  users: { count: (s) => s.users.length },
 };
 
 export function Shell({ onSignOut, children }: { onSignOut: () => void; children: React.ReactNode }) {
@@ -55,7 +56,7 @@ export function Shell({ onSignOut, children }: { onSignOut: () => void; children
           <span className="logo" />
           Claude Monitor
         </div>
-        {NAV_ROUTES.map((n) => {
+        {NAV_ROUTES.filter((n) => n.key !== "users" || s.me?.is_admin).map((n) => {
           const badge = BADGES[n.key];
           const c = badge?.count(s) ?? 0;
           const isAccent = badge?.accent?.(s) ?? false;
@@ -74,11 +75,30 @@ export function Shell({ onSignOut, children }: { onSignOut: () => void; children
         })}
         <div className="sidebar-spacer" />
         <div className="sidebar-foot">
+          {s.me && (
+            <div
+              className="nav-item"
+              style={{ cursor: "default", opacity: 0.8 }}
+              title={s.me.kind === "token" ? "Authenticated with an API token" : "Signed in"}
+            >
+              <span
+                style={{
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                  fontSize: "var(--text-xs)",
+                }}
+              >
+                {s.me.kind === "token" ? "API token" : s.me.email}
+                {s.me.is_admin ? " · admin" : ""}
+              </span>
+            </div>
+          )}
           <button className="nav-item" onClick={s.refresh} title="Refresh now">
             <span>Refresh</span>
             <span className="count">↻</span>
           </button>
-          <button className="nav-item" onClick={onSignOut} title="Sign out / change token">
+          <button className="nav-item" onClick={onSignOut} title="Sign out">
             <span>Sign out</span>
           </button>
         </div>
