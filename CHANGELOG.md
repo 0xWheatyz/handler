@@ -19,6 +19,10 @@ the image workflows publish (plus `latest` from every push to `main`).
   placements (schedule firings, mise-init) keep the old fast-forward behavior for
   their shared tree. 2 end-to-end regression tests (bare remote, parked root,
   out-of-band push).
+- **UI-serving tests skip when the web export is absent** instead of failing every
+  fresh clone: the export is a generated, deliberately untracked artifact (built in
+  the Docker image's node stage), so the three `test_api_ui` checks now guard any
+  environment that has it and skip with a clear reason where it was never built.
 
 ### Fixed
 
