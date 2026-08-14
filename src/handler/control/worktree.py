@@ -40,7 +40,10 @@ def _default_branch_start(project_root: str) -> str | None:
 
     New agent branches are cut from here rather than the root's ``HEAD``: the root
     checkout can legitimately be parked on some earlier agent's branch, and cutting
-    from it handed fresh agents history that was hours behind the remote.
+    from it handed fresh agents history that was hours behind the remote. When
+    ``origin/HEAD`` was never pinned (older clones, a failed ``remote set-head``),
+    fall back to ``origin/main`` / ``origin/master`` rather than silently cutting
+    from the root's parked HEAD.
     """
     result = subprocess.run(
         ["git", "-C", project_root, "symbolic-ref", "--quiet",
@@ -49,9 +52,18 @@ def _default_branch_start(project_root: str) -> str | None:
         text=True,
     )
     ref = result.stdout.strip()
-    if result.returncode != 0 or not ref.startswith("refs/remotes/"):
-        return None
-    return ref.removeprefix("refs/remotes/")
+    if result.returncode == 0 and ref.startswith("refs/remotes/"):
+        return ref.removeprefix("refs/remotes/")
+    for candidate in ("origin/main", "origin/master"):
+        exists = subprocess.run(
+            ["git", "-C", project_root, "rev-parse", "--verify", "--quiet",
+             f"refs/remotes/{candidate}"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        if exists.returncode == 0:
+            return candidate
+    return None
 
 
 def _branch_exists(project_root: str, branch: str) -> bool:
@@ -72,12 +84,20 @@ def resolve_working_dir(
     *,
     subdir: str | None = None,
     worktree_branch: str | None = None,
+    reset_existing: bool = False,
 ) -> str:
     """Return (and, for worktrees, create) the agent's working directory.
 
     - ``subdir``: an existing/created subdirectory under the project root.
     - ``worktree_branch``: ``git worktree add <root>/<agent> <branch>``.
     - neither: the project root itself.
+
+    ``reset_existing`` is set for spawn-derived ``agent/<name>`` branches: nobody owns
+    a derived branch whose agent name is free again, so a stale leftover (from a
+    deleted agent) is reset to the remote default tip with ``-B`` instead of being
+    checked out as-is — otherwise a dead branch would silently shadow the remote's
+    latest push. Operator-named branches keep checkout-as-is semantics (an in-flight
+    branch must never be clobbered).
     """
     if subdir and worktree_branch:
         raise ValueError("pass at most one of subdir / worktree_branch")
@@ -88,17 +108,22 @@ def resolve_working_dir(
             raise IsolationError(f"{target} escapes project root {project_root}")
         # `git worktree add <path> <branch>` only checks out an *existing* ref; a fresh
         # feature branch won't exist yet (spawn starts from the remote's latest state), so
-        # create it with -b — from origin/HEAD when the clone has a remote, so the new
-        # branch starts at the remote default branch's tip regardless of where the root
-        # checkout is parked (--no-track: the branch must not adopt the default branch as
-        # its upstream, or the agent's plain `git push` would aim at it). An existing
-        # local branch is checked out as-is; if it exists only on a remote, git DWIMs a
+        # create it with -b — from the remote default branch when the clone has one, so
+        # the new branch starts at that tip regardless of where the root checkout is
+        # parked (--no-track: the branch must not adopt the default branch as its
+        # upstream, or the agent's plain `git push` would aim at it). An existing local
+        # branch is checked out as-is; if it exists only on a remote, git DWIMs a
         # tracking branch from the bare `add`.
+        start = _default_branch_start(project_root)
         cmd = ["git", "-C", project_root, "worktree", "add"]
         if _branch_exists(project_root, worktree_branch):
-            cmd += [target, worktree_branch]
+            if reset_existing and start:
+                # -B fails when the branch is checked out in another worktree, which is
+                # exactly the protection an in-flight agent needs.
+                cmd += ["--no-track", "-B", worktree_branch, target, start]
+            else:
+                cmd += [target, worktree_branch]
         else:
-            start = _default_branch_start(project_root)
             if start:
                 cmd += ["--no-track", "-b", worktree_branch, target, start]
             else:

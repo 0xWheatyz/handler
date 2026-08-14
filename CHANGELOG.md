@@ -8,6 +8,20 @@ the image workflows publish (plus `latest` from every push to `main`).
 
 ### Fixed
 
+- **The project-root checkout is now a ref store, never a working tree Handler moves.**
+  Worktree spawns fetch only: the agent's branch is cut from `origin/*` and the root
+  checkout — which may hold the operator's own work — is never fast-forwarded, merged,
+  or re-parked. A failed fetch on a worktree spawn is now **fatal** instead of a silent
+  note (the contract is "starts at the remote's latest push"; cutting from stale refs
+  would break it quietly). Branch starts fall back `origin/HEAD` → `origin/main` →
+  `origin/master` when the head pin is missing, and a stale `agent/<name>` branch left
+  by a deleted agent is reset to the remote tip instead of shadowing it. Root/subdir
+  placements (schedule firings, mise-init) keep the old fast-forward behavior for
+  their shared tree. 2 end-to-end regression tests (bare remote, parked root,
+  out-of-band push).
+
+### Fixed
+
 - **Agents missing freshly pushed commits.** A spawn with no explicit placement ran
   the agent in the shared project-root checkout, and the root only fast-forwards
   while parked on the default branch — so as soon as one agent left it on a feature
