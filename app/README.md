@@ -23,7 +23,8 @@ npm run ios      # opens the iOS simulator (requires Xcode)
 
 | Screen | File | What it does |
 | --- | --- | --- |
-| Fleet (home) | `src/screens/FleetScreen.tsx` | Stat cards, "Waiting on you" list → Answer, "Recent checkmarks" → detail |
+| Fleet (home) | `src/screens/FleetScreen.tsx` | Tappable stat cards → filtered agent list, "Waiting on you" → Answer, "Recent checkmarks" → detail |
+| Agent list | `src/screens/AgentListScreen.tsx` | Every agent (checkmark or not) with All / Running / Waiting / Done filters → detail |
 | Agent detail | `src/screens/AgentDetailScreen.tsx` | Checkmark / Events / Log segmented control, live headless run event stream, meta table (incl. model backend + worker), Answer / Kill |
 | Answer | `src/screens/AnswerScreen.tsx` | Question, tappable quick replies, reply field + **Send & resume** |
 | Spawn | `src/screens/SpawnScreen.tsx` | Project select, model backend select, task field, Spawn |

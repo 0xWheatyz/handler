@@ -49,6 +49,7 @@ import { ClaudeLoginScreen } from "./src/screens/manage/ClaudeLoginScreen";
 import { ServerConfigProvider, useServerConfig } from "./src/state/ServerConfig";
 import { ConnectScreen } from "./src/screens/ConnectScreen";
 import { FleetScreen } from "./src/screens/FleetScreen";
+import { AgentListScreen } from "./src/screens/AgentListScreen";
 import { AgentDetailScreen } from "./src/screens/AgentDetailScreen";
 import { AnswerScreen } from "./src/screens/AnswerScreen";
 import { SpawnScreen } from "./src/screens/SpawnScreen";
@@ -63,6 +64,7 @@ function Router() {
   const screens: Record<ScreenName, () => React.JSX.Element> = {
     connect: ConnectScreen,
     fleet: FleetScreen,
+    agentList: AgentListScreen,
     detail: AgentDetailScreen,
     answer: AnswerScreen,
     spawn: SpawnScreen,

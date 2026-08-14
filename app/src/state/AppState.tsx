@@ -38,6 +38,7 @@ import { useServerConfig } from "./ServerConfig";
 export type Screen =
   | "connect"
   | "fleet"
+  | "agentList"
   | "detail"
   | "answer"
   | "spawn"
@@ -62,6 +63,8 @@ export type Screen =
   | "claudeLogin";
 
 export type DetailTab = "state" | "events" | "log";
+/* Status buckets for the agent list, matching the fleet counts exactly. */
+export type AgentFilter = "all" | "running" | "waiting" | "done";
 export type BadgeTone = "neutral" | "positive" | "warning" | "danger";
 export type RecentTone = "positive" | "danger";
 
@@ -114,13 +117,21 @@ interface AppStateValue {
   go: (screen: Screen) => void;
   setDetailTab: (tab: DetailTab) => void;
   setLogFilter: (f: string) => void;
-  openDetail: (project: string, name: string) => void;
+  openDetail: (project: string, name: string, from?: Screen) => void;
   openAnswer: (project: string, name: string) => void;
+  /* Open the full agent list pre-filtered (the fleet stat cards tap through here). */
+  openAgentList: (filter: AgentFilter) => void;
+  agentFilter: AgentFilter;
+  setAgentFilter: (f: AgentFilter) => void;
+  /* Where the detail screen's back button returns to (fleet or the agent list). */
+  detailReturnTo: Screen;
 
   // Fleet data.
   loading: boolean;
   error: string | null;
   projects: Project[];
+  /* Every agent across every project, flat — checkmark or not. */
+  agents: Agent[];
   /* Registered model backends (the spawn/schedule dropdown next to the subscription). */
   models: ClaudeModel[];
   /* Recurring agent spawns, across all projects. */
@@ -213,6 +224,8 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
   const [screen, setScreen] = useState<Screen>("fleet");
   const [detailTab, setDetailTab] = useState<DetailTab>("state");
   const [logFilter, setLogFilter] = useState<string>("all");
+  const [agentFilter, setAgentFilter] = useState<AgentFilter>("all");
+  const [detailReturnTo, setDetailReturnTo] = useState<Screen>("fleet");
   const [selected, setSelected] = useState<Selected | null>(null);
 
   const resetData = useCallback(() => {
@@ -405,6 +418,13 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
     return { running, waiting: waiting.length, done };
   }, [agentsByProject, waiting]);
 
+  const agents = useMemo<Agent[]>(() => {
+    const flat = Object.values(agentsByProject).flat();
+    return [...flat].sort(
+      (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
+    );
+  }, [agentsByProject]);
+
   const globalLog = useMemo<GlobalLogItem[]>(() => {
     const rows: GlobalLogItem[] = [];
     for (const [pid, list] of Object.entries(agentsByProject)) {
@@ -511,10 +531,19 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
     : [];
 
   // ---- Navigation helpers --------------------------------------------------
-  const openDetail = useCallback((project: string, name: string) => {
-    setSelected({ project, name });
-    setDetailTab("state");
-    setScreen("detail");
+  const openDetail = useCallback(
+    (project: string, name: string, from: Screen = "fleet") => {
+      setSelected({ project, name });
+      setDetailTab("state");
+      setDetailReturnTo(from);
+      setScreen("detail");
+    },
+    [],
+  );
+
+  const openAgentList = useCallback((filter: AgentFilter) => {
+    setAgentFilter(filter);
+    setScreen("agentList");
   }, []);
 
   const openAnswer = useCallback((project: string, name: string) => {
@@ -641,10 +670,15 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
       setLogFilter,
       openDetail,
       openAnswer,
+      openAgentList,
+      agentFilter,
+      setAgentFilter,
+      detailReturnTo,
 
       loading,
       error,
       projects,
+      agents,
       models,
       schedules,
       memory,
@@ -675,9 +709,13 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
       logFilter,
       openDetail,
       openAnswer,
+      openAgentList,
+      agentFilter,
+      detailReturnTo,
       loading,
       error,
       projects,
+      agents,
       models,
       schedules,
       memory,

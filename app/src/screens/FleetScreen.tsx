@@ -22,6 +22,7 @@ import {
 import { TabBar } from "../components/TabBar";
 import {
   useAppState,
+  type AgentFilter,
   type RecentItem,
   type WaitingItem,
 } from "../state/AppState";
@@ -29,15 +30,25 @@ import {
 export function FleetScreen() {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
-  const { go, openAnswer, openDetail, waiting, recent, counts, loading, error, refresh } =
-    useAppState();
+  const {
+    go,
+    openAnswer,
+    openDetail,
+    openAgentList,
+    waiting,
+    recent,
+    counts,
+    loading,
+    error,
+    refresh,
+  } = useAppState();
 
   const empty = waiting.length === 0 && recent.length === 0;
 
-  const stats = [
-    { label: "Running", value: counts.running, tint: colors.textHeading },
-    { label: "Waiting", value: counts.waiting, tint: colors.warning },
-    { label: "Done", value: counts.done, tint: colors.textHeading },
+  const stats: { label: string; value: number; tint: string; filter: AgentFilter }[] = [
+    { label: "Running", value: counts.running, tint: colors.textHeading, filter: "running" },
+    { label: "Waiting", value: counts.waiting, tint: colors.warning, filter: "waiting" },
+    { label: "Done", value: counts.done, tint: colors.textHeading, filter: "done" },
   ];
 
   return (
@@ -61,14 +72,27 @@ export function FleetScreen() {
 
         <View style={styles.statsRow}>
           {stats.map((s) => (
-            <Card key={s.label} style={styles.statCard}>
-              <Text style={[text.caption, { color: colors.textMuted }]}>
-                {s.label}
-              </Text>
-              <Text style={[styles.statValue, { color: s.tint }]}>
-                {s.value}
-              </Text>
-            </Card>
+            <Pressable
+              key={s.label}
+              style={{ flex: 1 }}
+              onPress={() => openAgentList(s.filter)}
+            >
+              {({ pressed }) => (
+                <Card
+                  style={[
+                    styles.statCard,
+                    pressed && { backgroundColor: colors.surfaceSunken },
+                  ]}
+                >
+                  <Text style={[text.caption, { color: colors.textMuted }]}>
+                    {s.label}
+                  </Text>
+                  <Text style={[styles.statValue, { color: s.tint }]}>
+                    {s.value}
+                  </Text>
+                </Card>
+              )}
+            </Pressable>
           ))}
         </View>
 
@@ -219,7 +243,7 @@ const styles = StyleSheet.create({
     marginBottom: 20,
   },
   statsRow: { flexDirection: "row", gap: 12, marginBottom: 20 },
-  statCard: { flex: 1, paddingVertical: 14, paddingHorizontal: 16 },
+  statCard: { paddingVertical: 14, paddingHorizontal: 16 },
   statValue: {
     fontFamily: fonts.monoSemiBold,
     fontSize: 24,

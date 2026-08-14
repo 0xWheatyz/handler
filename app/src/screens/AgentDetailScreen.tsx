@@ -25,6 +25,7 @@ export function AgentDetailScreen() {
     openAnswer,
     detailTab,
     setDetailTab,
+    detailReturnTo,
     models,
     selectedAgent,
     selectedCheckmark,
@@ -38,7 +39,11 @@ export function AgentDetailScreen() {
       <View style={[styles.page, { backgroundColor: colors.surfacePage }]}>
         <View style={{ height: insets.top }} />
         <View style={styles.content}>
-          <PageHeader leading="back" onLeadingPress={() => go("fleet")} title="Agent" />
+          <PageHeader
+            leading="back"
+            onLeadingPress={() => go(detailReturnTo)}
+            title="Agent"
+          />
           <Text style={[text.body, { color: colors.textMuted }]}>
             This agent is no longer in the fleet.
           </Text>
@@ -95,7 +100,7 @@ export function AgentDetailScreen() {
       >
         <PageHeader
           leading="back"
-          onLeadingPress={() => go("fleet")}
+          onLeadingPress={() => go(detailReturnTo)}
           agentId={agent.name}
           badge={{ tone: statusTone(agent.status), label: statusLabel(agent.status) }}
         />

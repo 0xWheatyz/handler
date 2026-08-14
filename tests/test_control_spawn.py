@@ -216,3 +216,88 @@ def test_resume_trusts_working_dir_in_claude_json(env, fake_launch):
     assert ok is True
     cfg = json.loads((env["tmp"] / ".claude.json").read_text())
     assert cfg["projects"][str(root)]["hasTrustDialogAccepted"] is True
+
+
+def _git(root, *args):
+    import subprocess
+
+    subprocess.run(
+        ["git", "-c", "user.email=t@t", "-c", "user.name=t", "-C", str(root), *args],
+        check=True,
+        capture_output=True,
+    )
+
+
+def _init_git_repo(root):
+    """A committed git repo with a test task — the shape of a real synced project."""
+    _write_mise(root, with_test=True)
+    _git(root, "init", "-q", "-b", "main")
+    _git(root, "add", "-A")
+    _git(root, "commit", "-q", "-m", "init")
+
+
+def test_spawn_defaults_to_isolated_worktree(env, fake_launch):
+    """A no-placement spawn on a git root must NOT share the root checkout: the root
+    only fast-forwards while parked on the default branch, so shared-root agents saw
+    stale trees (missed pushes) as soon as one agent left it on a feature branch."""
+    root = env["tmp"] / "proj"
+    _init_git_repo(root)
+    _register_project(root)
+
+    agent = spawn.spawn("proj", "api", task="build the thing")
+
+    assert agent["working_dir"] == str(root / "api")
+    # A real worktree on the derived branch, not the root itself.
+    assert (root / "api" / ".git").exists()
+    import subprocess
+
+    branch = subprocess.run(
+        ["git", "-C", str(root / "api"), "branch", "--show-current"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    assert branch == "agent/api"
+
+
+def test_spawn_auto_worktree_off_keeps_root(env, fake_launch):
+    root = env["tmp"] / "proj"
+    _init_git_repo(root)
+    _register_project(root)
+
+    agent = spawn.spawn("proj", "api", task="do it", auto_worktree=False)
+
+    assert agent["working_dir"] == str(root)
+
+
+def test_spawn_non_git_root_still_uses_root(env, fake_launch):
+    """Manual (non-git) projects keep the old placement — there is nothing to worktree."""
+    root = env["tmp"] / "proj"
+    _write_mise(root, with_test=True)
+    _register_project(root)
+
+    agent = spawn.spawn("proj", "api", task="do it")
+
+    assert agent["working_dir"] == str(root)
+
+
+def test_worker_spawn_scheduled_keeps_root_placement(env, monkeypatch):
+    """Schedule firings opt out of the worktree default: their continuity convention
+    is a state file living in the root tree across runs."""
+    from handler.control import spawn as spawn_mod
+    from handler.control import worker
+
+    calls = []
+
+    def fake_spawn(project_id, name, **kwargs):
+        calls.append(kwargs)
+        return {"id": 1, "name": name, "working_dir": "/x"}
+
+    monkeypatch.setattr(spawn_mod, "spawn", fake_spawn)
+
+    base = {"project_id": "proj", "agent_name": "a", "payload": {"task": "t"}}
+    worker._cmd_spawn({**base, "requested_by": "schedule:5"})
+    worker._cmd_spawn({**base, "requested_by": "operator:web"})
+
+    assert calls[0]["auto_worktree"] is False
+    assert calls[1]["auto_worktree"] is True
