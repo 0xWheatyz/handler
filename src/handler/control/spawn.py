@@ -110,26 +110,22 @@ def spawn(
         if repo.get_agent_by_name(conn, project_id, name) is not None:
             raise SpawnError(f"agent '{name}' already exists in project '{project_id}'")
 
-        # Stateless workflows: start every run from the remote's latest state. An
-        # existing clone is fetched — refreshing origin/* even when the root checkout is
-        # parked on an agent's branch — and fast-forwarded when it sits on the default
-        # branch (failure degrades to a note — a stale tree is usable, an offline forge
-        # shouldn't brick spawning); a missing/empty root is cloned, and that failing is
-        # fatal (there is nothing to run against). A non-empty root that isn't a git
-        # repo is left alone — it's manually managed.
+        # Start every agent from the remote's latest push. A missing/empty root is
+        # cloned (that failing is fatal — nothing to run against); a non-empty root
+        # that isn't a git repo is left alone (manually managed).
         root = project["root_dir"]
-        if project.get("git_remote"):
-            if gitops.is_repo(root):
-                try:
-                    reposync.sync_project(project, conn)
-                except reposync.SyncError as exc:
-                    sync_note = str(exc)
-            elif not os.path.isdir(root) or not os.listdir(root):
+        if project.get("git_remote") and not gitops.is_repo(root):
+            if not os.path.isdir(root) or not os.listdir(root):
                 try:
                     reposync.sync_project(project, conn)
                 except reposync.SyncError as exc:
                     raise SpawnError(str(exc)) from exc
 
+        # Isolation by default: without this, every no-placement spawn shares the root
+        # checkout, whose tree goes stale as soon as an agent parks it off the default
+        # branch. Derived branches are marked so a stale leftover (deleted agent) is
+        # reset to the remote tip instead of shadowing it.
+        derived = False
         if (
             auto_worktree
             and worktree_branch is None
@@ -137,16 +133,39 @@ def spawn(
             and not mise_init  # the bootstrap commits .mise.toml to the default branch
             and gitops.is_repo(root)
         ):
-            # Isolation by default: without this, every no-placement spawn shares the
-            # root checkout, whose tree goes stale as soon as an agent parks it off the
-            # default branch. (Name reuse after a deleted agent can leave a stale
-            # agent/<name> branch behind; it is then checked out as-is, same as any
-            # explicitly named existing branch.)
             worktree_branch = f"agent/{name}"
+            derived = True
+
+        if project.get("git_remote") and gitops.is_repo(root):
+            if worktree_branch:
+                # Worktree spawns: fetch-only. The agent's branch is cut from origin/*,
+                # and the root checkout — which may hold the operator's own work — is
+                # never fast-forwarded, merged, or otherwise touched. A failed fetch is
+                # fatal here: the whole contract is "starts at the remote's latest
+                # push", and silently cutting from stale refs breaks it.
+                try:
+                    reposync.sync_project(project, conn, ff=False)
+                except reposync.SyncError as exc:
+                    raise SpawnError(
+                        f"cannot fetch the remote's latest state: {exc}"
+                    ) from exc
+            else:
+                # Root/subdir placements (schedule firings, mise-init) share the root
+                # tree, so it is fast-forwarded when parked on the default branch;
+                # failure degrades to a note — a stale shared tree is usable, and an
+                # offline forge shouldn't brick a scheduled run.
+                try:
+                    reposync.sync_project(project, conn)
+                except reposync.SyncError as exc:
+                    sync_note = str(exc)
 
         try:
             working_dir = worktree.resolve_working_dir(
-                project["root_dir"], name, subdir=subdir, worktree_branch=worktree_branch
+                project["root_dir"],
+                name,
+                subdir=subdir,
+                worktree_branch=worktree_branch,
+                reset_existing=derived,
             )
         except (worktree.WorktreeError, worktree.IsolationError) as exc:
             raise SpawnError(str(exc)) from exc

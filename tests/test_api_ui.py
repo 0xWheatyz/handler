@@ -9,9 +9,20 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 _STATIC_DIR = Path(__file__).resolve().parents[1] / "src" / "handler" / "api" / "static"
+
+# The export is a generated artifact and deliberately untracked (it caused guaranteed
+# merge conflicts — see .gitignore): the Docker image builds it in its own node stage,
+# and a source checkout only has it after `npm run export`. The serving tests still
+# guard any environment that *has* the export; a fresh clone just skips them.
+_needs_export = pytest.mark.skipif(
+    not (_STATIC_DIR / "index.html").is_file(),
+    reason="web UI export not built (frontend: npm run export); "
+    "generated artifact, untracked by design",
+)
 
 
 def _reset_caches() -> None:
@@ -36,6 +47,7 @@ def _fresh_client(monkeypatch, **overrides) -> TestClient:
 # --- shell + assets are served, unauthenticated -------------------------------------
 
 
+@_needs_export
 def test_index_served_unauthenticated(client):
     res = client.get("/")  # no Authorization header
     assert res.status_code == 200
@@ -45,6 +57,7 @@ def test_index_served_unauthenticated(client):
     assert "Bearer" not in res.text
 
 
+@_needs_export
 def test_next_assets_served_unauthenticated(client):
     # The export references its hashed bundles under /_next/. Discover one from the shell
     # and confirm it's served same-origin without auth (filenames are content-hashed, so
@@ -57,6 +70,7 @@ def test_next_assets_served_unauthenticated(client):
     assert res.headers["content-type"].startswith(("application/javascript", "text/javascript"))
 
 
+@_needs_export
 def test_static_export_is_bundled():
     # The built export ships inside the package tree so `pip install .` bundles it.
     assert (_STATIC_DIR / "index.html").is_file()

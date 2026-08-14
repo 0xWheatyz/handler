@@ -69,16 +69,23 @@ def ssh_env(git_remote: str | None, conn: Connection) -> dict[str, str]:
     return {"GIT_SSH_COMMAND": sshkeys.git_ssh_command(key_path)}
 
 
-def sync_project(project: dict, conn: Connection | None = None) -> dict:
+def sync_project(
+    project: dict, conn: Connection | None = None, *, ff: bool = True
+) -> dict:
     """Clone the project's remote into ``root_dir``, or refresh an existing clone.
 
-    Idempotent by design — scheduled/stateless runs call this before every spawn so the
-    working tree always starts from the remote's latest state. An existing clone is
-    ``git fetch``\\ ed rather than pulled: a pull only moves the branch the root happens
-    to have checked out, and an agent parked on a feature branch used to leave
-    ``origin/*`` (and therefore every branch cut for a new agent) hours stale. After
-    the fetch, ``origin/HEAD`` is re-pinned and the checkout is fast-forwarded only
-    when it is sitting on the default branch. Raises :class:`SyncError` when the
+    Idempotent by design — spawns call this so agents always start from the remote's
+    latest state. An existing clone is ``git fetch``\\ ed rather than pulled: a pull
+    only moves the branch the root happens to have checked out, and an agent parked on
+    a feature branch used to leave ``origin/*`` (and therefore every branch cut for a
+    new agent) hours stale. After the fetch, ``origin/HEAD`` is re-pinned.
+
+    ``ff`` decides whether the root *checkout* is also fast-forwarded (only ever when
+    it sits on the default branch). Worktree spawns pass ``ff=False``: they cut their
+    branch from ``origin/*`` and must never move — let alone risk disturbing — the
+    root's working tree, which may hold an operator's own checkout. Root/subdir
+    placements (schedule firings, mise-init) and the explicit sync command keep
+    ``ff=True`` so their shared tree advances. Raises :class:`SyncError` when the
     project has no remote or git fails.
     """
     remote = project.get("git_remote")
@@ -100,6 +107,8 @@ def sync_project(project: dict, conn: Connection | None = None) -> dict:
         # pinned even for clones that predate it (or whose remote default changed).
         gitops.set_default_head(root, env=env)
         detail = out
+        if not ff:
+            return {"action": "fetched", "root_dir": root, "detail": detail}
         default_ref = gitops.default_branch_ref(root)
         if default_ref and gitops.current_branch(root) == default_ref.split("/", 1)[1]:
             ok, ff_out = gitops.merge_ff(root, default_ref)

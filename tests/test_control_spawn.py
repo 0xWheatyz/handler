@@ -301,3 +301,91 @@ def test_worker_spawn_scheduled_keeps_root_placement(env, monkeypatch):
 
     assert calls[0]["auto_worktree"] is False
     assert calls[1]["auto_worktree"] is True
+
+
+def _git_out(root, *args):
+    import subprocess
+
+    return subprocess.run(
+        ["git", "-c", "user.email=t@t", "-c", "user.name=t", "-C", str(root), *args],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
+
+def test_spawn_worktree_sees_latest_push_and_never_touches_root(env, fake_launch):
+    """The operator's scenario: root clone parked on some agent's old branch, a new
+    commit pushed to the remote default branch from elsewhere. The spawned agent's
+    worktree must contain that push, and the root checkout must not be moved."""
+    bare = env["tmp"] / "origin.git"
+    import subprocess
+
+    subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(bare)], check=True)
+
+    # Seed the remote through a scratch clone: mise config + first commit.
+    seed = env["tmp"] / "seed"
+    subprocess.run(["git", "clone", "-q", str(bare), str(seed)], check=True)
+    _write_mise(seed, with_test=True)
+    _git(seed, "add", "-A")
+    _git(seed, "commit", "-q", "-m", "init")
+    _git(seed, "push", "-q", "origin", "main")
+
+    # The project root clone, parked on a side branch (what a root-placed agent left).
+    root = env["tmp"] / "proj"
+    subprocess.run(["git", "clone", "-q", str(bare), str(root)], check=True)
+    _git(root, "checkout", "-q", "-b", "old-agent-branch")
+
+    # The operator's hand-made commit, pushed to main from a different checkout.
+    (seed / "HANDOFF.md").write_text("the context the agent needs\n")
+    _git(seed, "add", "-A")
+    _git(seed, "commit", "-q", "-m", "operator context")
+    _git(seed, "push", "-q", "origin", "main")
+
+    with get_engine().begin() as conn:
+        repo.create_project(conn, "proj", str(root), git_remote=str(bare))
+
+    agent = spawn.spawn("proj", "api", task="use the handoff")
+
+    # The worktree starts at the remote tip: the operator's push is present.
+    wt = env["tmp"] / "proj" / "api"
+    assert agent["working_dir"] == str(wt)
+    assert (wt / "HANDOFF.md").read_text() == "the context the agent needs\n"
+    assert _git_out(wt, "branch", "--show-current") == "agent/api"
+    # The root checkout was not moved, merged, or re-parked.
+    assert _git_out(root, "branch", "--show-current") == "old-agent-branch"
+
+
+def test_spawn_derived_branch_resets_stale_leftover(env, fake_launch):
+    """A stale agent/<name> branch from a deleted agent must not shadow the remote
+    tip — derived branches are reset to the remote default when recreated."""
+    bare = env["tmp"] / "origin.git"
+    import subprocess
+
+    subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(bare)], check=True)
+    seed = env["tmp"] / "seed"
+    subprocess.run(["git", "clone", "-q", str(bare), str(seed)], check=True)
+    _write_mise(seed, with_test=True)
+    _git(seed, "add", "-A")
+    _git(seed, "commit", "-q", "-m", "init")
+    _git(seed, "push", "-q", "origin", "main")
+
+    root = env["tmp"] / "proj"
+    subprocess.run(["git", "clone", "-q", str(bare), str(root)], check=True)
+    # A stale derived branch parked at the old tip (its worktree long gone).
+    _git(root, "branch", "agent/api")
+
+    # The remote advances past it.
+    (seed / "NEW.md").write_text("newer\n")
+    _git(seed, "add", "-A")
+    _git(seed, "commit", "-q", "-m", "newer")
+    _git(seed, "push", "-q", "origin", "main")
+
+    with get_engine().begin() as conn:
+        repo.create_project(conn, "proj", str(root), git_remote=str(bare))
+
+    agent = spawn.spawn("proj", "api", task="do it")
+
+    wt = env["tmp"] / "proj" / "api"
+    assert agent["working_dir"] == str(wt)
+    assert (wt / "NEW.md").exists()  # reset to the remote tip, not the stale branch
