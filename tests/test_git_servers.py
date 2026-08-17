@@ -80,6 +80,18 @@ def test_materialize_private_key_is_0600_under_projects_root(env):
         assert fh.read() == "KEYDATA\n"
 
 
+def test_materialize_resets_mode_on_existing_file(env):
+    # A k8s fsGroup remount (fsGroupChangePolicy: Always) chmods volume files to
+    # group-rw between pod starts; rematerializing must restore 0600 or ssh
+    # refuses the key.
+    from handler import sshkeys
+
+    path = sshkeys.materialize_private_key("github.com", "KEYDATA")
+    os.chmod(path, 0o660)
+    path = sshkeys.materialize_private_key("github.com", "KEYDATA")
+    assert stat.S_IMODE(os.stat(path).st_mode) == 0o600
+
+
 def test_materialize_sanitizes_hostname(env):
     from handler import sshkeys
 
