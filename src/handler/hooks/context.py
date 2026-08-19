@@ -77,6 +77,9 @@ class Identity:
     # git-push hooks enforce the "write .mise.toml, commit, push" contract rather than the
     # normal test gate.
     mise_init: bool = False
+    # Workflow role (env ``HANDLER_AGENT_ROLE``, falling back to the agent row). The
+    # Stop gate reads it: a ``scout`` that changed nothing has no work to verify.
+    role: str | None = None
     extra: dict = field(default_factory=dict)
 
 
@@ -93,10 +96,18 @@ def resolve_identity(conn: Connection, hook_input: HookInput) -> Identity | None
     agent_name = os.environ.get("HANDLER_AGENT_NAME")
 
     mise_init = bool(os.environ.get("HANDLER_MISE_INIT"))
+    role = os.environ.get("HANDLER_AGENT_ROLE") or None
     if agent_id and project_id and agent_name:
         row = conn.execute(select(agents).where(agents.c.id == int(agent_id))).first()
         working_dir = row._mapping["working_dir"] if row else None
-        return Identity(int(agent_id), project_id, agent_name, working_dir, mise_init=mise_init)
+        return Identity(
+            int(agent_id),
+            project_id,
+            agent_name,
+            working_dir,
+            mise_init=mise_init,
+            role=role or (row._mapping["role"] if row else None),
+        )
 
     # Fallback: match by working_dir == cwd.
     if hook_input.cwd:
@@ -105,7 +116,13 @@ def resolve_identity(conn: Connection, hook_input: HookInput) -> Identity | None
         ).first()
         if row is not None:
             m = row._mapping
-            return Identity(m["id"], m["project_id"], m["name"], m["working_dir"])
+            return Identity(
+                m["id"],
+                m["project_id"],
+                m["name"],
+                m["working_dir"],
+                role=role or m["role"],
+            )
 
     return None
 

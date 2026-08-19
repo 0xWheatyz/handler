@@ -111,6 +111,8 @@ def test_write_config_renders_provider_and_bridge(pi_env, tmp_path):
     assert "setActiveTools" in text
     assert "handler.webtool" in text
     assert "web_search" in text and "web_fetch" in text
+    # Dispatch parity: a pi agent can hand work on through the same MCP seam.
+    assert "dispatch_agent" in text
     assert (base / "APPEND_SYSTEM.md").read_text().strip()
 
 

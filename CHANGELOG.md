@@ -6,6 +6,43 @@ the image workflows publish (plus `latest` from every push to `main`).
 
 ## [Unreleased]
 
+### Added — dynamic workflows: agents hand work to agents
+
+Until now the only recurring primitive was a schedule, which fires an unconditional
+spawn on a timer. A pipeline (watch a source → write a spec → implement it) had to be
+N independent schedules, each firing blind: on a quiet day the coding agent still
+spawned, paid a full model run to discover there was no work, and left an empty run in
+Activity. Time is the wrong trigger for the later steps — the previous step's *result*
+is.
+
+- **`dispatch_agent`**, a new tool on the bundled `handler-memory` MCP server (and on
+  the pi bridge, via the same `--call` seam). An agent hands work to a fresh agent in
+  **its own project** — `project_id` comes from the spawn environment, never from the
+  arguments — by enqueuing an ordinary `spawn` command tagged
+  `requested_by = agent:<id>`. It shows up in Activity like any other command, so
+  nothing new had to be built to observe it.
+- **Guardrails, not an approval queue.** `MAX_DISPATCH_PER_RUN` (default 3) bounds one
+  run's handoffs, counted off the command rows it already wrote; `MAX_DISPATCH_DEPTH`
+  (default 3) bounds how far a chain reaches, so a cycle terminates instead of fanning
+  out. Depth is recovered from the spawn command that created an agent, so it survives
+  a resume. A refused dispatch tells the agent what to do instead.
+- **Two roles — `scout` and `planner`** — with built-in skills (`handler-scout`,
+  `handler-planner`, `handler-dispatch`) carrying the judgment the code can't: dedupe
+  against a memory watermark, treat "nothing new" as a complete run, write a task the
+  receiving agent can act on cold.
+- **A quiet scout run is cheap.** A `scout` ending on a clean tree skips `mise run test`
+  and records the new `tests_status = 'skipped'` (migration `0017_gate_skipped`) — the
+  gate's promise is that `done` means tests passed *for the work that shipped*, and
+  nothing shipped. A dirty tree, or any other role, keeps the full gate.
+
+The net effect: one cheap schedule fires the scout; on a quiet day the pipeline costs
+one small-model call and stops. Only a scout that actually found something spends a
+coding-model run, and the spec it produced travels with the dispatch.
+
+**Rollout:** run migrations (`0017_gate_skipped`, additive — it only widens a CHECK).
+The two new settings have working defaults. The three new skills seed themselves on the
+next API start, idempotently by name.
+
 ### Fixed
 
 - **The project-root checkout is now a ref store, never a working tree Handler moves.**

@@ -139,6 +139,7 @@ Configuration is entirely environment-driven (see [`.env.example`](.env.example)
 | `CLAUDE_BIN` / `PI_BIN` / `MISE_BIN` / `TMUX_BIN` / `FORGE_BIN` / `GIT_BIN` | Binary overrides | `claude` / `pi` / `mise` / `tmux` / `forge` / `git` |
 | `FORGE_VERSION` | Pinned forge version verified at spawn (Phase 2) | unset → skip check |
 | `PROTECTED_BRANCHES` | Branches a direct push needs an approval to reach (Phase 2) | `main,master` |
+| `MAX_DISPATCH_PER_RUN` / `MAX_DISPATCH_DEPTH` | Caps on agent-initiated dispatch: handoffs per run, and how far a chain reaches | `3` / `3` |
 
 ## Run
 
@@ -452,6 +453,11 @@ recent notes in scope, so knowledge from earlier runs arrives without being aske
 Notes live only in the database — like everything else, they survive disposable
 workers by construction — and deleting an agent never deletes what it learned.
 
+The same MCP server carries **`dispatch_agent`** (see
+[Dynamic workflows](#dynamic-workflows-agents-handing-work-to-agents)), so an agent's
+two ways of reaching past its own run — what it *knows* and what it *starts* — arrive
+over one transport with one identity contract.
+
 ## Hooks
 
 Wired into each agent as `python -m handler.hooks <event>`:
@@ -474,6 +480,12 @@ Wired into each agent as `python -m handler.hooks <event>`:
 - **`SessionStart`** — memory recall: injects the most recent memory notes in the
   agent's scope (its project + global) as additional context, plus a pointer at the
   handler-memory MCP tools. Best-effort; never blocks the session.
+
+One narrow exemption to the completion gate: a **`scout`** ending with a clean tree
+skips the test run and records `tests_status = 'skipped'`. Scouts look and hand
+findings on, so "`done` means a test run passed" is vacuous when nothing shipped — and
+a scheduled watch is mostly quiet runs. A dirty tree, or any other role, keeps the
+full gate.
 
 Hook identity travels via environment variables injected at spawn (`HANDLER_AGENT_ID`,
 `HANDLER_PROJECT_ID`, `HANDLER_AGENT_NAME`, `HANDLER_AGENT_ROLE`, `DATABASE_URL`), since
@@ -546,6 +558,52 @@ Continuity lives in the repo itself; the canonical prompt is:
 Missed intervals (worker down) collapse into a single catch-up run. Manage schedules in
 the dashboard's **Schedules** pane or via `GET/POST /projects/:p/schedules`,
 `PATCH`/`DELETE /schedules/:id`.
+
+### Dynamic workflows: agents handing work to agents
+
+A schedule is a *time* trigger, which is the wrong trigger for every step after the
+first. Scheduling "write a spec" and "implement the spec" on their own timers means
+they fire blind: on a quiet day the coding agent still spawns, pays a full model run to
+discover there is nothing to do, and leaves an empty run behind. What the later steps
+actually wait on is the **result** of the earlier one.
+
+So an agent can start one: **`dispatch_agent`** (a tool on the bundled MCP server, and
+on the pi bridge) enqueues an ordinary `spawn` command in the agent's own project,
+tagged `requested_by = agent:<id>`. It appears in Activity like any other command, and
+the worker claims it the same way.
+
+```
+schedule (cheap model, every 6h)
+  └─ scout ── nothing new? update the watermark, end.        ← one small call, done
+              something new? dispatch_agent(role="planner") ─┐
+                                                             ▼
+                                            planner ── writes + commits specs/<date>-<slug>.md
+                                                        dispatch_agent(role="junior") ─┐
+                                                                                       ▼
+                                                                     junior → senior → deploy
+```
+
+Only the scout is on a timer. Nothing downstream costs a token until the scout says
+there is work — which is the point: the condition ("is this paper new, and does it
+matter here?") is a judgment, so it belongs to a model rather than to a scheduler
+field.
+
+- **Project-scoped by construction.** The target project comes from the spawn
+  environment, never from the tool arguments, so a dispatch can't cross a project
+  boundary any more than an agent can.
+- **Bounded, not gated.** `MAX_DISPATCH_PER_RUN` (default 3) caps one run's handoffs;
+  `MAX_DISPATCH_DEPTH` (default 3) caps how far a chain reaches, so a cycle terminates
+  instead of fanning out. Depth is recovered from the command that created an agent, so
+  a resume keeps its place in the chain. Dispatches run immediately — the caps and the
+  Activity trail are the cost control, not an approval queue.
+- **Roles carry the judgment.** `scout` and `planner` join the forge roles, with
+  built-in skills (`handler-scout`, `handler-planner`, `handler-dispatch`) that teach
+  the parts code can't enforce: dedupe new findings against a memory-note watermark,
+  treat "nothing new" as a *complete* run, and write a task the receiving agent — which
+  starts cold, with no memory of the session that dispatched it — can actually act on.
+- **Cheap where it should be.** Point the scout's schedule at a small backend with
+  `model_id` (a `claude_models` row, `harness='pi'` for a local model); the expensive
+  Claude run only happens on the day there is something to build.
 
 ## Development
 

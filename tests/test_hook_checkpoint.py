@@ -2,16 +2,18 @@
 
 from __future__ import annotations
 
+import pytest
+
 from handler.control import gitops, mise
 from handler.db import repository as repo
 from handler.hooks import checkpoint, verify
 from handler.hooks.context import HookInput, Identity
 
 
-def _seed(conn, mise_init=False):
+def _seed(conn, mise_init=False, role=None):
     repo.create_project(conn, "p", "/tmp/p")
-    a = repo.create_agent(conn, "p", "a", "/tmp/p/a")
-    return Identity(a["id"], "p", "a", "/tmp/p/a", mise_init=mise_init)
+    a = repo.create_agent(conn, "p", "a", "/tmp/p/a", role=role)
+    return Identity(a["id"], "p", "a", "/tmp/p/a", mise_init=mise_init, role=role)
 
 
 def _fake_mise_state(monkeypatch, *, has_test, clean, ahead):
@@ -116,6 +118,46 @@ def test_stop_allows_done_when_working_dir_is_not_a_repo(conn, monkeypatch):
     result = checkpoint.handle_stop(conn, ident, HookInput({"session_id": "s1"}, "stop"))
     assert result == {}
     assert repo.get_checkmark(conn, ident.agent_id)["status"] == "done"
+
+
+def test_stop_skips_tests_for_a_scout_that_shipped_nothing(conn, monkeypatch):
+    """A watch run that found nothing has no work to verify — and most runs are that."""
+    ident = _seed(conn, role="scout")
+    monkeypatch.setattr(
+        verify, "run_test", lambda cwd: pytest.fail("the suite must not run here")
+    )
+    _fake_git_state(monkeypatch, clean=True)
+
+    result = checkpoint.handle_stop(conn, ident, HookInput({"session_id": "s1"}, "stop"))
+    assert result == {}
+
+    cm = repo.get_checkmark(conn, ident.agent_id)
+    assert cm["tests_status"] == "skipped"
+    assert cm["status"] == "done"
+
+
+def test_stop_still_gates_a_scout_that_changed_files(conn, monkeypatch):
+    """The exemption is clean-tree-only: a scout that edited something is gated."""
+    ident = _seed(conn, role="scout")
+    monkeypatch.setattr(verify, "run_test", lambda cwd: (False, "1 failed"))
+    _fake_git_state(monkeypatch, clean=False)
+
+    result = checkpoint.handle_stop(conn, ident, HookInput({"session_id": "s1"}, "stop"))
+    assert result["decision"] == "block"
+    assert "test suite is failing" in result["reason"]
+    assert repo.get_checkmark(conn, ident.agent_id)["tests_status"] == "fail"
+
+
+def test_stop_gates_other_roles_on_a_clean_tree(conn, monkeypatch):
+    """Only scouts are exempt — a junior with nothing to commit still runs the suite."""
+    ident = _seed(conn, role="junior")
+    ran = []
+    monkeypatch.setattr(verify, "run_test", lambda cwd: (ran.append(cwd), (True, "ok"))[1])
+    _fake_git_state(monkeypatch, clean=True)
+
+    assert checkpoint.handle_stop(conn, ident, HookInput({"session_id": "s1"}, "stop")) == {}
+    assert ran, "the suite must run for a non-scout role"
+    assert repo.get_checkmark(conn, ident.agent_id)["tests_status"] == "pass"
 
 
 def test_stop_captures_final_message_as_checkpoint(conn, monkeypatch, tmp_path):

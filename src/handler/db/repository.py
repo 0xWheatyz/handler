@@ -522,6 +522,46 @@ def get_command(conn: Connection, command_id: int) -> dict | None:
     return _row_to_dict(row)
 
 
+def get_spawn_command(conn: Connection, project_id: str, agent_name: str) -> dict | None:
+    """The most recent ``spawn`` command that created this agent, if any.
+
+    Lets a launch recover what it was spawned *with* (currently the dispatch depth)
+    without copying those fields onto the agent row — and works identically on the
+    resume path, which has no payload of its own.
+    """
+    row = conn.execute(
+        select(commands)
+        .where(
+            commands.c.type == "spawn",
+            commands.c.project_id == project_id,
+            commands.c.agent_name == agent_name,
+        )
+        .order_by(commands.c.id.desc())
+        .limit(1)
+    ).first()
+    return _row_to_dict(row)
+
+
+def count_agent_dispatches(conn: Connection, agent_id: int, since: datetime | None) -> int:
+    """How many commands this agent has enqueued itself (optionally since a timestamp).
+
+    Dispatches are ordinary ``commands`` rows tagged ``requested_by = 'agent:<id>'``, so
+    the per-run budget needs no extra table — it counts the audit trail it already wrote.
+    ``since`` is the current run's ``started_at``; ``None`` counts the agent's whole
+    history, which is the conservative reading when no run row exists yet.
+    """
+    from sqlalchemy import func as sqlfunc
+
+    stmt = (
+        select(sqlfunc.count())
+        .select_from(commands)
+        .where(commands.c.requested_by == f"agent:{agent_id}")
+    )
+    if since is not None:
+        stmt = stmt.where(commands.c.created_at >= since)
+    return int(conn.execute(stmt).scalar_one())
+
+
 def list_commands(
     conn: Connection,
     project_id: str | None = None,

@@ -9,6 +9,12 @@ captured from the session transcript onto the checkmark, so the dashboard always
 real checkpoint to show regardless of whether the agent thought to leave one.
 ``SessionEnd`` cannot be blocked, so it just records a final checkpoint with the end
 reason.
+
+One narrow exemption: a ``scout`` that ends with a clean tree skips the test run and
+records ``tests_status = 'skipped'``. Scouts exist to look and hand findings on, so the
+gate's promise — ``done`` means a test run passed for the work that shipped — is vacuous
+when nothing shipped, and a scheduled watch is mostly quiet runs. A dirty tree, or any
+other role, keeps the full gate.
 """
 
 from __future__ import annotations
@@ -112,6 +118,19 @@ def _completion_blockers(working_dir: str) -> list[str]:
     return blockers
 
 
+def _tests_are_moot(ident: Identity, working_dir: str) -> bool:
+    """True when this stop needs no test run: a ``scout`` leaving a clean tree.
+
+    Scouts read the world and hand findings on; the expensive half of the gate exists to
+    stop unverified *changes* reaching ``done``. Running the suite on every quiet watch
+    run is pure overhead, and on a scheduled watch there are a lot of quiet runs. Any
+    other role, or any uncommitted change, keeps the full gate.
+    """
+    if ident.role != "scout":
+        return False
+    return gitops.head_sha(working_dir) is None or gitops.is_clean(working_dir)
+
+
 def _final_assistant_text(transcript_path: str | None) -> str | None:
     """The agent's last assistant message from the session transcript.
 
@@ -155,15 +174,26 @@ def handle_stop(conn: Connection, ident: Identity, hook_input: HookInput) -> dic
     if ident.mise_init:
         return handle_mise_init_stop(conn, ident, hook_input)
     working_dir = ident.working_dir or hook_input.cwd or "."
-    tests_ok, output = verify.run_test(working_dir)
+    if _tests_are_moot(ident, working_dir):
+        # A scout that touched nothing has nothing to verify: the gate's promise is
+        # "``done`` means a test run passed for the work that shipped", and no work
+        # shipped. The clean-tree condition is what keeps that honest — a scout that
+        # *did* edit files falls through to the normal gate like anyone else.
+        tests_ok, output, tests_status = True, "", "skipped"
+    else:
+        tests_ok, output = verify.run_test(working_dir)
+        tests_status = "pass" if tests_ok else "fail"
     blockers = [] if tests_ok else ["the test suite is failing (`mise run test`)"]
     blockers += _completion_blockers(working_dir)
     now = datetime.now(UTC)
 
     status = "done" if not blockers else "blocked"
-    tests_status = "pass" if tests_ok else "fail"
     summary = (
-        "checkpoint: tests passed, work committed and pushed"
+        (
+            "checkpoint: nothing to ship, tests not applicable"
+            if tests_status == "skipped"
+            else "checkpoint: tests passed, work committed and pushed"
+        )
         if not blockers
         else "checkpoint blocked: " + "; ".join(blockers)
     )

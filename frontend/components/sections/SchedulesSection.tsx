@@ -10,6 +10,8 @@ import { fmtFull } from "@/lib/format";
 
 const ROLE_OPTS = [
   { value: "", label: "Role — none" },
+  { value: "scout", label: "scout" },
+  { value: "planner", label: "planner" },
   { value: "junior", label: "junior" },
   { value: "senior", label: "senior" },
   { value: "deploy", label: "deploy" },

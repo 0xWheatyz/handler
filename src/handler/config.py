@@ -107,6 +107,16 @@ class Settings(BaseSettings):
     # Comma-separated permission allow rules added to generated settings for headless runs.
     headless_allowed_tools: str = "Bash(git *),Bash(mise *)"
 
+    # ---- Agent-initiated dispatch (the ``dispatch_agent`` MCP tool): an agent handing
+    # work to a fresh agent in its own project, so a pipeline advances on a result rather
+    # than on a timer. Both caps bound a confused (or looping) agent, not a healthy one:
+    # a handoff is one call, and chains are two or three links deep.
+    # Dispatches one agent may enqueue within a single run.
+    max_dispatch_per_run: int = 3
+    # How far a dispatch chain may reach from the agent that started it. A dispatch at
+    # this depth is refused, so A -> B -> C -> A terminates instead of fanning out.
+    max_dispatch_depth: int = 3
+
     # Wall-clock budget for the install-from-prompt one-off claude run (Claude page,
     # Skills tab). Kept under worker_stale_after by default: the run blocks the worker's
     # drain loop synchronously, and outliving the heartbeat window would get its live

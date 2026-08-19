@@ -31,7 +31,9 @@ metadata = MetaData()
 # ``crashed`` is reserved for the reaper: it marks an agent whose owning worker went
 # silent mid-run — never a normal exit, which reconciles to done/blocked instead.
 AGENT_STATUSES = ("working", "paused_for_input", "blocked", "done", "crashed")
-GATE_STATUSES = ("pass", "fail", "unknown")
+# "skipped" = the gate deliberately did not run because there was nothing to verify
+# (a scout ending on a clean tree), which is neither "unknown" nor a "pass".
+GATE_STATUSES = ("pass", "fail", "unknown", "skipped")
 CI_STATUSES = ("not_applicable", "pending", "pass", "fail")
 VISIBILITIES = ("project", "global")
 APPROVAL_STATUSES = ("approved", "rejected")
@@ -142,8 +144,10 @@ agents = Table(
     Column("name", String, nullable=False),  # unique within a project, not globally
     Column("working_dir", String, nullable=False),
     Column("status", String, nullable=False),
-    # Optional workflow role (junior | senior | deploy) — informational, drives which
-    # forge skill an agent follows; the approval gate keys on identity, not role.
+    # Optional workflow role (scout | planner | junior | senior | deploy) —
+    # informational, drives which role skill an agent follows; the approval gate keys on
+    # identity, not role. ``scout`` additionally relaxes the Stop test gate on a clean
+    # tree (a run that shipped nothing has nothing to verify).
     Column("role", String),
     # Which model backend (claude_models row) this agent runs on; null = the worker's
     # logged-in Claude subscription. Recorded at spawn so resumes — a brand-new process —

@@ -244,6 +244,44 @@ The static shell is served **unauthenticated** (it holds no data); the browser p
 
 **Out of scope (additive follow-ups):** an aggregate `GET /projects/{project}/overview` (agents + latest checkmark in one call) to show every agent's checkmark at once; spawning agents / registering projects from the UI (still CLI-driven); shared-context **writes** from the UI (would need the shared-write token — MVP is read-only).
 
+### Dynamic workflows — agent-initiated dispatch
+
+Design decision (operator, 2026-08-19): a recurring **pipeline** is not N schedules. A
+schedule is a time trigger, and only the first step of a pipeline is genuinely waiting
+on time — every later step is waiting on the previous step's *result*. Scheduling them
+independently means each fires blind, and the expensive steps pay a full model run on
+quiet days just to discover there is nothing to do.
+
+Rejected: a `condition` field on `schedules`. The conditions that matter here ("is this
+paper new, and does it bear on this project?") are semantic judgments, so they belong
+to a model, not to a scheduler column. The scout **is** the condition; `dispatch_agent`
+is how it reports true. One mechanism then covers every future pipeline rather than
+this one.
+
+- [x] `dispatch_agent` on the bundled MCP server (+ pi bridge via the same `--call`
+      seam): enqueues an ordinary `spawn` command tagged `requested_by = agent:<id>`,
+      so a handoff is visible in Activity with no new surface. `project_id` is read
+      from the spawn environment and never from the arguments — project isolation holds
+      by construction rather than by validation.
+- [x] Bounded rather than gated (operator decision: dispatches run immediately, no
+      approval queue): `max_dispatch_per_run` counted off the command rows the agent
+      already wrote, and `max_dispatch_depth` carried in the spawn payload and
+      recovered by `spawn._dispatch_depth`, so a chain keeps its place across a resume
+      and a cycle terminates. Any agent may dispatch — one general primitive, so a
+      later chain (a junior splitting off a follow-up) needs no further change.
+- [x] `scout` + `planner` roles with built-in skills carrying the judgment code can't:
+      dedupe against a memory-note watermark (better than a repo file — no checkout, no
+      commit, and `SessionStart` recall delivers it for free), treat "nothing new" as a
+      complete run, and write a task the receiving cold-start agent can act on.
+- [x] A `scout` on a clean tree skips the test gate (`tests_status = 'skipped'`,
+      migration `0017_gate_skipped`). The gate promises `done` means tests passed *for
+      the work that shipped*; nothing shipped. The clean-tree condition is what keeps
+      that honest.
+
+**Definition of done:** one cheap schedule fires a scout; a quiet run costs one
+small-model call and enqueues nothing; a run that finds something dispatches a planner,
+which commits a spec and dispatches a junior into the existing forge workflow. 426 tests.
+
 ### Phase 4 — Observability (moved back, now optional)
 - [ ] Prometheus metrics endpoint on the API (agent counts, pending questions, checkpoint rate)
 - [ ] Grafana/Loki wiring documented as an optional add-on for self-hosters who already run that stack — not a dependency for anyone else

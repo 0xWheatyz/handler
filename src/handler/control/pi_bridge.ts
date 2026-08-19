@@ -16,8 +16,9 @@
  *                          Stop-hook re-invoke; stop_hook_active guards the loop)
  *  - session_shutdown    → hooks session_end
  *
- * It also registers the memory tools (memory_search/get/save/link) that claude agents
- * reach over MCP, by shelling to `python -m handler.mcpserver --call <tool>` — pi has
+ * It also registers the memory tools (memory_search/get/save/link) and dispatch_agent
+ * that claude agents reach over MCP, by shelling to
+ * `python -m handler.mcpserver --call <tool>` — pi has
  * no MCP by design, and a subprocess inheriting the agent env is the same trust model
  * the MCP server used anyway — plus web_search/web_fetch (`python -m handler.webtool`),
  * because pi ships no web tools and claude's live server-side at Anthropic.
@@ -71,7 +72,9 @@ function callPython(moduleArgs: string[], toolName: string, args: Record<string,
 	return (res.stdout || "").trim() || "{}";
 }
 
-function callMemory(tool: string, args: Record<string, unknown>): string {
+// The bundled MCP server's one-shot seam: same tool implementations claude reaches
+// over MCP (memory + dispatch), same identity-from-environment contract.
+function callMcpTool(tool: string, args: Record<string, unknown>): string {
 	return callPython(["-m", "handler.mcpserver", "--call", tool], tool, args);
 }
 
@@ -258,11 +261,40 @@ export default function (pi: ExtensionAPI) {
 		pi.registerTool({
 			...tool,
 			async execute(_toolCallId: string, params: Record<string, unknown>) {
-				const text = callMemory(tool.name, params ?? {});
+				const text = callMcpTool(tool.name, params ?? {});
 				return { content: [{ type: "text", text }], details: {} };
 			},
 		});
 	}
+
+	// ---- dispatch (same MCP seam): hand work to a new agent in this project ------------
+	pi.registerTool({
+		name: "dispatch_agent",
+		label: "Dispatch agent",
+		description:
+			"Hand work to a NEW agent in this project, which starts as soon as a worker is " +
+			"free. Use when your run produced something concrete for a different role to act " +
+			"on. This is a handoff, not a fan-out: dispatch once per thing you found, and only " +
+			"when there is real work — finding nothing is a complete run, so say so and end " +
+			"your turn instead. The new agent has NO memory of this session, so 'task' must " +
+			"stand on its own: what to do, which files or sources, and anything it would " +
+			"otherwise have to rediscover.",
+		parameters: Type.Object({
+			name_prefix: Type.String({ description: "Short slug; a timestamp is appended" }),
+			task: Type.String({ description: "The new agent's whole prompt — self-contained" }),
+			reason: Type.String({ description: "Why this handoff is warranted (for the operator)" }),
+			role: Type.Optional(
+				Type.String({ description: "scout | planner | junior | senior | deploy" }),
+			),
+			model_id: Type.Optional(Type.Integer({ description: "Model backend for the new agent" })),
+			worktree: Type.Optional(Type.String({ description: "Branch for a per-run worktree" })),
+			subdir: Type.Optional(Type.String({ description: "Subdir under the project root" })),
+		}),
+		async execute(_toolCallId: string, params: Record<string, unknown>) {
+			const text = callMcpTool("dispatch_agent", params ?? {});
+			return { content: [{ type: "text", text }], details: {} };
+		},
+	});
 
 	// ---- web tools (handler.webtool — pi ships none, claude's are Anthropic-server-side)
 	const webTools: Array<{ name: string; label: string; description: string; parameters: any }> = [

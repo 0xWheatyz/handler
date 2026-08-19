@@ -1,6 +1,6 @@
 """``python -m handler.mcpserver`` — run the bundled handler-memory MCP server.
 
-``--call <tool>`` runs one memory tool directly instead: JSON arguments on stdin, JSON
+``--call <tool>`` runs one tool directly instead: JSON arguments on stdin, JSON
 result on stdout, exit 1 with the error on stderr for a failed call. This is the seam
 the pi harness's bridge extension uses (pi has no MCP by design), sharing the exact
 tool implementations — and the same identity-from-environment contract — the MCP
@@ -10,10 +10,9 @@ server dispatches to.
 from __future__ import annotations
 
 import json
-import os
 import sys
 
-from . import MemoryServer, serve
+from . import serve, server_from_env
 
 
 def call_tool(name: str, stdin=None, stdout=None) -> int:
@@ -25,11 +24,7 @@ def call_tool(name: str, stdin=None, stdout=None) -> int:
     except ValueError:
         print("invalid JSON arguments on stdin", file=sys.stderr)
         return 2
-    agent_id_raw = os.environ.get("HANDLER_AGENT_ID")
-    server = MemoryServer(
-        agent_id=int(agent_id_raw) if agent_id_raw else None,
-        project_id=os.environ.get("HANDLER_PROJECT_ID") or None,
-    )
+    server = server_from_env()
     try:
         payload = server.call_tool(name, args if isinstance(args, dict) else {})
     except Exception as exc:  # noqa: BLE001 - the caller renders this as a tool error

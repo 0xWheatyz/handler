@@ -249,6 +249,12 @@ def _agent_env(
     role = role or agent.get("role")
     if role:
         env["HANDLER_AGENT_ROLE"] = role
+    depth = _dispatch_depth(project["id"], agent["name"])
+    if depth:
+        # Read by the dispatch tool: how many handoffs deep this agent already is, so a
+        # chain (and any cycle in it) runs into ``max_dispatch_depth``. Recovered from
+        # the spawn command rather than the agent row, so a resume keeps the same depth.
+        env["HANDLER_DISPATCH_DEPTH"] = str(depth)
     if mise_init:
         # Read by the Stop / git-push hooks to enforce the bootstrap contract.
         env["HANDLER_MISE_INIT"] = "1"
@@ -280,6 +286,21 @@ def _agent_env(
         except reposync.SyncError as exc:
             raise SpawnError(str(exc)) from exc
     return env, harness
+
+
+def _dispatch_depth(project_id: str, agent_name: str) -> int:
+    """How many dispatch handoffs led to this agent (0 for operator/schedule spawns).
+
+    Best-effort: a missing command row or a hand-rolled payload just means depth 0,
+    which is the same position an operator-started agent is in.
+    """
+    with connection() as conn:
+        command = repo.get_spawn_command(conn, project_id, agent_name)
+    payload = (command or {}).get("payload") or {}
+    try:
+        return max(0, int(payload.get("dispatch_depth") or 0))
+    except (TypeError, ValueError):
+        return 0
 
 
 def _check_forge_version(working_dir: str) -> str | None:

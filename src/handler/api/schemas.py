@@ -11,7 +11,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 # Roles + forge families mirrored from db.tables; Literal gives clean 422s on bad input.
-Role = Literal["junior", "senior", "deploy"]
+Role = Literal["scout", "planner", "junior", "senior", "deploy"]
 ForgeType = Literal["github", "gitlab", "gitea", "forgejo", "bitbucket"]
 
 # Agent harness a model backend launches (claude_models.harness).

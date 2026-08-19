@@ -181,8 +181,10 @@ def test_mcp_protocol_basics(seeded):
     assert handle_message(server, {"jsonrpc": "2.0", "method": "notifications/initialized"}) is None
     assert _rpc(server, "resources/list")["error"]["code"] == -32601
     tools = _rpc(server, "tools/list")["result"]["tools"]
+    # The bundled server's whole surface: the memory tools plus dispatch (tested in
+    # tests/test_dispatch.py), which shares this transport and identity contract.
     assert {t["name"] for t in tools} == {
-        "memory_search", "memory_get", "memory_save", "memory_link",
+        "memory_search", "memory_get", "memory_save", "memory_link", "dispatch_agent",
     }
 
 
